@@ -12,9 +12,21 @@ app.http('compare-vms', {
     handler: async (request, context) => {
         context.log('Processing VM comparison request');
 
+        // Wrap everything in try-catch to ensure we always return JSON
         try {
             // Parse request body
-            const body = await request.json();
+            let body;
+            try {
+                body = await request.json();
+            } catch (parseError) {
+                context.log.error('Failed to parse request body:', parseError);
+                return {
+                    status: 400,
+                    headers: { 'Content-Type': 'application/json' },
+                    jsonBody: { error: 'Invalid JSON in request body' }
+                };
+            }
+
             const {
                 skuName,
                 location,
@@ -35,6 +47,7 @@ app.http('compare-vms', {
             if (!skuName || !location) {
                 return {
                     status: 400,
+                    headers: { 'Content-Type': 'application/json' },
                     jsonBody: { error: 'skuName and location are required' }
                 };
             }
@@ -51,13 +64,16 @@ app.http('compare-vms', {
                     additionallyAllowedTenants: ['*']
                 });
                 computeClient = new ComputeManagementClient(credential, subscriptionId);
+                context.log('Azure credentials initialized successfully');
             } catch (authError) {
                 context.log.error('Authentication error:', authError);
                 return {
                     status: 500,
+                    headers: { 'Content-Type': 'application/json' },
                     jsonBody: { 
-                        error: 'Authentication failed. This API requires Azure credentials.',
-                        details: authError.message
+                        error: 'Authentication failed. Managed identity may not be configured.',
+                        details: authError.message,
+                        hint: 'Ensure the Static Web App has a system-assigned managed identity with Reader permissions.'
                     }
                 };
             }
@@ -80,6 +96,7 @@ app.http('compare-vms', {
             if (!targetSku) {
                 return {
                     status: 404,
+                    headers: { 'Content-Type': 'application/json' },
                     jsonBody: { error: `SKU '${skuName}' not found in location '${location}'` }
                 };
             }
@@ -178,11 +195,14 @@ app.http('compare-vms', {
 
         } catch (error) {
             context.log.error('Error processing request:', error);
+            context.log.error('Error stack:', error.stack);
             return {
                 status: 500,
+                headers: { 'Content-Type': 'application/json' },
                 jsonBody: {
                     error: 'Internal server error',
-                    details: error.message
+                    details: error.message,
+                    type: error.constructor.name
                 }
             };
         }
