@@ -12,7 +12,7 @@
       "value": "vmsku-alternatives-webapp"
     },
     "sku": {
-      "value": "Free"
+      "value": "Standard"
     },
     "repositoryUrl": {
       "value": ""

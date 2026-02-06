@@ -15,7 +15,7 @@ param staticWebAppName string = 'vmsku-alternatives-webapp'
   'Free'
   'Standard'
 ])
-param sku string = 'Free'
+param sku string = 'Standard'
 
 @description('Repository URL for the Static Web App')
 param repositoryUrl string = ''
@@ -59,14 +59,15 @@ module mainInfra 'main.bicep' = {
   }
 }
 
-// Assign Reader role to the managed identity (Standard SKU only)
-// This allows the Functions to query VM SKUs
-module readerRoleAssignment 'modules/role-assignment.bicep' = if (sku == 'Standard') {
+// Assign Reader role to the managed identity at subscription scope
+// This allows the Functions to query VM SKUs across the subscription
+module readerRoleAssignment 'modules/role-assignment.bicep' = {
   name: 'reader-role-assignment'
-  scope: resourceGroup
+  scope: subscription()
   params: {
     principalId: mainInfra.outputs.identityPrincipalId
     roleDefinitionId: 'acdd72a7-3385-48ef-bd42-f606fba81ae7' // Reader role
+    scope: subscription().id
   }
 }
 

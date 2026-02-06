@@ -41,7 +41,7 @@ param(
 
     [Parameter(Mandatory = $false)]
     [ValidateSet('Free', 'Standard')]
-    [string]$Sku = 'Free',
+    [string]$Sku = 'Standard',
 
     [Parameter(Mandatory = $false)]
     [string]$RepositoryUrl = '',

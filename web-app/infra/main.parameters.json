@@ -9,7 +9,7 @@
       "value": "centralus"
     },
     "sku": {
-      "value": "Free"
+      "value": "Standard"
     },
     "repositoryUrl": {
       "value": ""

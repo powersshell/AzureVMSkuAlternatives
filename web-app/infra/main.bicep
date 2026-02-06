@@ -41,6 +41,9 @@ resource staticWebApp 'Microsoft.Web/staticSites@2023-01-01' = {
     name: sku
     tier: sku
   }
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: empty(repositoryUrl) ? {
     // Deploy without GitHub integration - will use manual deployment or Azure CLI
     buildProperties: {
@@ -66,26 +69,6 @@ resource staticWebApp 'Microsoft.Web/staticSites@2023-01-01' = {
     provider: 'GitHub'
     enterpriseGradeCdnStatus: 'Disabled'
   }
-}
-
-// Managed Identity for the Static Web App (for accessing Azure resources)
-resource staticWebAppIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (sku == 'Standard') {
-  name: '${staticWebAppName}-identity'
-  location: location
-  tags: tags
-}
-
-// Link managed identity to Static Web App (Standard SKU only)
-resource staticWebAppIdentityLink 'Microsoft.Web/staticSites/linkedBackends@2023-01-01' = if (sku == 'Standard') {
-  parent: staticWebApp
-  name: 'backend-identity'
-  properties: {
-    backendResourceId: staticWebAppIdentity.id
-    region: location
-  }
-  dependsOn: [
-    staticWebAppIdentity
-  ]
 }
 
 // Application Insights for monitoring
@@ -140,8 +123,8 @@ output appInsightsInstrumentationKey string = appInsights.properties.Instrumenta
 @description('Application Insights Connection String')
 output appInsightsConnectionString string = appInsights.properties.ConnectionString
 
-@description('Managed Identity Principal ID (Standard SKU only)')
-output identityPrincipalId string = sku == 'Standard' ? staticWebAppIdentity.properties.principalId : ''
+@description('System-Assigned Managed Identity Principal ID')
+output identityPrincipalId string = staticWebApp.identity.principalId
 
-@description('Managed Identity Client ID (Standard SKU only)')
-output identityClientId string = sku == 'Standard' ? staticWebAppIdentity.properties.clientId : ''
+@description('System-Assigned Managed Identity Tenant ID')
+output identityTenantId string = staticWebApp.identity.tenantId
