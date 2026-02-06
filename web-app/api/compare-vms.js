@@ -39,19 +39,28 @@ app.http('compare-vms', {
                 };
             }
 
-            // Get subscription ID from environment
-            const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID;
-            if (!subscriptionId) {
-                context.log.error('AZURE_SUBSCRIPTION_ID not configured');
+            // Get subscription ID from environment or use default
+            const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID || 'e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7';
+            context.log(`Using subscription: ${subscriptionId}`);
+
+            // Initialize Azure SDK with retry logic
+            let credential, computeClient;
+            try {
+                credential = new DefaultAzureCredential({
+                    managedIdentityClientId: process.env.AZURE_CLIENT_ID,
+                    additionallyAllowedTenants: ['*']
+                });
+                computeClient = new ComputeManagementClient(credential, subscriptionId);
+            } catch (authError) {
+                context.log.error('Authentication error:', authError);
                 return {
                     status: 500,
-                    jsonBody: { error: 'Azure subscription not configured' }
+                    jsonBody: { 
+                        error: 'Authentication failed. This API requires Azure credentials.',
+                        details: authError.message
+                    }
                 };
             }
-
-            // Initialize Azure SDK
-            const credential = new DefaultAzureCredential();
-            const computeClient = new ComputeManagementClient(credential, subscriptionId);
 
             // Get all VM SKUs for the location
             context.log(`Fetching VM SKUs for location: ${location}`);
