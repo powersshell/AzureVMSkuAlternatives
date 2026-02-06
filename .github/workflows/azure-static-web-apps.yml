@@ -30,6 +30,17 @@ jobs:
           cd web-app/api
           npm install
           cd ../..
+      
+      - name: Debug - Check Secret
+        run: |
+          if [ -z "${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}" ]; then
+            echo "ERROR: AZURE_STATIC_WEB_APPS_API_TOKEN is empty or not set"
+            exit 1
+          else
+            echo "SUCCESS: Secret is set (length: ${#SECRET})"
+          fi
+        env:
+          SECRET: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
 
       - name: Build And Deploy
         id: builddeploy
