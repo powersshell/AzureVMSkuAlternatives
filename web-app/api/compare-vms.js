@@ -7,10 +7,23 @@ const { ComputeManagementClient } = require('@azure/arm-compute');
  * This function retrieves Azure VM SKU information and finds similar alternatives
  */
 app.http('compare-vms', {
-    methods: ['POST'],
+    methods: ['POST', 'GET'],
     authLevel: 'anonymous',
     handler: async (request, context) => {
-        context.log('Processing VM comparison request');
+        context.log('Processing VM comparison request', { method: request.method, url: request.url });
+
+        // Add a simple GET handler for testing
+        if (request.method === 'GET') {
+            return {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+                jsonBody: { 
+                    message: 'compare-vms endpoint is running',
+                    timestamp: new Date().toISOString(),
+                    subscriptionId: process.env.AZURE_SUBSCRIPTION_ID || 'e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7'
+                }
+            };
+        }
 
         // Wrap everything in try-catch to ensure we always return JSON
         try {
@@ -18,6 +31,7 @@ app.http('compare-vms', {
             let body;
             try {
                 body = await request.json();
+                context.log('Request body parsed successfully', { skuName: body?.skuName, location: body?.location });
             } catch (parseError) {
                 context.log.error('Failed to parse request body:', parseError);
                 return {
@@ -70,7 +84,7 @@ app.http('compare-vms', {
                 return {
                     status: 500,
                     headers: { 'Content-Type': 'application/json' },
-                    jsonBody: { 
+                    jsonBody: {
                         error: 'Authentication failed. Managed identity may not be configured.',
                         details: authError.message,
                         hint: 'Ensure the Static Web App has a system-assigned managed identity with Reader permissions.'
