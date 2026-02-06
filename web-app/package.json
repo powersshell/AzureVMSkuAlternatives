@@ -1,0 +1,25 @@
+{
+  "name": "azure-vm-sku-alternatives-web",
+  "version": "1.0.0",
+  "description": "Serverless web application for Azure VM SKU comparison",
+  "scripts": {
+    "start": "cd api && npm start",
+    "install-api": "cd api && npm install",
+    "deploy": "cd infra && pwsh Deploy-Infrastructure.ps1",
+    "clean": "cd infra && pwsh Remove-Infrastructure.ps1"
+  },
+  "keywords": [
+    "azure",
+    "vm",
+    "sku",
+    "comparison",
+    "static-web-app",
+    "azure-functions"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  }
+}

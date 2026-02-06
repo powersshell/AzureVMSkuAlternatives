@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure VM SKU Comparison Tool</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>
+                <svg class="logo" width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="40" height="40" rx="8" fill="#0078D4"/>
+                    <path d="M10 20L15 10L25 15L30 10L35 20L25 30L15 25L10 20Z" fill="white"/>
+                </svg>
+                Azure VM SKU Comparison Tool
+            </h1>
+            <p class="subtitle">Find alternative Azure Virtual Machine SKUs based on capabilities, performance, and pricing</p>
+        </header>
+
+        <main>
+            <section class="input-section">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="skuName">VM SKU Name *</label>
+                        <input type="text" id="skuName" placeholder="e.g., Standard_D4s_v3" required>
+                        <small>The Azure VM SKU you want to compare</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="location">Azure Region *</label>
+                        <select id="location" required>
+                            <option value="">Select a region...</option>
+                            <option value="eastus">East US</option>
+                            <option value="eastus2">East US 2</option>
+                            <option value="westus">West US</option>
+                            <option value="westus2">West US 2</option>
+                            <option value="westus3">West US 3</option>
+                            <option value="centralus">Central US</option>
+                            <option value="northcentralus">North Central US</option>
+                            <option value="southcentralus">South Central US</option>
+                            <option value="westcentralus">West Central US</option>
+                            <option value="canadacentral">Canada Central</option>
+                            <option value="canadaeast">Canada East</option>
+                            <option value="brazilsouth">Brazil South</option>
+                            <option value="northeurope">North Europe</option>
+                            <option value="westeurope">West Europe</option>
+                            <option value="uksouth">UK South</option>
+                            <option value="ukwest">UK West</option>
+                            <option value="francecentral">France Central</option>
+                            <option value="germanywestcentral">Germany West Central</option>
+                            <option value="norwayeast">Norway East</option>
+                            <option value="switzerlandnorth">Switzerland North</option>
+                            <option value="swedencentral">Sweden Central</option>
+                            <option value="southeastasia">Southeast Asia</option>
+                            <option value="eastasia">East Asia</option>
+                            <option value="australiaeast">Australia East</option>
+                            <option value="australiasoutheast">Australia Southeast</option>
+                            <option value="japaneast">Japan East</option>
+                            <option value="japanwest">Japan West</option>
+                            <option value="koreacentral">Korea Central</option>
+                            <option value="koreasouth">Korea South</option>
+                            <option value="southindia">South India</option>
+                            <option value="centralindia">Central India</option>
+                            <option value="westindia">West India</option>
+                            <option value="southafricanorth">South Africa North</option>
+                            <option value="uaenorth">UAE North</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="tolerance">Tolerance (%)</label>
+                        <input type="number" id="tolerance" value="20" min="0" max="100">
+                        <small>Percentage tolerance for matching capabilities</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="minSimilarityScore">Min Similarity Score</label>
+                        <input type="number" id="minSimilarityScore" value="60" min="0" max="100">
+                        <small>Minimum score (0-100) to include in results</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="currencyCode">Currency</label>
+                        <select id="currencyCode">
+                            <option value="USD">USD - US Dollar</option>
+                            <option value="EUR">EUR - Euro</option>
+                            <option value="GBP">GBP - British Pound</option>
+                            <option value="CAD">CAD - Canadian Dollar</option>
+                            <option value="AUD">AUD - Australian Dollar</option>
+                            <option value="JPY">JPY - Japanese Yen</option>
+                            <option value="INR">INR - Indian Rupee</option>
+                            <option value="BRL">BRL - Brazilian Real</option>
+                        </select>
+                    </div>
+                </div>
+
+                <details class="advanced-options">
+                    <summary>Advanced Options</summary>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="weightCPU">CPU Weight</label>
+                            <input type="number" id="weightCPU" value="2.0" min="0" max="10" step="0.1">
+                            <small>Importance of CPU matching</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="weightMemory">Memory Weight</label>
+                            <input type="number" id="weightMemory" value="2.0" min="0" max="10" step="0.1">
+                            <small>Importance of memory matching</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="weightGPU">GPU Weight</label>
+                            <input type="number" id="weightGPU" value="2.0" min="0" max="10" step="0.1">
+                            <small>Importance of GPU matching</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="weightStorage">Storage Weight</label>
+                            <input type="number" id="weightStorage" value="1.0" min="0" max="10" step="0.1">
+                            <small>Importance of storage matching</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="weightNetwork">Network Weight</label>
+                            <input type="number" id="weightNetwork" value="1.0" min="0" max="10" step="0.1">
+                            <small>Importance of network matching</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="weightFeatures">Features Weight</label>
+                            <input type="number" id="weightFeatures" value="0.5" min="0" max="10" step="0.1">
+                            <small>Importance of feature matching</small>
+                        </div>
+
+                        <div class="form-group checkbox-group">
+                            <label>
+                                <input type="checkbox" id="requireNVMeMatch">
+                                Require NVMe Match
+                            </label>
+                            <small>Only show NVMe alternatives if target has NVMe</small>
+                        </div>
+
+                        <div class="form-group checkbox-group">
+                            <label>
+                                <input type="checkbox" id="requireGPUMatch">
+                                Require GPU Match
+                            </label>
+                            <small>Only show GPU alternatives if target has GPU</small>
+                        </div>
+                    </div>
+                </details>
+
+                <button id="compareBtn" class="primary-btn">
+                    <span>Compare VM SKUs</span>
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M10 3L10 17M10 17L6 13M10 17L14 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </section>
+
+            <div id="loadingOverlay" class="loading-overlay hidden">
+                <div class="loading-spinner">
+                    <div class="spinner"></div>
+                    <p>Analyzing VM SKUs...</p>
+                </div>
+            </div>
+
+            <section id="resultsSection" class="results-section hidden">
+                <div class="results-header">
+                    <h2>Comparison Results</h2>
+                    <div class="results-actions">
+                        <button id="exportBtn" class="secondary-btn">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                <path d="M14 10v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-2M8 2v8m0 0l3-3M8 10L5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                            </svg>
+                            Export to CSV
+                        </button>
+                    </div>
+                </div>
+
+                <div id="targetSkuInfo" class="target-sku-card"></div>
+
+                <div class="table-container">
+                    <table id="resultsTable">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>SKU Name</th>
+                                <th>Similarity Score</th>
+                                <th>vCPUs</th>
+                                <th>Memory (GB)</th>
+                                <th>Hourly Cost</th>
+                                <th>Monthly Cost</th>
+                                <th>Availability Zones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="resultsTableBody">
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="noResults" class="no-results hidden">
+                    <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+                        <circle cx="32" cy="32" r="30" stroke="#E1E4E8" stroke-width="2"/>
+                        <path d="M32 20v16m0 4h.01" stroke="#6C757D" stroke-width="3" stroke-linecap="round"/>
+                    </svg>
+                    <h3>No alternatives found</h3>
+                    <p>Try adjusting your filters or similarity threshold</p>
+                </div>
+            </section>
+
+            <section id="errorSection" class="error-section hidden">
+                <div class="error-card">
+                    <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                        <circle cx="24" cy="24" r="22" stroke="#DC3545" stroke-width="2"/>
+                        <path d="M24 14v14m0 4h.01" stroke="#DC3545" stroke-width="3" stroke-linecap="round"/>
+                    </svg>
+                    <h3>Error</h3>
+                    <p id="errorMessage"></p>
+                    <button id="dismissErrorBtn" class="secondary-btn">Dismiss</button>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>&copy; 2026 Azure VM SKU Comparison Tool | Powered by Azure Static Web Apps & Azure Functions</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

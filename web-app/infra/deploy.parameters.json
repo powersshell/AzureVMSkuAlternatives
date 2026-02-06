@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "resourceGroupName": {
+      "value": "rg-vmsku-alternatives"
+    },
+    "location": {
+      "value": "eastus2"
+    },
+    "staticWebAppName": {
+      "value": "vmsku-alternatives-webapp"
+    },
+    "sku": {
+      "value": "Free"
+    },
+    "repositoryUrl": {
+      "value": ""
+    },
+    "branch": {
+      "value": "main"
+    },
+    "repositoryToken": {
+      "value": ""
+    },
+    "azureSubscriptionId": {
+      "value": ""
+    },
+    "tags": {
+      "value": {
+        "Environment": "Production",
+        "Application": "Azure VM SKU Alternatives",
+        "ManagedBy": "Bicep"
+      }
+    }
+  }
+}

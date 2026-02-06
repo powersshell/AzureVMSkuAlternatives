@@ -1,4 +1,19 @@
-# Compare-AzureVms.ps1
+# Azure VM SKU Alternatives
+
+A comprehensive toolkit for comparing Azure VM SKUs based on hardware specifications, capabilities, and pricing. Available in two formats:
+
+- **🌐 Web Application**: Serverless web app built with Azure Static Web Apps ([web-app/](web-app/))
+- **⚡ PowerShell Script**: Command-line tool for Azure VM comparison ([Compare-AzureVms.ps1](Compare-AzureVms.ps1))
+
+## Quick Links
+
+- **Web App Quick Start**: [web-app/QUICKSTART.md](web-app/QUICKSTART.md) - Deploy in 10 minutes
+- **Web App Full Guide**: [web-app/README.md](web-app/README.md) - Complete documentation
+- **PowerShell Usage**: [Below](#powershell-script) - Command-line instructions
+
+---
+
+# PowerShell Script
 
 A powerful PowerShell script for comparing Azure VM SKUs based on comprehensive hardware specifications, capabilities, and pricing. This tool helps you find similar or alternative VM SKUs in any Azure region with intelligent weighted scoring across all VM capabilities.
 
