@@ -52,6 +52,8 @@ jobs:
           app_location: "web-app/src"
           api_location: "web-app/api"
           output_location: ""
+          skip_app_build: true
+          skip_api_build: false
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
