@@ -59,12 +59,34 @@ async function handleCompare() {
             body: JSON.stringify(params)
         });
 
+        console.log('Response status:', response.status);
+        console.log('Response headers:', response.headers);
+
+        // Get the response text first to see what we're actually receiving
+        const responseText = await response.text();
+        console.log('Response text:', responseText);
+
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+            // Try to parse as JSON, but handle cases where it's not JSON
+            let errorMessage;
+            try {
+                const errorData = JSON.parse(responseText);
+                errorMessage = errorData.error || JSON.stringify(errorData);
+            } catch {
+                errorMessage = responseText || response.statusText;
+            }
+            throw new Error(`HTTP ${response.status}: ${errorMessage}`);
         }
 
-        const data = await response.json();
+        // Parse the response text as JSON
+        let data;
+        try {
+            data = JSON.parse(responseText);
+        } catch (parseError) {
+            console.error('Failed to parse response as JSON:', parseError);
+            throw new Error(`Invalid JSON response: ${responseText.substring(0, 100)}`);
+        }
+
         currentResults = data;
         displayResults(data);
     } catch (error) {

@@ -45,31 +45,31 @@ try {
     # Create a temporary deployment package
     $tempDir = Join-Path $env:TEMP "swa-deploy-$(Get-Date -Format 'yyyyMMddHHmmss')"
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-    
+
     Write-Host "Preparing deployment files..." -ForegroundColor Gray
-    
+
     # Copy frontend files
     $srcPath = Join-Path $webAppPath "src"
     $destSrcPath = Join-Path $tempDir "src"
     Copy-Item -Path $srcPath -Destination $destSrcPath -Recurse
-    
+
     # Copy API files
     $apiPath = Join-Path $webAppPath "api"
     $destApiPath = Join-Path $tempDir "api"
     Copy-Item -Path $apiPath -Destination $destApiPath -Recurse
-    
+
     # Remove local.settings.json if it exists (not needed for deployment)
     $localSettings = Join-Path $destApiPath "local.settings.json"
     if (Test-Path $localSettings) {
         Remove-Item $localSettings -Force
     }
-    
+
     Write-Host "✓ Files prepared" -ForegroundColor Green
     Write-Host ""
-    
+
     # Deploy using oryx build
     Write-Host "Deploying to Azure..." -ForegroundColor Cyan
-    
+
     $deployResult = az staticwebapp deploy `
         --name vmsku-alternatives-webapp `
         --resource-group rg-vmsku-alternatives `
@@ -78,7 +78,7 @@ try {
         --api-location "api" `
         --output-location "" `
         --verbose 2>&1
-    
+
     if ($LASTEXITCODE -eq 0) {
         Write-Host ""
         Write-Host "✓ Deployment completed successfully!" -ForegroundColor Green
@@ -93,7 +93,7 @@ try {
         Write-Host $deployResult
         throw "Deployment failed"
     }
-    
+
 } catch {
     Write-Error "Deployment failed: $_"
     Write-Host ""
