@@ -380,23 +380,23 @@ function getAvailabilityZones(sku, location) {
 async function getManagedIdentityToken(context) {
     const msiEndpoint = process.env.MSI_ENDPOINT || process.env.IDENTITY_ENDPOINT;
     const msiSecret = process.env.MSI_SECRET || process.env.IDENTITY_HEADER;
-    
+
     if (!msiEndpoint) {
         throw new Error('Managed identity endpoint not found');
     }
-    
+
     const tokenUrl = `${msiEndpoint}?resource=https://management.azure.com/&api-version=2019-08-01`;
-    
+
     const headers = {
         'X-IDENTITY-HEADER': msiSecret
     };
-    
+
     const response = await fetch(tokenUrl, { headers });
-    
+
     if (!response.ok) {
         throw new Error(`Failed to get managed identity token: ${response.statusText}`);
     }
-    
+
     const data = await response.json();
     return data.access_token;
 }
@@ -407,23 +407,23 @@ async function getManagedIdentityToken(context) {
 async function getVmSkusForLocation(subscriptionId, location, accessToken, context) {
     const apiVersion = '2021-07-01';
     const url = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Compute/skus?api-version=${apiVersion}&$filter=location eq '${location}'`;
-    
+
     const response = await fetch(url, {
         headers: {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json'
         }
     });
-    
+
     if (!response.ok) {
         const errorText = await response.text();
         context.log.error(`Failed to fetch SKUs: ${response.status} ${errorText}`);
         throw new Error(`Failed to fetch VM SKUs: ${response.statusText}`);
     }
-    
+
     const data = await response.json();
     const vmSkus = data.value.filter(sku => sku.resourceType === 'virtualMachines');
-    
+
     context.log(`Found ${vmSkus.length} VM SKUs`);
     return vmSkus;
 }

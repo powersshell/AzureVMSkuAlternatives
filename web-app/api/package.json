@@ -4,7 +4,7 @@
   "description": "Azure Functions API for VM SKU comparison tool (v4 format - REST API)",
   "main": "index.js",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "start": "func start",
