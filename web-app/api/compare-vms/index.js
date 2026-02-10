@@ -2,7 +2,7 @@ const { DefaultAzureCredential } = require('@azure/identity');
 const { ComputeManagementClient } = require('@azure/arm-compute');
 
 /**
- * Azure Function to compare VM SKUs (Functions v3 format)
+ * Azure Function to compare VM SKUs (Functions v4)
  * This function retrieves Azure VM SKU information and finds similar alternatives
  */
 module.exports = async function (context, req) {
@@ -14,9 +14,9 @@ module.exports = async function (context, req) {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                message: 'compare-vms endpoint is running (v3 format)',
+                message: 'compare-vms endpoint is running (v4 format)',
                 timestamp: new Date().toISOString(),
-                subscriptionId: process.env.AZURE_SUBSCRIPTION_ID || 'e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7'
+                environment: process.env.AZURE_FUNCTIONS_ENVIRONMENT || 'Production'
             })
         };
         return;
@@ -68,8 +68,21 @@ module.exports = async function (context, req) {
             return;
         }
 
-        // Get subscription ID from environment or use default
-        const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID || 'e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7';
+        // Get subscription ID from environment
+        const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID;
+        if (!subscriptionId) {
+            context.log.error('AZURE_SUBSCRIPTION_ID environment variable is not set');
+            context.res = {
+                status: 500,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    error: 'Server configuration error',
+                    details: 'Azure subscription ID is not configured. Please set AZURE_SUBSCRIPTION_ID in application settings.'
+                })
+            };
+            return;
+        }
+        
         context.log(`Using subscription: ${subscriptionId}`);
 
         // Initialize Azure SDK with retry logic
@@ -87,9 +100,9 @@ module.exports = async function (context, req) {
                 status: 500,
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    error: 'Authentication failed. Managed identity may not be configured.',
+                    error: 'Authentication failed',
                     details: authError.message,
-                    hint: 'Ensure the Static Web App has a system-assigned managed identity with Reader permissions.'
+                    hint: 'Ensure managed identity is enabled with Reader role on the subscription'
                 })
             };
             return;
@@ -290,9 +303,9 @@ function calculateSimilarity(target, candidate, weights, tolerance) {
 
     // Storage comparison
     if (target.uncachedDiskIOPS > 0) {
-        const iopsff = Math.abs(target.uncachedDiskIOPS - candidate.uncachedDiskIOPS) / target.uncachedDiskIOPS;
-        const iopScore = Math.max(0, 100 - (iopsff * 100));
-        totalScore += iopScore * weights.weightStorage;
+        const iopsDiff = Math.abs(target.uncachedDiskIOPS - candidate.uncachedDiskIOPS) / target.uncachedDiskIOPS;
+        const iopsScore = Math.max(0, 100 - (iopsDiff * 100));
+        totalScore += iopsScore * weights.weightStorage;
         totalWeight += weights.weightStorage;
     }
 
@@ -326,9 +339,14 @@ async function getVmPricing(skuName, location, currencyCode, context) {
         const filter = `serviceName eq 'Virtual Machines' and armSkuName eq '${skuName}' and armRegionName eq '${location}' and type eq 'Consumption'`;
         const url = `${apiUrl}?currencyCode=${currencyCode}&$filter=${encodeURIComponent(filter)}`;
 
-        const response = await fetch(url);
+        const response = await fetch(url, {
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+        
         if (!response.ok) {
-            context.log.warn(`Failed to fetch pricing for ${skuName}: ${response.statusText}`);
+            context.log.warn(`Failed to fetch pricing for ${skuName}: ${response.status} ${response.statusText}`);
             return null;
         }
 
