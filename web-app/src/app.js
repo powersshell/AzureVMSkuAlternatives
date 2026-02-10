@@ -1,5 +1,5 @@
 // API Configuration
-const API_BASE_URL = 'https://vmsku-api-functions.azurewebsites.net/api';
+const API_BASE_URL = '/api';
 
 // DOM Elements
 const compareBtn = document.getElementById('compareBtn');
