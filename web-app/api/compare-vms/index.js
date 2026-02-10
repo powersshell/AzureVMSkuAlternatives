@@ -1,4 +1,4 @@
-const { DefaultAzureCredential } = require('@azure/identity');
+const { ManagedIdentityCredential } = require('@azure/identity');
 const { ComputeManagementClient } = require('@azure/arm-compute');
 
 /**
@@ -82,16 +82,13 @@ module.exports = async function (context, req) {
             };
             return;
         }
-        
+
         context.log(`Using subscription: ${subscriptionId}`);
 
-        // Initialize Azure SDK with retry logic
+        // Initialize Azure SDK with Managed Identity for Static Web Apps
         let credential, computeClient;
         try {
-            credential = new DefaultAzureCredential({
-                managedIdentityClientId: process.env.AZURE_CLIENT_ID,
-                additionallyAllowedTenants: ['*']
-            });
+            credential = new ManagedIdentityCredential(process.env.AZURE_CLIENT_ID);
             computeClient = new ComputeManagementClient(credential, subscriptionId);
             context.log('Azure credentials initialized successfully');
         } catch (authError) {
@@ -344,7 +341,7 @@ async function getVmPricing(skuName, location, currencyCode, context) {
                 'Accept': 'application/json'
             }
         });
-        
+
         if (!response.ok) {
             context.log.warn(`Failed to fetch pricing for ${skuName}: ${response.status} ${response.statusText}`);
             return null;
