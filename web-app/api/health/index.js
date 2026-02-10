@@ -6,7 +6,7 @@ module.exports = async function (context, req) {
 
     context.res = {
         status: 200,
-        headers: { 
+        headers: {
             'Content-Type': 'application/json',
             'Cache-Control': 'no-cache'
         },

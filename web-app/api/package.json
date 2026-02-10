@@ -1,7 +1,7 @@
 {
   "name": "azure-vm-sku-alternatives-api",
   "version": "1.0.0",
-  "description": "Azure Functions API for VM SKU comparison tool (v3 format)",
+  "description": "Azure Functions API for VM SKU comparison tool (v4 format - REST API)",
   "main": "index.js",
   "engines": {
     "node": ">=18.0.0"
@@ -10,8 +10,5 @@
     "start": "func start",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "dependencies": {
-    "@azure/identity": "^4.0.0",
-    "@azure/arm-compute": "^21.0.0"
-  }
+  "dependencies": {}
 }

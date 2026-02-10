@@ -1,8 +1,5 @@
-const { ManagedIdentityCredential } = require('@azure/identity');
-const { ComputeManagementClient } = require('@azure/arm-compute');
-
 /**
- * Azure Function to compare VM SKUs (Functions v4)
+ * Azure Function to compare VM SKUs (Functions v4) - REST API Version
  * This function retrieves Azure VM SKU information and finds similar alternatives
  */
 module.exports = async function (context, req) {
@@ -14,7 +11,7 @@ module.exports = async function (context, req) {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                message: 'compare-vms endpoint is running (v4 format)',
+                message: 'compare-vms endpoint is running (v4 format - REST API)',
                 timestamp: new Date().toISOString(),
                 environment: process.env.AZURE_FUNCTIONS_ENVIRONMENT || 'Production'
             })
@@ -85,12 +82,11 @@ module.exports = async function (context, req) {
 
         context.log(`Using subscription: ${subscriptionId}`);
 
-        // Initialize Azure SDK with Managed Identity for Static Web Apps
-        let credential, computeClient;
+        // Get access token from managed identity
+        let accessToken;
         try {
-            credential = new ManagedIdentityCredential(process.env.AZURE_CLIENT_ID);
-            computeClient = new ComputeManagementClient(credential, subscriptionId);
-            context.log('Azure credentials initialized successfully');
+            accessToken = await getManagedIdentityToken(context);
+            context.log('Managed identity token obtained successfully');
         } catch (authError) {
             context.log.error('Authentication error:', authError);
             context.res = {
@@ -105,18 +101,9 @@ module.exports = async function (context, req) {
             return;
         }
 
-        // Get all VM SKUs for the location
+        // Get all VM SKUs for the location using REST API
         context.log(`Fetching VM SKUs for location: ${location}`);
-        const skusIterator = computeClient.resourceSkus.list({ filter: `location eq '${location}'` });
-        const allSkus = [];
-
-        for await (const sku of skusIterator) {
-            if (sku.resourceType === 'virtualMachines') {
-                allSkus.push(sku);
-            }
-        }
-
-        context.log(`Found ${allSkus.length} VM SKUs`);
+        const allSkus = await getVmSkusForLocation(subscriptionId, location, accessToken, context);
 
         // Find target SKU
         const targetSku = allSkus.find(s => s.name === skuName);
@@ -385,4 +372,58 @@ function getAvailabilityZones(sku, location) {
         }
     }
     return zones;
+}
+
+/**
+ * Get managed identity access token
+ */
+async function getManagedIdentityToken(context) {
+    const msiEndpoint = process.env.MSI_ENDPOINT || process.env.IDENTITY_ENDPOINT;
+    const msiSecret = process.env.MSI_SECRET || process.env.IDENTITY_HEADER;
+    
+    if (!msiEndpoint) {
+        throw new Error('Managed identity endpoint not found');
+    }
+    
+    const tokenUrl = `${msiEndpoint}?resource=https://management.azure.com/&api-version=2019-08-01`;
+    
+    const headers = {
+        'X-IDENTITY-HEADER': msiSecret
+    };
+    
+    const response = await fetch(tokenUrl, { headers });
+    
+    if (!response.ok) {
+        throw new Error(`Failed to get managed identity token: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    return data.access_token;
+}
+
+/**
+ * Get VM SKUs for a location using REST API
+ */
+async function getVmSkusForLocation(subscriptionId, location, accessToken, context) {
+    const apiVersion = '2021-07-01';
+    const url = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Compute/skus?api-version=${apiVersion}&$filter=location eq '${location}'`;
+    
+    const response = await fetch(url, {
+        headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        }
+    });
+    
+    if (!response.ok) {
+        const errorText = await response.text();
+        context.log.error(`Failed to fetch SKUs: ${response.status} ${errorText}`);
+        throw new Error(`Failed to fetch VM SKUs: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    const vmSkus = data.value.filter(sku => sku.resourceType === 'virtualMachines');
+    
+    context.log(`Found ${vmSkus.length} VM SKUs`);
+    return vmSkus;
 }
