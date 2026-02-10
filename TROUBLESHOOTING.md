@@ -8,14 +8,14 @@ Run these commands to troubleshoot the API:
 ```powershell
 az staticwebapp functions show --name vmsku-alternatives-webapp --resource-group rg-vmsku-alternatives
 ```
-**Expected:** Should show list of functions  
+**Expected:** Should show list of functions
 **Actual:** Returns `[]` (empty) - **THIS IS THE PROBLEM**
 
 ### 2. Test Health Endpoint
 ```powershell
 curl https://black-sea-0784c5d0f.1.azurestaticapps.net/api/health
 ```
-**Expected:** JSON response with `{"status":"healthy"}`  
+**Expected:** JSON response with `{"status":"healthy"}`
 **Actual:** 500 Internal Server Error
 
 ### 3. Check GitHub Actions
@@ -67,7 +67,7 @@ If Functions load but authentication fails:
 # Verify identity and permissions
 az staticwebapp identity show --name vmsku-alternatives-webapp --resource-group rg-vmsku-alternatives
 
-# Check role assignment  
+# Check role assignment
 az role assignment list --assignee <principalId> --output table
 ```
 
@@ -109,7 +109,7 @@ try {
         -Body $body `
         -ContentType 'application/json' `
         -UseBasicParsing
-    
+
     Write-Host "Success! Status: $($response.StatusCode)"
     Write-Host "Response: $($response.Content)"
 } catch {
@@ -130,7 +130,7 @@ try {
 
 **Look for these specific messages:**
 - ✅ "Finished building app with Oryx"
-- ✅ "Uploading build artifacts"  
+- ✅ "Uploading build artifacts"
 - ⚠️ Any "Skipping API" messages
 - ❌ Any errors about node_modules or dependencies
 
@@ -160,7 +160,7 @@ We may need to either:
 git commit --allow-empty -m "Force redeploy"
 git push
 
-# Check deployment status  
+# Check deployment status
 az staticwebapp show --name vmsku-alternatives-webapp --resource-group rg-vmsku-alternatives --query "{sku:sku.name,provider:provider,defaultHostname:defaultHostname}"
 
 # List Functions (should not be empty!)
