@@ -84,6 +84,7 @@ resource functionsApp 'Microsoft.Web/sites@2023-01-01' = {
     httpsOnly: true
     reserved: true
     siteConfig: {
+      linuxFxVersion: 'PYTHON|3.11'
       appSettings: [
         {
           name: 'AzureWebJobsStorage'
