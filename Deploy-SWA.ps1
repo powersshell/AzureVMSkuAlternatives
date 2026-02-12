@@ -53,12 +53,12 @@ Write-Host ""
 
 $env:SWA_CLI_DEPLOYMENT_TOKEN = $deploymentToken
 
-# Deploy with explicit paths and Node.js 20 (latest LTS)
+# Deploy with explicit paths and Node.js 18 (better compatibility with SWA)
 swa deploy `
     --app-location "web-app/src" `
     --api-location "web-app/api" `
     --api-language "node" `
-    --api-version "20" `
+    --api-version "18" `
     --deployment-token $deploymentToken `
     --env "production"
 

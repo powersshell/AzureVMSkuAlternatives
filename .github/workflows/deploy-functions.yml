@@ -5,12 +5,12 @@ on:
     branches:
       - main
     paths:
-      - 'web-app/api-python/**'
+      - 'web-app/api/**'
   workflow_dispatch:
 
 env:
   AZURE_FUNCTIONAPP_NAME: 'vmsku-api-functions'
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: 'web-app/api-python'
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: 'web-app/api'
   PYTHON_VERSION: '3.11'
 
 jobs:

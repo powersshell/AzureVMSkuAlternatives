@@ -6,7 +6,7 @@ param(
     [string]$ResourceGroup = "rg-vmsku-alternatives",
 
     [Parameter(Mandatory=$false)]
-    [string]$Location = "eastus2",
+    [string]$Location = "centralus",
 
     [Parameter(Mandatory=$false)]
     [string]$FunctionsAppName = "vmsku-api-functions",
