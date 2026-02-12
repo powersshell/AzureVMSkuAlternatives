@@ -55,7 +55,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-// App Service Plan (Consumption/Free tier)
+// App Service Plan (Consumption/Free tier) - Linux for Python
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   name: appServicePlanName
   location: location
@@ -64,21 +64,25 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
     name: 'Y1'
     tier: 'Dynamic'
   }
-  properties: {}
+  kind: 'linux'
+  properties: {
+    reserved: true
+  }
 }
 
-// Azure Functions App
+// Azure Functions App - Python on Linux
 resource functionsApp 'Microsoft.Web/sites@2023-01-01' = {
   name: functionsAppName
   location: location
   tags: tags
-  kind: 'functionapp'
+  kind: 'functionapp,linux'
   identity: {
     type: 'SystemAssigned'
   }
   properties: {
     serverFarmId: appServicePlan.id
     httpsOnly: true
+    reserved: true
     siteConfig: {
       appSettings: [
         {
@@ -102,8 +106,8 @@ resource functionsApp 'Microsoft.Web/sites@2023-01-01' = {
           value: 'python'
         }
         {
-          name: 'WEBSITE_NODE_DEFAULT_VERSION'
-          value: '~20'
+          name: 'AzureWebJobsFeatureFlags'
+          value: 'EnableWorkerIndexing'
         }
         {
           name: 'AZURE_SUBSCRIPTION_ID'
