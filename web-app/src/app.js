@@ -51,7 +51,7 @@ async function handleCompare() {
     hideResults();
 
     try {
-        const response = await fetch(`${API_BASE_URL}/compare-vms`, {
+        const response = await fetch(`${API_BASE_URL}/compare_vms`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
