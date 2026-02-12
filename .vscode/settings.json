@@ -1,8 +1,7 @@
 {
     "azureFunctions.deploySubpath": "web-app\\api",
-    "azureFunctions.postDeployTask": "npm install (functions)",
-    "azureFunctions.projectLanguage": "JavaScript",
+    "azureFunctions.projectLanguage": "Python",
     "azureFunctions.projectRuntime": "~4",
-    "debug.internalConsoleOptions": "neverOpen",
-    "azureFunctions.preDeployTask": "npm prune (functions)"
+    "azureFunctions.pythonVenv": ".venv",
+    "debug.internalConsoleOptions": "neverOpen"
 }
