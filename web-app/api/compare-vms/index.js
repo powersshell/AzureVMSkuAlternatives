@@ -2,6 +2,8 @@
  * Azure Function to compare VM SKUs (Functions v4) - REST API Version
  * This function retrieves Azure VM SKU information and finds similar alternatives
  */
+const fetch = require('node-fetch');
+
 module.exports = async function (context, req) {
     context.log('Processing VM comparison request', { method: req.method, url: req.url });
 
@@ -82,11 +84,11 @@ module.exports = async function (context, req) {
 
         context.log(`Using subscription: ${subscriptionId}`);
 
-        // Get access token from managed identity
+        // Get access token (try managed identity first, fall back to service principal)
         let accessToken;
         try {
-            accessToken = await getManagedIdentityToken(context);
-            context.log('Managed identity token obtained successfully');
+            accessToken = await getAccessToken(context);
+            context.log('Access token obtained successfully');
         } catch (authError) {
             context.log.error('Authentication error:', authError);
             context.res = {
@@ -95,7 +97,7 @@ module.exports = async function (context, req) {
                 body: JSON.stringify({
                     error: 'Authentication failed',
                     details: authError.message,
-                    hint: 'Ensure managed identity is enabled with Reader role on the subscription'
+                    hint: 'Ensure service principal credentials are configured or managed identity is enabled'
                 })
             };
             return;
@@ -375,6 +377,57 @@ function getAvailabilityZones(sku, location) {
 }
 
 /**
+ * Get access token for Azure Resource Manager
+ * Tries service principal first, falls back to managed identity
+ */
+async function getAccessToken(context) {
+    const tenantId = process.env.AZURE_TENANT_ID;
+    const clientId = process.env.AZURE_CLIENT_ID;
+    const clientSecret = process.env.AZURE_CLIENT_SECRET;
+
+    // Try service principal authentication first
+    if (tenantId && clientId && clientSecret) {
+        context.log('Using service principal authentication');
+        return await getServicePrincipalToken(tenantId, clientId, clientSecret, context);
+    }
+
+    // Fall back to managed identity
+    context.log('Attempting managed identity authentication');
+    return await getManagedIdentityToken(context);
+}
+
+/**
+ * Get token using service principal (client credentials flow)
+ */
+async function getServicePrincipalToken(tenantId, clientId, clientSecret, context) {
+    const tokenUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+
+    const params = new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        scope: 'https://management.azure.com/.default',
+        grant_type: 'client_credentials'
+    });
+
+    const response = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: params
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        context.log.error('Service principal auth failed:', errorText);
+        throw new Error(`Failed to get service principal token: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.access_token;
+}
+
+/**
  * Get managed identity access token
  */
 async function getManagedIdentityToken(context) {
@@ -382,16 +435,16 @@ async function getManagedIdentityToken(context) {
     const msiSecret = process.env.MSI_SECRET || process.env.IDENTITY_HEADER;
 
     if (!msiEndpoint) {
-        throw new Error('Managed identity endpoint not found');
+        throw new Error('Managed identity not available. Configure service principal credentials.');
     }
 
     const tokenUrl = `${msiEndpoint}?resource=https://management.azure.com/&api-version=2019-08-01`;
 
-    const headers = {
-        'X-IDENTITY-HEADER': msiSecret
-    };
-
-    const response = await fetch(tokenUrl, { headers });
+    const response = await fetch(tokenUrl, {
+        headers: {
+            'X-IDENTITY-HEADER': msiSecret
+        }
+    });
 
     if (!response.ok) {
         throw new Error(`Failed to get managed identity token: ${response.statusText}`);
