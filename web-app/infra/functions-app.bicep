@@ -38,6 +38,23 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
+// Application Insights for monitoring
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: '${functionsAppName}-insights'
+  location: location
+  tags: tags
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    Request_Source: 'rest'
+    RetentionInDays: 30
+    WorkspaceResourceId: null
+    IngestionMode: 'ApplicationInsights'
+    publicNetworkAccessForIngestion: 'Enabled'
+    publicNetworkAccessForQuery: 'Enabled'
+  }
+}
+
 // App Service Plan (Consumption/Free tier)
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   name: appServicePlanName
@@ -92,6 +109,14 @@ resource functionsApp 'Microsoft.Web/sites@2023-01-01' = {
           name: 'AZURE_SUBSCRIPTION_ID'
           value: subscriptionId
         }
+        {
+          name: 'APPINSIGHTS_INSTRUMENTATIONKEY'
+          value: appInsights.properties.InstrumentationKey
+        }
+        {
+          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+          value: appInsights.properties.ConnectionString
+        }
       ]
       cors: {
         allowedOrigins: [
@@ -110,3 +135,5 @@ resource functionsApp 'Microsoft.Web/sites@2023-01-01' = {
 output functionsAppName string = functionsApp.name
 output functionsAppHostname string = functionsApp.properties.defaultHostName
 output functionsAppPrincipalId string = functionsApp.identity.principalId
+output appInsightsInstrumentationKey string = appInsights.properties.InstrumentationKey
+output appInsightsConnectionString string = appInsights.properties.ConnectionString
