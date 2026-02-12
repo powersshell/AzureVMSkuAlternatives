@@ -99,7 +99,7 @@ resource functionsApp 'Microsoft.Web/sites@2023-01-01' = {
         }
         {
           name: 'FUNCTIONS_WORKER_RUNTIME'
-          value: 'node'
+          value: 'python'
         }
         {
           name: 'WEBSITE_NODE_DEFAULT_VERSION'
