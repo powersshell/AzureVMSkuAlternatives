@@ -481,15 +481,8 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
           name: 'AzureWebJobsStorage__tableServiceUri'
           value: 'https://${storageAccount.name}.table.${environment().suffixes.storage}'
         }
-        // Function App settings
-        {
-          name: 'FUNCTIONS_EXTENSION_VERSION'
-          value: '~4'
-        }
-        {
-          name: 'FUNCTIONS_WORKER_RUNTIME'
-          value: 'python'
-        }
+        // NOTE: FUNCTIONS_EXTENSION_VERSION and FUNCTIONS_WORKER_RUNTIME are INVALID for Flex Consumption
+        // Runtime is specified in functionAppConfig.runtime instead
         {
           name: 'AzureWebJobsFeatureFlags'
           value: 'EnableWorkerIndexing'
