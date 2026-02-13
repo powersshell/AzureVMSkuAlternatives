@@ -118,6 +118,27 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
+// Blob Service for storage account
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
+  parent: storageAccount
+  name: 'default'
+  properties: {
+    deleteRetentionPolicy: {
+      enabled: true
+      days: 7
+    }
+  }
+}
+
+// Deployment storage container for Flex Consumption (required for functionAppConfig)
+resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  parent: blobService
+  name: 'deployment-packages'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // ============================================================================
 // PRIVATE DNS ZONES
 // ============================================================================
@@ -394,7 +415,7 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
 // FUNCTION APP - FLEX CONSUMPTION WITH PRIVATE STORAGE
 // ============================================================================
 
-resource functionsApp 'Microsoft.Web/sites@2023-01-01' = {
+resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
   name: functionsAppName
   location: location
   tags: tags
@@ -411,6 +432,27 @@ resource functionsApp 'Microsoft.Web/sites@2023-01-01' = {
     virtualNetworkSubnetId: functionSubnetId
     vnetRouteAllEnabled: true  // Route all traffic through VNet
     vnetContentShareEnabled: false  // Flex Consumption doesn't use file shares
+    
+    // REQUIRED for Flex Consumption: functionAppConfig
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: 'https://${storageAccount.name}.blob.${environment().suffixes.storage}/${deploymentContainer.name}'
+          authentication: {
+            type: 'SystemAssignedIdentity'
+          }
+        }
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: 100
+        instanceMemoryMB: 2048
+      }
+      runtime: {
+        name: 'python'
+        version: '3.11'
+      }
+    }
     
     siteConfig: {
       linuxFxVersion: 'PYTHON|3.11'
