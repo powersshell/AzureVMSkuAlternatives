@@ -500,15 +500,8 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsights.properties.ConnectionString
         }
-        // Build settings
-        {
-          name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
-          value: 'true'
-        }
-        {
-          name: 'ENABLE_ORYX_BUILD'
-          value: 'true'
-        }
+        // NOTE: SCM_DO_BUILD_DURING_DEPLOYMENT and ENABLE_ORYX_BUILD are NOT supported in Flex Consumption
+        // Build happens via --build-remote flag during deployment
       ]
       
       // CORS settings (if needed for frontend)

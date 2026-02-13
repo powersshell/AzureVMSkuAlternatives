@@ -110,6 +110,19 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: 'Remove invalid app settings for Flex Consumption'
+        shell: bash
+        run: |
+          echo "🧹 Removing invalid app settings..."
+          # SCM_DO_BUILD_DURING_DEPLOYMENT and ENABLE_ORYX_BUILD are not supported in Flex
+          az functionapp config appsettings delete \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+            --setting-names SCM_DO_BUILD_DURING_DEPLOYMENT ENABLE_ORYX_BUILD \
+            || echo "⚠️  Settings may not exist (this is OK)"
+          
+          echo "✅ Cleaned up app settings"
+
       - name: 'Create deployment package'
         shell: bash
         run: |
