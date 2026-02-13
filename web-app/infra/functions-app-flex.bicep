@@ -58,7 +58,7 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2023-04-01' = {
             {
               name: 'delegation'
               properties: {
-                serviceName: 'Microsoft.Web/serverFarms'
+                serviceName: 'Microsoft.App/environments'
               }
             }
           ]
