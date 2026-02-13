@@ -110,13 +110,31 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: 'Deploy to Azure Functions'
-        uses: Azure/functions-action@v1
-        with:
-          app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
-          package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          # IMPORTANT: Do not use publish-profile for private storage
-          # OIDC authentication handles deployment
+      - name: 'Create deployment package'
+        shell: bash
+        run: |
+          echo "📦 Creating deployment package..."
+          cd '${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}'
+          zip -r ../function-app.zip . -x "*.git*"
+          cd ..
+          ls -lh function-app.zip
+          
+      - name: 'Deploy to Azure Functions (Flex Consumption)'
+        shell: bash
+        run: |
+          echo "🚀 Deploying to Flex Consumption Function App..."
+          echo "   Function App: ${{ env.AZURE_FUNCTIONAPP_NAME }}"
+          echo "   Resource Group: ${{ env.RESOURCE_GROUP }}"
+          
+          # Deploy using Azure CLI (works with private storage and managed identity)
+          az functionapp deployment source config-zip \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+            --src function-app.zip \
+            --build-remote true \
+            --verbose
+          
+          echo "✅ Deployment command completed"
 
       - name: 'Wait for deployment to complete'
         run: |
