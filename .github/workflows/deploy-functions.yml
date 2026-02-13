@@ -115,9 +115,11 @@ jobs:
         run: |
           echo "📦 Creating deployment package..."
           cd '${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}'
-          zip -r ../function-app.zip . -x "*.git*"
-          cd ..
+          zip -r ../../function-app.zip . -x "*.git*"
+          cd ../..
+          echo "✅ Created deployment package:"
           ls -lh function-app.zip
+          pwd
           
       - name: 'Deploy to Azure Functions (Flex Consumption)'
         shell: bash
@@ -125,6 +127,9 @@ jobs:
           echo "🚀 Deploying to Flex Consumption Function App..."
           echo "   Function App: ${{ env.AZURE_FUNCTIONAPP_NAME }}"
           echo "   Resource Group: ${{ env.RESOURCE_GROUP }}"
+          echo "   Working Directory: $(pwd)"
+          echo "   Zip File:"
+          ls -lh function-app.zip
           
           # Deploy using Azure CLI (works with private storage and managed identity)
           az functionapp deployment source config-zip \
