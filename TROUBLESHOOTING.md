@@ -178,3 +178,85 @@ az staticwebapp functions show --name vmsku-alternatives-webapp --resource-group
 - ⏳ Deployment: **In progress** (commit 96667dd with better logging)
 
 **Wait ~5 minutes**, then test again with browser console open!
+
+---
+
+## GitHub Actions Authentication Errors
+
+### Error: "Login failed - Not all values are present"
+
+**Full Error:**
+```
+Login failed with Error: Using auth-type: SERVICE_PRINCIPAL. 
+Not all values are present. Ensure 'client-id' and 'tenant-id' are supplied.
+```
+
+**Root Cause:** GitHub Actions cannot find the required secrets.
+
+**Solution: Add Secrets to GitHub**
+
+#### Step 1: Go to Secrets Page
+https://github.com/powersshell/AzureVMSkuAlternatives/settings/secrets/actions
+
+#### Step 2: Add These 3 Secrets
+
+Click **"New repository secret"** and add **exactly as shown**:
+
+| Secret Name | Value |
+|-------------|-------|
+| `AZURE_CLIENT_ID` | `f8a64527-aad0-4015-acae-513733a8c0f7` |
+| `AZURE_TENANT_ID` | `ec509388-6a83-4654-aaa8-9f078119b26d` |
+| `AZURE_SUBSCRIPTION_ID` | `e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7` |
+
+**Important:**
+- ✅ Names are **case-sensitive** - must match exactly
+- ✅ Add to **Repository secrets** (under Actions), NOT Environments
+- ✅ No quotes around values
+- ✅ Copy entire GUID (no spaces)
+
+#### Step 3: Re-run Workflow
+
+After adding secrets:
+1. Go to Actions tab
+2. Click failed workflow run
+3. Click "Re-run all jobs"
+
+**Expected Result:** ✅ "Azure Login via OIDC - Login successful"
+
+---
+
+### Common Mistakes
+
+#### ❌ Wrong Location
+- Secrets in "Environments" → won't work
+- Secrets in personal account → won't work
+- ✅ Must be **Repository secrets** under **Actions**
+
+#### ❌ Typos in Names
+- Wrong: `AZURE_CLIENTID` (missing underscore)
+- Wrong: `Azure_Client_Id` (wrong case)
+- ✅ Correct: `AZURE_CLIENT_ID`
+
+#### ❌ Extra Characters
+- Wrong: ` f8a64527...` (leading space)
+- Wrong: `"f8a64527..."` (quotes)
+- ✅ Correct: `f8a64527...` (just the GUID)
+
+---
+
+## Quick Reference
+
+### GitHub Secrets Location
+**URL:** https://github.com/powersshell/AzureVMSkuAlternatives/settings/secrets/actions
+
+Must be under: **Settings** → **Secrets and variables** → **Actions** → **Repository secrets**
+
+### Verification
+After adding secrets, check they appear in the list:
+- AZURE_CLIENT_ID ✓
+- AZURE_TENANT_ID ✓  
+- AZURE_SUBSCRIPTION_ID ✓
+
+(Values will show as •••• for security)
+
+---

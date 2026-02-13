@@ -549,16 +549,10 @@ resource fileDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-0
   }
 }
 
-// Reader role at subscription level (for VM SKU comparison)
-resource readerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(subscription().id, functionsApp.id, 'Reader')
-  scope: subscription()
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
-    principalId: functionsApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
+// NOTE: Reader role at subscription level cannot be assigned from resource group scope
+// This must be assigned separately after deployment via Azure CLI or Portal
+// Role needed: Reader (acdd72a7-3385-48ef-bd42-f606fba81ae7)
+// Purpose: Allow Function App to read VM SKU information from Azure Compute API
 
 // ============================================================================
 // OUTPUTS

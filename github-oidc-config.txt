@@ -1,0 +1,30 @@
+# GitHub OIDC Configuration
+# Generated: 2026-02-13 06:53:39
+
+## Azure AD App Registration
+App Name: github-actions-vmsku-functions
+Application ID (Client ID): f8a64527-aad0-4015-acae-513733a8c0f7
+Service Principal Object ID: 70616868-586c-4551-91c9-1126e0e5706f
+
+## Azure Details
+Subscription ID: e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7
+Tenant ID: ec509388-6a83-4654-aaa8-9f078119b26d
+Resource Group: rg-vmsku-alternatives
+
+## GitHub Repository
+Repository: powersshell/AzureVMSkuAlternatives
+Branch: main
+
+## GitHub Secrets (to add manually)
+AZURE_CLIENT_ID=f8a64527-aad0-4015-acae-513733a8c0f7
+AZURE_TENANT_ID=ec509388-6a83-4654-aaa8-9f078119b26d
+AZURE_SUBSCRIPTION_ID=e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7
+
+## Federated Credential Configuration
+Issuer: https://token.actions.githubusercontent.com
+Subject: repo:powersshell/AzureVMSkuAlternatives:ref:refs/heads/main
+Audiences: api://AzureADTokenExchange
+
+## Azure Role Assignments
+- Contributor on /subscriptions/e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7/resourceGroups/rg-vmsku-alternatives
+- Reader on /subscriptions/e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7
