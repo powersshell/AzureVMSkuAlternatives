@@ -605,7 +605,5 @@ output privateEndpointSubnetId string = privateEndpointSubnetId
 output appInsightsInstrumentationKey string = appInsights.properties.InstrumentationKey
 output appInsightsConnectionString string = appInsights.properties.ConnectionString
 
-output blobPrivateEndpointIp string = blobPrivateEndpoint.properties.customDnsConfigs[0].ipAddresses[0]
-output filePrivateEndpointIp string = filePrivateEndpoint.properties.customDnsConfigs[0].ipAddresses[0]
-output queuePrivateEndpointIp string = queuePrivateEndpoint.properties.customDnsConfigs[0].ipAddresses[0]
-output tablePrivateEndpointIp string = tablePrivateEndpoint.properties.customDnsConfigs[0].ipAddresses[0]
+// NOTE: Private endpoint IPs are not output as customDnsConfigs may not be populated during initial deployment
+// Private endpoints are accessible via private DNS zones
