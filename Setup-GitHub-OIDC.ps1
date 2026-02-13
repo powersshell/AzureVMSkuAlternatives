@@ -126,6 +126,26 @@ if ($LASTEXITCODE -eq 0) {
     }
 }
 
+# User Access Administrator role at resource group scope (can assign RBAC roles)
+Write-Host "   Assigning User Access Administrator role at resource group scope..." -ForegroundColor White
+
+$roleAssignment = az role assignment create `
+    --role "User Access Administrator" `
+    --assignee $servicePrincipalId `
+    --scope $rgScope `
+    --output json 2>&1
+
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "   ✅ User Access Administrator role assigned" -ForegroundColor Green
+} else {
+    if ($roleAssignment -like "*already exists*") {
+        Write-Host "   ℹ️  User Access Administrator role already assigned" -ForegroundColor Yellow
+    } else {
+        Write-Host "   ❌ Failed to assign User Access Administrator role" -ForegroundColor Red
+        Write-Host "   Error: $roleAssignment" -ForegroundColor Red
+    }
+}
+
 # Reader role at subscription scope (for reading VM SKUs)
 Write-Host "   Assigning Reader role at subscription scope..." -ForegroundColor White
 $subScope = "/subscriptions/$subscriptionId"

@@ -223,10 +223,17 @@ curl "https://vmsku-api-functions-flex.azurewebsites.net/api/compare_vms?current
 ```powershell
 # Check current role assignments
 $sp = az ad sp list --display-name "github-actions-vmsku-functions" --query "[0]" -o json | ConvertFrom-Json
-az role assignment list --assignee $sp.id
+az role assignment list --assignee $sp.id --all
+
+# Required roles:
+# 1. Contributor (RG scope) - Deploy resources
+# 2. User Access Administrator (RG scope) - Assign RBAC roles
+# 3. Reader (Subscription scope) - Read VM SKUs
 
 # Re-assign roles if needed
 az role assignment create --role "Contributor" --assignee $sp.id --scope "/subscriptions/{sub-id}/resourceGroups/rg-vmsku-alternatives"
+az role assignment create --role "User Access Administrator" --assignee $sp.id --scope "/subscriptions/{sub-id}/resourceGroups/rg-vmsku-alternatives"
+az role assignment create --role "Reader" --assignee $sp.id --scope "/subscriptions/{sub-id}"
 ```
 
 ### Error: "Storage account access denied"
