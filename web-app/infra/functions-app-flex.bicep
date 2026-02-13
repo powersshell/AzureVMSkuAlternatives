@@ -455,7 +455,8 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
     }
     
     siteConfig: {
-      linuxFxVersion: 'PYTHON|3.11'
+      // NOTE: linuxFxVersion and pythonVersion are NOT valid for Flex Consumption
+      // Runtime is specified in functionAppConfig.runtime instead
       
       // Flex Consumption Function App settings
       appSettings: [
@@ -517,9 +518,6 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
         }
       ]
       
-      // Python specific settings
-      pythonVersion: '3.11'
-      
       // CORS settings (if needed for frontend)
       cors: {
         allowedOrigins: [
@@ -528,9 +526,9 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
         supportCredentials: false
       }
       
-      // Other settings
-      ftpsState: 'Disabled'
+      // Security settings
       minTlsVersion: '1.2'
+      // NOTE: ftpsState is not valid for Flex Consumption
     }
   }
   dependsOn: [
