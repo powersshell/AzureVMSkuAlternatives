@@ -1,6 +1,7 @@
 """
 Azure Function to compare VM SKUs (Python)
 Retrieves Azure VM SKU information and finds similar alternatives
+Now with caching support via Azure Storage Tables
 """
 import logging
 import json
@@ -8,6 +9,8 @@ import os
 import requests
 from typing import Dict, List, Optional
 import azure.functions as func
+from azure.data.tables import TableServiceClient
+from azure.identity import DefaultAzureCredential
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -89,9 +92,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=500
             )
 
-        # Get all VM SKUs for the location
+        # Get all VM SKUs for the location (from cache or live API)
         logging.info(f'Fetching VM SKUs for location: {location}')
-        all_skus = get_vm_skus_for_location(subscription_id, location, access_token)
+        all_skus, data_source = get_vm_skus_with_cache(subscription_id, location, access_token)
+        logging.info(f'Retrieved {len(all_skus)} SKUs from {data_source}')
 
         # Find target SKU
         target_sku = next((s for s in all_skus if s['name'] == sku_name), None)
@@ -105,8 +109,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # Extract target capabilities
         target_capabilities = extract_capabilities(target_sku)
 
-        # Get pricing for target SKU
-        target_pricing = get_vm_pricing(sku_name, location, currency_code)
+        # Get pricing for target SKU (from cache if available, otherwise API)
+        target_pricing = target_sku.get('pricing') or get_vm_pricing(sku_name, location, currency_code)
 
         # Get availability zones
         target_zones = get_availability_zones(target_sku, location)
@@ -346,6 +350,74 @@ def get_access_token() -> str:
 
     data = response.json()
     return data['access_token']
+
+
+def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: str) -> tuple[List[Dict], str]:
+    """
+    Get VM SKUs from cache with fallback to live API
+    Returns: (list of SKUs, data_source)
+    data_source: 'cache' or 'live_api'
+    """
+    storage_account_name = os.environ.get('SKU_CACHE_STORAGE_ACCOUNT')
+    
+    # Try cache first
+    if storage_account_name:
+        try:
+            logging.info('Attempting to load SKUs from cache...')
+            credential = DefaultAzureCredential()
+            table_service = TableServiceClient(
+                endpoint=f"https://{storage_account_name}.table.core.windows.net",
+                credential=credential
+            )
+            
+            table_client = table_service.get_table_client("vmskus")
+            query_filter = f"PartitionKey eq '{location}'"
+            entities = table_client.query_entities(query_filter=query_filter)
+            
+            skus = []
+            for entity in entities:
+                # Convert cached entity to SKU format
+                sku = {
+                    'name': entity['name'],
+                    'capabilities': [
+                        {'name': 'vCPUs', 'value': str(entity['vCPUs'])},
+                        {'name': 'MemoryGB', 'value': str(entity['memoryGB'])},
+                        {'name': 'MaxDataDiskCount', 'value': str(entity['maxDataDisks'])},
+                        {'name': 'MaxNetworkInterfaces', 'value': str(entity['maxNics'])},
+                        {'name': 'UncachedDiskIOPS', 'value': str(entity['uncachedDiskIOPS'])},
+                        {'name': 'GPUs', 'value': str(entity['gpuCount'])},
+                        {'name': 'GPUType', 'value': entity.get('gpuType', '')},
+                        {'name': 'PremiumIO', 'value': 'True' if entity['premiumIO'] else 'False'},
+                        {'name': 'AcceleratedNetworkingEnabled', 'value': 'True' if entity['acceleratedNetworking'] else 'False'},
+                        {'name': 'EncryptionAtHostSupported', 'value': 'True' if entity['encryptionAtHost'] else 'False'},
+                        {'name': 'EphemeralOSDiskSupported', 'value': 'True' if entity['ephemeralOSDisk'] else 'False'},
+                        {'name': 'NVMe', 'value': 'True' if entity.get('nvme', False) else 'False'}
+                    ],
+                    'locationInfo': [{
+                        'location': location,
+                        'zones': entity.get('availabilityZones', '').split(',') if entity.get('availabilityZones') else []
+                    }],
+                    'pricing': {
+                        'hourlyPrice': entity.get('hourlyPrice', 0),
+                        'monthlyPrice': entity.get('monthlyPrice', 0),
+                        'currency': entity.get('currency', 'USD')
+                    } if entity.get('hourlyPrice') else None
+                }
+                skus.append(sku)
+            
+            if skus:
+                logging.info(f'Loaded {len(skus)} SKUs from cache')
+                return skus, 'cache'
+            else:
+                logging.warning('Cache is empty, falling back to live API')
+        except Exception as e:
+            logging.warning(f'Failed to load from cache: {e}, falling back to live API')
+    else:
+        logging.info('Cache not configured, using live API')
+    
+    # Fallback to live API
+    skus = get_vm_skus_for_location(subscription_id, location, access_token)
+    return skus, 'live_api'
 
 
 def get_vm_skus_for_location(subscription_id: str, location: str, access_token: str) -> List[Dict]:

@@ -1,2 +1,4 @@
 azure-functions
 requests
+azure-data-tables
+azure-identity

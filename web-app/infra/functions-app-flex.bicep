@@ -491,6 +491,10 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
           name: 'AZURE_SUBSCRIPTION_ID'
           value: subscriptionId
         }
+        {
+          name: 'SKU_CACHE_STORAGE_ACCOUNT'
+          value: storageAccount.name
+        }
         // Application Insights
         {
           name: 'APPINSIGHTS_INSTRUMENTATIONKEY'
