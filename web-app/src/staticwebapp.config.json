@@ -2,8 +2,7 @@
   "routes": [
     {
       "route": "/api/*",
-      "allowedRoles": ["anonymous"],
-      "rewrite": "https://vmsku-api-functions-flex.azurewebsites.net/api/{*}"
+      "allowedRoles": ["anonymous"]
     }
   ],
   "navigationFallback": {

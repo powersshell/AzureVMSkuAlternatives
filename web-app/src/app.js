@@ -1,5 +1,6 @@
 // API Configuration
-const API_BASE_URL = '/api';
+// Direct connection to Flex Consumption Function App (Static Web App rewrite doesn't support POST)
+const API_BASE_URL = 'https://vmsku-api-functions-flex.azurewebsites.net/api';
 
 // DOM Elements
 const compareBtn = document.getElementById('compareBtn');

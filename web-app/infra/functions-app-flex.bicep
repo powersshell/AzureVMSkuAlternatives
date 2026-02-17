@@ -504,10 +504,11 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
         // Build happens via --build-remote flag during deployment
       ]
       
-      // CORS settings (if needed for frontend)
+      // CORS settings for Static Web App
       cors: {
         allowedOrigins: [
           'https://portal.azure.com'
+          'https://black-sea-0784c5d0f.1.azurestaticapps.net'  // Static Web App
         ]
         supportCredentials: false
       }
