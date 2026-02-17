@@ -26,7 +26,7 @@
                     <div class="form-group">
                         <label for="skuName">VM SKU Name *</label>
                         <input type="text" id="skuName" placeholder="e.g., Standard_D4s_v3" required>
-                        <small>The Azure VM SKU you want to compare</small>
+                        <small>The Azure VM SKU you want to compare (e.g., Standard_D4s_v3)</small>
                     </div>
 
                     <div class="form-group">
@@ -71,15 +71,9 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="tolerance">Tolerance (%)</label>
-                        <input type="number" id="tolerance" value="20" min="0" max="100">
-                        <small>Percentage tolerance for matching capabilities</small>
-                    </div>
-
-                    <div class="form-group">
                         <label for="minSimilarityScore">Min Similarity Score</label>
-                        <input type="number" id="minSimilarityScore" value="60" min="0" max="100">
-                        <small>Minimum score (0-100) to include in results</small>
+                        <input type="number" id="minSimilarityScore" value="80" min="0" max="100">
+                        <small>Minimum overall match score required to show a VM in results. Higher values show only very similar VMs.</small>
                     </div>
 
                     <div class="form-group">

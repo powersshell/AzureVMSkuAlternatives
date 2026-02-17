@@ -34,7 +34,6 @@ async function handleCompare() {
     const params = {
         skuName,
         location,
-        tolerance: parseInt(document.getElementById('tolerance').value),
         minSimilarityScore: parseInt(document.getElementById('minSimilarityScore').value),
         currencyCode: document.getElementById('currencyCode').value,
         weightCPU: parseFloat(document.getElementById('weightCPU').value),

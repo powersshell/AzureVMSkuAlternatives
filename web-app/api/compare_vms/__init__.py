@@ -40,7 +40,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # Extract parameters with defaults
         sku_name = req_body.get('skuName')
         location = req_body.get('location')
-        tolerance = req_body.get('tolerance', 20)
         min_similarity_score = req_body.get('minSimilarityScore', 60)
         currency_code = req_body.get('currencyCode', 'USD')
         weight_cpu = req_body.get('weightCPU', 2.0)
@@ -137,8 +136,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     'weightStorage': weight_storage,
                     'weightNetwork': weight_network,
                     'weightFeatures': weight_features
-                },
-                tolerance
+                }
             )
 
             if similarity_score >= min_similarity_score:
@@ -177,7 +175,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             'alternatives': alternatives,
             'searchParameters': {
                 'location': location,
-                'tolerance': tolerance,
                 'minSimilarityScore': min_similarity_score,
                 'weights': {
                     'cpu': weight_cpu,
@@ -236,7 +233,7 @@ def extract_capabilities(sku: Dict) -> Dict:
     }
 
 
-def calculate_similarity(target: Dict, candidate: Dict, weights: Dict, tolerance: int) -> float:
+def calculate_similarity(target: Dict, candidate: Dict, weights: Dict) -> float:
     """Calculate similarity score between two SKUs"""
     total_score = 0.0
     total_weight = 0.0
