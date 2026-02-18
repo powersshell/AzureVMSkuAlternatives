@@ -1,19 +1,32 @@
 """
-Azure Function to compare VM SKUs (Python)
-Retrieves Azure VM SKU information and finds similar alternatives
-Now with caching support via Azure Storage Tables
+Azure Functions v2 Programming Model - Flex Consumption Compatible
+All HTTP and Timer triggered functions consolidated into a single file
 """
 import logging
 import json
 import os
+import sys
 import requests
 from typing import Dict, List, Optional
+from datetime import datetime, timezone
 import azure.functions as func
 from azure.data.tables import TableServiceClient
 from azure.identity import DefaultAzureCredential
 
+# Create the Function App instance
+app = func.FunctionApp()
 
-def main(req: func.HttpRequest) -> func.HttpResponse:
+
+# ============================================================================
+# HTTP Route: /compare_vms - Compare VM SKUs
+# ============================================================================
+@app.route(route="compare_vms", methods=["GET", "POST"], auth_level=func.AuthLevel.ANONYMOUS)
+def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Azure Function to compare VM SKUs (Python)
+    Retrieves Azure VM SKU information and finds similar alternatives
+    Now with caching support via Azure Storage Tables
+    """
     logging.info('Processing VM comparison request')
 
     # Handle GET request
@@ -209,6 +222,201 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500
         )
 
+
+# ============================================================================
+# HTTP Route: /health - Health check endpoint
+# ============================================================================
+@app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def health(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Health check endpoint for Azure Functions (Python)
+    """
+    logging.info('Health check endpoint called')
+
+    response_data = {
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat() + 'Z',
+        'message': 'API is running',
+        'runtime': 'Python',
+        'pythonVersion': sys.version
+    }
+
+    return func.HttpResponse(
+        json.dumps(response_data),
+        mimetype='application/json',
+        status_code=200
+    )
+
+
+# ============================================================================
+# HTTP Route: /skus - List available VM SKUs from cache
+# ============================================================================
+@app.route(route="skus", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def list_skus(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Azure Function to list available VM SKUs from cache
+    Used to populate dropdown in frontend
+    """
+    logging.info('Processing list SKUs request')
+    
+    # Get location from query parameters
+    location = req.params.get('location')
+    
+    if not location:
+        return func.HttpResponse(
+            json.dumps({'error': 'location parameter is required'}),
+            mimetype='application/json',
+            status_code=400
+        )
+    
+    # Get storage account name from environment
+    storage_account_name = os.environ.get('SKU_CACHE_STORAGE_ACCOUNT')
+    
+    if not storage_account_name:
+        return func.HttpResponse(
+            json.dumps({'error': 'SKU cache not configured'}),
+            mimetype='application/json',
+            status_code=500
+        )
+    
+    try:
+        # Initialize Table Service with managed identity
+        credential = DefaultAzureCredential()
+        table_service = TableServiceClient(
+            endpoint=f"https://{storage_account_name}.table.core.windows.net",
+            credential=credential
+        )
+        
+        table_client = table_service.get_table_client("vmskus")
+        
+        # Query all SKUs for the location
+        query_filter = f"PartitionKey eq '{location}'"
+        entities = table_client.query_entities(query_filter=query_filter)
+        
+        # Format for frontend dropdown
+        skus = []
+        for entity in entities:
+            skus.append({
+                'name': entity['name'],
+                'displayName': f"{entity['name']} ({entity['vCPUs']} vCPUs, {entity['memoryGB']} GB)",
+                'vCPUs': entity['vCPUs'],
+                'memoryGB': entity['memoryGB'],
+                'hourlyPrice': entity.get('hourlyPrice', 0),
+                'monthlyPrice': entity.get('monthlyPrice', 0),
+                'currency': entity.get('currency', 'USD'),
+                'gpuCount': entity.get('gpuCount', 0)
+            })
+        
+        # Sort by vCPUs then memory
+        skus.sort(key=lambda x: (x['vCPUs'], x['memoryGB']))
+        
+        response_data = {
+            'location': location,
+            'count': len(skus),
+            'skus': skus
+        }
+        
+        return func.HttpResponse(
+            json.dumps(response_data),
+            mimetype='application/json',
+            status_code=200
+        )
+        
+    except Exception as e:
+        logging.error(f'Error listing SKUs: {e}')
+        return func.HttpResponse(
+            json.dumps({
+                'error': 'Failed to retrieve SKU list',
+                'details': str(e)
+            }),
+            mimetype='application/json',
+            status_code=500
+        )
+
+
+# ============================================================================
+# Timer Trigger: refresh_sku_cache - Daily SKU cache refresh
+# ============================================================================
+@app.timer_trigger(schedule="0 0 2 * * *", arg_name="timer", run_on_startup=False, use_monitor=False)
+def refresh_sku_cache(timer: func.TimerRequest) -> None:
+    """
+    Timer-triggered Azure Function to refresh VM SKU cache
+    Runs daily at 2:00 AM UTC to populate Storage Table with latest SKU data
+    Schedule: 0 0 2 * * * (Daily at 2:00 AM UTC)
+    """
+    logging.info('Starting SKU cache refresh...')
+    
+    # Get configuration
+    storage_account_name = os.environ.get('SKU_CACHE_STORAGE_ACCOUNT')
+    subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID')
+    
+    if not storage_account_name or not subscription_id:
+        logging.error('Missing required environment variables: SKU_CACHE_STORAGE_ACCOUNT or AZURE_SUBSCRIPTION_ID')
+        return
+    
+    # Initialize Table Service with managed identity
+    credential = DefaultAzureCredential()
+    table_service = TableServiceClient(
+        endpoint=f"https://{storage_account_name}.table.core.windows.net",
+        credential=credential
+    )
+    
+    # Create table if not exists
+    table_name = "vmskus"
+    try:
+        table_service.create_table_if_not_exists(table_name)
+        logging.info(f"Table '{table_name}' is ready")
+    except Exception as e:
+        logging.error(f"Failed to create table: {e}")
+        return
+    
+    table_client = table_service.get_table_client(table_name)
+    
+    # Get access token for Azure Management API
+    try:
+        token = get_access_token()
+    except Exception as e:
+        logging.error(f"Failed to get access token: {e}")
+        return
+    
+    # List of key Azure regions to cache
+    # Full list can be expanded, starting with most common regions
+    regions = [
+        'eastus', 'eastus2', 'westus', 'westus2', 'westus3',
+        'centralus', 'northcentralus', 'southcentralus', 'westcentralus',
+        'canadacentral', 'canadaeast',
+        'brazilsouth',
+        'northeurope', 'westeurope', 'uksouth', 'ukwest',
+        'francecentral', 'germanywestcentral', 'norwayeast', 'switzerlandnorth',
+        'swedencentral',
+        'eastasia', 'southeastasia',
+        'japaneast', 'japanwest',
+        'australiaeast', 'australiasoutheast',
+        'centralindia', 'southindia', 'westindia',
+        'koreacentral', 'koreasouth',
+        'uaenorth',
+        'southafricanorth'
+    ]
+    
+    total_updated = 0
+    total_errors = 0
+    
+    for region in regions:
+        try:
+            logging.info(f"Processing region: {region}")
+            count = refresh_region(region, subscription_id, token, table_client)
+            total_updated += count
+            logging.info(f"Updated {count} SKUs for region {region}")
+        except Exception as e:
+            logging.error(f"Error processing region {region}: {e}")
+            total_errors += 1
+    
+    logging.info(f"SKU cache refresh completed. Updated: {total_updated}, Errors: {total_errors}")
+
+
+# ============================================================================
+# Helper Functions (shared across all functions)
+# ============================================================================
 
 def extract_capabilities(sku: Dict) -> Dict:
     """Extract capabilities from a SKU"""
@@ -444,3 +652,93 @@ def get_vm_skus_for_location(subscription_id: str, location: str, access_token: 
 
     logging.info(f'Found {len(vm_skus)} VM SKUs')
     return vm_skus
+
+
+def refresh_region(region: str, subscription_id: str, token: str, table_client) -> int:
+    """
+    Refresh SKU data for a specific region
+    Returns number of SKUs updated
+    """
+    # Get VM SKUs from Azure Management API
+    api_version = '2021-07-01'
+    url = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Compute/skus?api-version={api_version}&$filter=location eq '{region}'"
+    
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json'
+    }
+    
+    response = requests.get(url, headers=headers, timeout=30)
+    
+    if not response.ok:
+        raise Exception(f'Failed to fetch SKUs: {response.status_code}')
+    
+    data = response.json()
+    skus = [s for s in data.get('value', []) if s.get('resourceType') == 'virtualMachines']
+    
+    count = 0
+    timestamp = datetime.now(timezone.utc).isoformat()
+    
+    for sku in skus:
+        try:
+            # Extract capabilities
+            capabilities = extract_capabilities_for_cache(sku)
+            
+            # Get pricing (with error handling)
+            pricing = get_vm_pricing(sku['name'], region, 'USD')
+            
+            # Get availability zones
+            zones = get_availability_zones(sku, region)
+            
+            # Create entity for Storage Table
+            entity = {
+                'PartitionKey': region,
+                'RowKey': sku['name'],
+                'name': sku['name'],
+                'vCPUs': capabilities['vCPUs'],
+                'memoryGB': capabilities['memoryGB'],
+                'maxDataDisks': capabilities['maxDataDisks'],
+                'maxNics': capabilities['maxNics'],
+                'uncachedDiskIOPS': capabilities['uncachedDiskIOPS'],
+                'gpuCount': capabilities['gpuCount'],
+                'gpuType': capabilities['gpuType'] or '',
+                'premiumIO': capabilities['premiumIO'],
+                'acceleratedNetworking': capabilities['acceleratedNetworking'],
+                'encryptionAtHost': capabilities['encryptionAtHost'],
+                'ephemeralOSDisk': capabilities['ephemeralOSDisk'],
+                'nvme': capabilities['nvme'],
+                'hourlyPrice': pricing['hourlyPrice'] if pricing else 0.0,
+                'monthlyPrice': pricing['monthlyPrice'] if pricing else 0.0,
+                'currency': pricing['currency'] if pricing else 'USD',
+                'availabilityZones': ','.join(zones) if zones else '',
+                'lastUpdated': timestamp
+            }
+            
+            # Upsert entity (insert or update)
+            table_client.upsert_entity(entity)
+            count += 1
+            
+        except Exception as e:
+            logging.warning(f"Failed to process SKU {sku.get('name', 'unknown')}: {e}")
+    
+    return count
+
+
+def extract_capabilities_for_cache(sku: Dict) -> Dict:
+    """Extract VM capabilities from SKU data (for cache refresh)"""
+    capabilities = {cap['name']: cap['value'] for cap in sku.get('capabilities', [])}
+    
+    return {
+        'vCPUs': int(capabilities.get('vCPUs', 0)),
+        'memoryGB': float(capabilities.get('MemoryGB', 0)),
+        'maxDataDisks': int(capabilities.get('MaxDataDiskCount', 0)),
+        'maxNics': int(capabilities.get('MaxNetworkInterfaces', 0)),
+        'uncachedDiskIOPS': int(capabilities.get('UncachedDiskIOPS', 0)),
+        'gpuCount': int(capabilities.get('GPUs', 0)),
+        'gpuType': capabilities.get('GPUType'),
+        'premiumIO': capabilities.get('PremiumIO', '').lower() == 'true',
+        'acceleratedNetworking': capabilities.get('AcceleratedNetworkingEnabled', '').lower() == 'true',
+        'encryptionAtHost': capabilities.get('EncryptionAtHostSupported', '').lower() == 'true',
+        'ephemeralOSDisk': capabilities.get('EphemeralOSDiskSupported', '').lower() == 'true',
+        'nvme': capabilities.get('NVMe', '').lower() == 'true'
+    }
