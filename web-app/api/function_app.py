@@ -9,6 +9,7 @@ import sys
 import requests
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import azure.functions as func
 from azure.data.tables import TableServiceClient
 from azure.identity import DefaultAzureCredential
@@ -122,8 +123,17 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         # Extract target capabilities
         target_capabilities = extract_capabilities(target_sku)
 
-        # Get pricing for target SKU (from cache if available, otherwise API)
-        target_pricing = target_sku.get('pricing') or get_vm_pricing(sku_name, location, currency_code)
+        # Get pricing for target SKU
+        # If USD requested and pricing in cache, use it; otherwise fetch from API
+        if currency_code == 'USD' and target_sku.get('pricing'):
+            target_pricing = target_sku.get('pricing')
+            logging.info(f'Using cached USD pricing for target SKU: {sku_name}')
+        else:
+            if currency_code != 'USD':
+                logging.info(f'Non-USD currency ({currency_code}) requested, fetching from API')
+            else:
+                logging.info(f'Pricing not in cache for {sku_name}, fetching from API')
+            target_pricing = get_vm_pricing(sku_name, location, currency_code)
 
         # Get availability zones
         target_zones = get_availability_zones(target_sku, location)
@@ -157,7 +167,12 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
             )
 
             if similarity_score >= min_similarity_score:
-                pricing = get_vm_pricing(sku['name'], location, currency_code)
+                # Get pricing - use cache for USD, API for other currencies
+                if currency_code == 'USD' and sku.get('pricing'):
+                    pricing = sku.get('pricing')
+                else:
+                    pricing = get_vm_pricing(sku['name'], location, currency_code)
+                
                 zones = get_availability_zones(sku, location)
 
                 alternatives.append({
@@ -606,10 +621,10 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         'zones': entity.get('availabilityZones', '').split(',') if entity.get('availabilityZones') else []
                     }],
                     'pricing': {
-                        'hourlyPrice': entity.get('hourlyPrice', 0),
-                        'monthlyPrice': entity.get('monthlyPrice', 0),
-                        'currency': entity.get('currency', 'USD')
-                    } if entity.get('hourlyPrice') else None
+                        'hourlyPrice': entity.get('hourlyPriceUSD'),
+                        'monthlyPrice': entity.get('monthlyPriceUSD'),
+                        'currency': entity.get('pricingCurrency', 'USD')
+                    } if entity.get('hourlyPriceUSD') is not None else None
                 }
                 skus.append(sku)
             
@@ -654,9 +669,43 @@ def get_vm_skus_for_location(subscription_id: str, location: str, access_token: 
     return vm_skus
 
 
+def fetch_pricing_concurrent(sku_names: List[str], location: str, max_workers: int = 20) -> Dict[str, Optional[Dict]]:
+    """
+    Fetch pricing for multiple SKUs concurrently using ThreadPoolExecutor
+    Returns dict mapping SKU name to pricing data
+    """
+    pricing_results = {}
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all pricing fetch tasks
+        future_to_sku = {
+            executor.submit(get_vm_pricing, sku_name, location, 'USD'): sku_name 
+            for sku_name in sku_names
+        }
+        
+        # Collect results as they complete
+        completed = 0
+        total = len(sku_names)
+        for future in as_completed(future_to_sku):
+            sku_name = future_to_sku[future]
+            completed += 1
+            try:
+                pricing = future.result()
+                pricing_results[sku_name] = pricing
+                if completed % 100 == 0:
+                    logging.info(f"Fetched pricing for {completed}/{total} SKUs")
+            except Exception as e:
+                logging.warning(f'Failed to fetch pricing for {sku_name}: {e}')
+                pricing_results[sku_name] = None
+    
+    logging.info(f"Completed pricing fetch: {completed}/{total} SKUs")
+    return pricing_results
+
+
 def refresh_region(region: str, subscription_id: str, token: str, table_client) -> int:
     """
     Refresh SKU data for a specific region
+    Fetches SKU data and pricing concurrently for performance
     Returns number of SKUs updated
     """
     # Get VM SKUs from Azure Management API
@@ -676,6 +725,11 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
     data = response.json()
     skus = [s for s in data.get('value', []) if s.get('resourceType') == 'virtualMachines']
     
+    logging.info(f"Fetching pricing for {len(skus)} SKUs in {region} concurrently...")
+    
+    # Fetch pricing concurrently for all SKUs
+    pricing_data = fetch_pricing_concurrent([sku['name'] for sku in skus], region, max_workers=20)
+    
     count = 0
     timestamp = datetime.now(timezone.utc).isoformat()
     
@@ -684,8 +738,8 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
             # Extract capabilities
             capabilities = extract_capabilities_for_cache(sku)
             
-            # Get pricing (with error handling)
-            pricing = get_vm_pricing(sku['name'], region, 'USD')
+            # Get pricing from concurrent fetch results
+            pricing = pricing_data.get(sku['name'])
             
             # Get availability zones
             zones = get_availability_zones(sku, region)
@@ -707,9 +761,10 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
                 'encryptionAtHost': capabilities['encryptionAtHost'],
                 'ephemeralOSDisk': capabilities['ephemeralOSDisk'],
                 'nvme': capabilities['nvme'],
-                'hourlyPrice': pricing['hourlyPrice'] if pricing else 0.0,
-                'monthlyPrice': pricing['monthlyPrice'] if pricing else 0.0,
-                'currency': pricing['currency'] if pricing else 'USD',
+                'hourlyPriceUSD': pricing['hourlyPrice'] if pricing else None,
+                'monthlyPriceUSD': pricing['monthlyPrice'] if pricing else None,
+                'pricingCurrency': pricing['currency'] if pricing else 'USD',
+                'pricingLastUpdated': timestamp,
                 'availabilityZones': ','.join(zones) if zones else '',
                 'lastUpdated': timestamp
             }
