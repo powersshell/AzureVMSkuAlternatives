@@ -53,8 +53,6 @@ document.addEventListener('DOMContentLoaded', () => {
     locationChoices.passedElement.element.addEventListener('change', async (e) => {
         const location = e.target.value;
         
-        console.log('Region changed to:', location); // Debug log
-        
         if (!location) {
             // No region selected - disable SKU dropdown
             skuChoices.clearStore();
@@ -104,10 +102,7 @@ async function loadSkusForRegion(location) {
         // Update count and enable dropdown
         skuCount.textContent = `${skus.length} SKUs available`;
         skuCount.style.color = '#107c10'; // Success green
-        
-        console.log('Enabling SKU dropdown...'); // Debug log
         skuChoices.enable();
-        console.log('SKU dropdown enabled!'); // Debug log
         
     } catch (error) {
         console.error('Failed to load SKUs:', error);
@@ -119,8 +114,6 @@ async function loadSkusForRegion(location) {
 
 // Populate SKU dropdown with Choices.js
 function populateSkuChoices(skus) {
-    console.log('Populating SKU choices, count:', skus.length); // Debug log
-    
     // Sort by vCPUs, then memory
     skus.sort((a, b) => {
         if (a.vCPUs !== b.vCPUs) return a.vCPUs - b.vCPUs;
@@ -137,13 +130,9 @@ function populateSkuChoices(skus) {
         }
     }));
     
-    console.log('Built choices array, first item:', choices[0]); // Debug log
-    
     // Clear existing choices and add new ones
     skuChoices.clearStore();
     skuChoices.setChoices(choices, 'value', 'label', true);
-    
-    console.log('Choices set, now enabling dropdown'); // Debug log
     
     // Store valid SKU names for validation
     window.validSkuNames = skus.map(s => s.name);
@@ -193,15 +182,9 @@ async function handleCompare() {
             body: JSON.stringify(params)
         });
 
-        console.log('Response status:', response.status);
-        console.log('Response headers:', response.headers);
-
-        // Get the response text first to see what we're actually receiving
-        const responseText = await response.text();
-        console.log('Response text:', responseText);
-
         if (!response.ok) {
             // Try to parse as JSON, but handle cases where it's not JSON
+            const responseText = await response.text();
             let errorMessage;
             try {
                 const errorData = JSON.parse(responseText);
@@ -212,14 +195,8 @@ async function handleCompare() {
             throw new Error(`HTTP ${response.status}: ${errorMessage}`);
         }
 
-        // Parse the response text as JSON
-        let data;
-        try {
-            data = JSON.parse(responseText);
-        } catch (parseError) {
-            console.error('Failed to parse response as JSON:', parseError);
-            throw new Error(`Invalid JSON response: ${responseText.substring(0, 100)}`);
-        }
+        // Parse the response as JSON
+        const data = await response.json();
 
         currentResults = data;
         displayResults(data);

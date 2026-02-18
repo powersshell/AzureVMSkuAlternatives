@@ -183,6 +183,16 @@ input[list]::-webkit-calendar-picker-indicator:hover {
     color: white;
 }
 
+.choices__item--selectable[aria-selected="true"] {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.choices__list--dropdown .choices__item--selectable:hover {
+    background-color: var(--primary-hover);
+    color: white;
+}
+
 .choices[data-type*="select-one"]:after {
     border-color: var(--text-secondary) transparent transparent transparent;
 }
