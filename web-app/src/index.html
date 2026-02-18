@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Azure VM SKU Comparison Tool</title>
     <link rel="stylesheet" href="styles.css">
+    <!-- Choices.js CSS for searchable dropdowns -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/styles/choices.min.css">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>">
 </head>
 <body>
@@ -69,18 +71,13 @@
                     <!-- SKU Dropdown Second - Populated based on selected region -->
                     <div class="form-group">
                         <label for="skuName">VM SKU Name *</label>
-                        <input 
-                            type="text" 
+                        <select 
                             id="skuName" 
-                            list="skuList" 
-                            placeholder="Select a region first..." 
                             required 
                             disabled
-                            autocomplete="off"
-                        />
-                        <datalist id="skuList">
-                            <!-- Options populated by JavaScript based on selected region -->
-                        </datalist>
+                        >
+                            <option value="">Select a region first...</option>
+                        </select>
                         <small id="skuCount" class="sku-count"></small>
                     </div>
 
@@ -239,6 +236,8 @@
         </footer>
     </div>
 
+    <!-- Choices.js library for searchable dropdowns -->
+    <script src="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/scripts/choices.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

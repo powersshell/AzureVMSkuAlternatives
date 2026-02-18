@@ -15,6 +15,8 @@ const noResults = document.getElementById('noResults');
 const exportBtn = document.getElementById('exportBtn');
 
 let currentResults = null;
+let locationChoices = null; // Choices.js instance for location
+let skuChoices = null; // Choices.js instance for SKU
 
 // Event Listeners
 compareBtn.addEventListener('click', handleCompare);
@@ -26,17 +28,36 @@ document.addEventListener('DOMContentLoaded', () => {
     const locationSelect = document.getElementById('location');
     const skuSelect = document.getElementById('skuName');
     
+    // Initialize Choices.js for location dropdown
+    locationChoices = new Choices(locationSelect, {
+        searchEnabled: true,
+        searchPlaceholderValue: 'Search regions...',
+        itemSelectText: '',
+        shouldSort: false
+    });
+    
+    // Initialize Choices.js for SKU dropdown
+    skuChoices = new Choices(skuSelect, {
+        searchEnabled: true,
+        searchPlaceholderValue: 'Type to search SKUs...',
+        itemSelectText: '',
+        shouldSort: false,
+        placeholder: true,
+        placeholderValue: 'Select a region first...'
+    });
+    
+    // Disable SKU dropdown initially
+    skuChoices.disable();
+    
     // Listen for region changes
     locationSelect.addEventListener('change', async (e) => {
         const location = e.target.value;
-        const skuInput = document.getElementById('skuName');
         
         if (!location) {
-            // No region selected - disable SKU input
-            skuInput.disabled = true;
-            skuInput.value = '';
-            skuInput.placeholder = 'Select a region first...';
-            document.getElementById('skuList').innerHTML = '';
+            // No region selected - disable SKU dropdown
+            skuChoices.clearStore();
+            skuChoices.setChoices([{ value: '', label: 'Select a region first...', disabled: true }], 'value', 'label', true);
+            skuChoices.disable();
             document.getElementById('skuCount').textContent = '';
             return;
         }
@@ -48,14 +69,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Load SKUs from cache for selected region
 async function loadSkusForRegion(location) {
-    const skuInput = document.getElementById('skuName');
     const skuCount = document.getElementById('skuCount');
     
     try {
         // Show loading state
-        skuInput.disabled = true;
-        skuInput.value = '';
-        skuInput.placeholder = 'Loading SKUs...';
+        skuChoices.clearStore();
+        skuChoices.setChoices([{ value: '', label: 'Loading SKUs...', disabled: true }], 'value', 'label', true);
+        skuChoices.disable();
         skuCount.textContent = 'Loading...';
         skuCount.style.color = '#666';
         
@@ -70,49 +90,49 @@ async function loadSkusForRegion(location) {
         const skus = data.skus || []; // Extract skus array from response
         
         if (!skus || skus.length === 0) {
-            skuInput.placeholder = 'No SKUs available for this region';
+            skuChoices.setChoices([{ value: '', label: 'No SKUs available for this region', disabled: true }], 'value', 'label', true);
             skuCount.textContent = 'No SKUs found';
             skuCount.style.color = '#d13438';
             return;
         }
         
-        // Populate datalist
-        populateSkuDatalist(skus);
+        // Populate dropdown with Choices.js
+        populateSkuChoices(skus);
         
-        // Update count and enable input
+        // Update count and enable dropdown
         skuCount.textContent = `${skus.length} SKUs available`;
         skuCount.style.color = '#107c10'; // Success green
-        skuInput.disabled = false;
-        skuInput.placeholder = 'Start typing to search (e.g., D2s, B1ls)...';
+        skuChoices.enable();
         
     } catch (error) {
         console.error('Failed to load SKUs:', error);
-        skuInput.placeholder = 'Error loading SKUs - try again';
+        skuChoices.setChoices([{ value: '', label: 'Error loading SKUs - try again', disabled: true }], 'value', 'label', true);
         skuCount.textContent = 'Failed to load SKUs';
         skuCount.style.color = '#d13438'; // Error red
     }
 }
 
-// Populate SKU datalist with formatted options
-function populateSkuDatalist(skus) {
-    const skuDatalist = document.getElementById('skuList');
-    
+// Populate SKU dropdown with Choices.js
+function populateSkuChoices(skus) {
     // Sort by vCPUs, then memory
     skus.sort((a, b) => {
         if (a.vCPUs !== b.vCPUs) return a.vCPUs - b.vCPUs;
         return a.memoryGB - b.memoryGB;
     });
     
-    // Build datalist options
-    let html = '';
-    skus.forEach(sku => {
-        // Use displayName which is already formatted: "Standard_D2s_v3 (2 vCPUs, 8.0 GB) - $0.096/hr"
-        const label = sku.displayName || `${sku.name} (${sku.vCPUs} vCPUs, ${sku.memoryGB} GB)`;
-        // Value is the SKU name that will be submitted to API
-        html += `<option value="${sku.name}" label="${label}"></option>`;
-    });
+    // Build choices array
+    const choices = skus.map(sku => ({
+        value: sku.name,
+        label: sku.displayName || `${sku.name} (${sku.vCPUs} vCPUs, ${sku.memoryGB} GB)`,
+        customProperties: {
+            vCPUs: sku.vCPUs,
+            memoryGB: sku.memoryGB
+        }
+    }));
     
-    skuDatalist.innerHTML = html;
+    // Clear existing choices and add new ones
+    skuChoices.clearStore();
+    skuChoices.setChoices(choices, 'value', 'label', true);
     
     // Store valid SKU names for validation
     window.validSkuNames = skus.map(s => s.name);
