@@ -49,9 +49,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Disable SKU dropdown initially
     skuChoices.disable();
     
-    // Listen for region changes
-    locationSelect.addEventListener('change', async (e) => {
+    // Listen for region changes - using Choices.js passedElement
+    locationChoices.passedElement.element.addEventListener('change', async (e) => {
         const location = e.target.value;
+        
+        console.log('Region changed to:', location); // Debug log
         
         if (!location) {
             // No region selected - disable SKU dropdown
@@ -102,7 +104,10 @@ async function loadSkusForRegion(location) {
         // Update count and enable dropdown
         skuCount.textContent = `${skus.length} SKUs available`;
         skuCount.style.color = '#107c10'; // Success green
+        
+        console.log('Enabling SKU dropdown...'); // Debug log
         skuChoices.enable();
+        console.log('SKU dropdown enabled!'); // Debug log
         
     } catch (error) {
         console.error('Failed to load SKUs:', error);
@@ -114,6 +119,8 @@ async function loadSkusForRegion(location) {
 
 // Populate SKU dropdown with Choices.js
 function populateSkuChoices(skus) {
+    console.log('Populating SKU choices, count:', skus.length); // Debug log
+    
     // Sort by vCPUs, then memory
     skus.sort((a, b) => {
         if (a.vCPUs !== b.vCPUs) return a.vCPUs - b.vCPUs;
@@ -130,9 +137,13 @@ function populateSkuChoices(skus) {
         }
     }));
     
+    console.log('Built choices array, first item:', choices[0]); // Debug log
+    
     // Clear existing choices and add new ones
     skuChoices.clearStore();
     skuChoices.setChoices(choices, 'value', 'label', true);
+    
+    console.log('Choices set, now enabling dropdown'); // Debug log
     
     // Store valid SKU names for validation
     window.validSkuNames = skus.map(s => s.name);
