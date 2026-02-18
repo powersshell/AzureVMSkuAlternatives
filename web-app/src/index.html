@@ -69,9 +69,18 @@
                     <!-- SKU Dropdown Second - Populated based on selected region -->
                     <div class="form-group">
                         <label for="skuName">VM SKU Name *</label>
-                        <select id="skuName" required disabled>
-                            <option value="">Select a region first...</option>
-                        </select>
+                        <input 
+                            type="text" 
+                            id="skuName" 
+                            list="skuList" 
+                            placeholder="Select a region first..." 
+                            required 
+                            disabled
+                            autocomplete="off"
+                        />
+                        <datalist id="skuList">
+                            <!-- Options populated by JavaScript based on selected region -->
+                        </datalist>
                         <small id="skuCount" class="sku-count"></small>
                     </div>
 

@@ -29,11 +29,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Listen for region changes
     locationSelect.addEventListener('change', async (e) => {
         const location = e.target.value;
+        const skuInput = document.getElementById('skuName');
         
         if (!location) {
-            // No region selected - disable SKU dropdown
-            skuSelect.disabled = true;
-            skuSelect.innerHTML = '<option value="">Select a region first...</option>';
+            // No region selected - disable SKU input
+            skuInput.disabled = true;
+            skuInput.value = '';
+            skuInput.placeholder = 'Select a region first...';
+            document.getElementById('skuList').innerHTML = '';
             document.getElementById('skuCount').textContent = '';
             return;
         }
@@ -45,13 +48,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Load SKUs from cache for selected region
 async function loadSkusForRegion(location) {
-    const skuSelect = document.getElementById('skuName');
+    const skuInput = document.getElementById('skuName');
     const skuCount = document.getElementById('skuCount');
     
     try {
         // Show loading state
-        skuSelect.disabled = true;
-        skuSelect.innerHTML = '<option value="">Loading SKUs...</option>';
+        skuInput.disabled = true;
+        skuInput.value = '';
+        skuInput.placeholder = 'Loading SKUs...';
         skuCount.textContent = 'Loading...';
         skuCount.style.color = '#666';
         
@@ -66,30 +70,32 @@ async function loadSkusForRegion(location) {
         const skus = data.skus || []; // Extract skus array from response
         
         if (!skus || skus.length === 0) {
-            skuSelect.innerHTML = '<option value="">No SKUs available for this region</option>';
+            skuInput.placeholder = 'No SKUs available for this region';
             skuCount.textContent = 'No SKUs found';
             skuCount.style.color = '#d13438';
             return;
         }
         
-        // Populate dropdown
-        populateSkuDropdown(skus);
+        // Populate datalist
+        populateSkuDatalist(skus);
         
-        // Update count
+        // Update count and enable input
         skuCount.textContent = `${skus.length} SKUs available`;
         skuCount.style.color = '#107c10'; // Success green
+        skuInput.disabled = false;
+        skuInput.placeholder = 'Start typing to search (e.g., D2s, B1ls)...';
         
     } catch (error) {
         console.error('Failed to load SKUs:', error);
-        skuSelect.innerHTML = '<option value="">Error loading SKUs - try again</option>';
+        skuInput.placeholder = 'Error loading SKUs - try again';
         skuCount.textContent = 'Failed to load SKUs';
         skuCount.style.color = '#d13438'; // Error red
     }
 }
 
-// Populate SKU dropdown with formatted options
-function populateSkuDropdown(skus) {
-    const skuSelect = document.getElementById('skuName');
+// Populate SKU datalist with formatted options
+function populateSkuDatalist(skus) {
+    const skuDatalist = document.getElementById('skuList');
     
     // Sort by vCPUs, then memory
     skus.sort((a, b) => {
@@ -97,26 +103,34 @@ function populateSkuDropdown(skus) {
         return a.memoryGB - b.memoryGB;
     });
     
-    // Build options HTML
-    let html = '<option value="">Select a VM SKU...</option>';
-    
+    // Build datalist options
+    let html = '';
     skus.forEach(sku => {
         // Use displayName which is already formatted: "Standard_D2s_v3 (2 vCPUs, 8.0 GB) - $0.096/hr"
-        const displayText = sku.displayName || `${sku.name} (${sku.vCPUs} vCPUs, ${sku.memoryGB} GB)`;
-        html += `<option value="${sku.name}">${displayText}</option>`;
+        const label = sku.displayName || `${sku.name} (${sku.vCPUs} vCPUs, ${sku.memoryGB} GB)`;
+        // Value is the SKU name that will be submitted to API
+        html += `<option value="${sku.name}" label="${label}"></option>`;
     });
     
-    skuSelect.innerHTML = html;
-    skuSelect.disabled = false;
+    skuDatalist.innerHTML = html;
+    
+    // Store valid SKU names for validation
+    window.validSkuNames = skus.map(s => s.name);
 }
 
 // Handle Compare Button Click
 async function handleCompare() {
-    const skuName = document.getElementById('skuName').value;
+    const skuName = document.getElementById('skuName').value.trim();
     const location = document.getElementById('location').value;
 
     if (!skuName || !location) {
         showError('Please provide both SKU name and location');
+        return;
+    }
+    
+    // Validate that entered SKU exists in the list (optional but recommended)
+    if (window.validSkuNames && !window.validSkuNames.includes(skuName)) {
+        showError(`Invalid SKU: "${skuName}". Please select a valid SKU from the dropdown.`);
         return;
     }
 
