@@ -62,7 +62,8 @@ async function loadSkusForRegion(location) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
-        const skus = await response.json();
+        const data = await response.json();
+        const skus = data.skus || []; // Extract skus array from response
         
         if (!skus || skus.length === 0) {
             skuSelect.innerHTML = '<option value="">No SKUs available for this region</option>';
