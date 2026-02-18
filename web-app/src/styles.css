@@ -102,6 +102,13 @@ header h1 {
     background: var(--bg-primary);
 }
 
+.form-group select:disabled {
+    background-color: #f3f2f1;
+    color: #a19f9d;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
 .form-group input:focus,
 .form-group select:focus {
     outline: none;
@@ -113,6 +120,13 @@ header h1 {
     margin-top: 0.25rem;
     color: var(--text-secondary);
     font-size: 0.875rem;
+}
+
+.sku-count {
+    display: inline-block;
+    margin-top: 4px;
+    font-size: 0.85em;
+    font-weight: 500;
 }
 
 .checkbox-group {

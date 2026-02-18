@@ -21,9 +21,97 @@ compareBtn.addEventListener('click', handleCompare);
 dismissErrorBtn.addEventListener('click', hideError);
 exportBtn.addEventListener('click', exportToCSV);
 
+// Initialize dropdown functionality on page load
+document.addEventListener('DOMContentLoaded', () => {
+    const locationSelect = document.getElementById('location');
+    const skuSelect = document.getElementById('skuName');
+    
+    // Listen for region changes
+    locationSelect.addEventListener('change', async (e) => {
+        const location = e.target.value;
+        
+        if (!location) {
+            // No region selected - disable SKU dropdown
+            skuSelect.disabled = true;
+            skuSelect.innerHTML = '<option value="">Select a region first...</option>';
+            document.getElementById('skuCount').textContent = '';
+            return;
+        }
+        
+        // Fetch SKUs for selected region
+        await loadSkusForRegion(location);
+    });
+});
+
+// Load SKUs from cache for selected region
+async function loadSkusForRegion(location) {
+    const skuSelect = document.getElementById('skuName');
+    const skuCount = document.getElementById('skuCount');
+    
+    try {
+        // Show loading state
+        skuSelect.disabled = true;
+        skuSelect.innerHTML = '<option value="">Loading SKUs...</option>';
+        skuCount.textContent = 'Loading...';
+        skuCount.style.color = '#666';
+        
+        // Fetch from cached API
+        const response = await fetch(`${API_BASE_URL}/skus?location=${location}`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const skus = await response.json();
+        
+        if (!skus || skus.length === 0) {
+            skuSelect.innerHTML = '<option value="">No SKUs available for this region</option>';
+            skuCount.textContent = 'No SKUs found';
+            skuCount.style.color = '#d13438';
+            return;
+        }
+        
+        // Populate dropdown
+        populateSkuDropdown(skus);
+        
+        // Update count
+        skuCount.textContent = `${skus.length} SKUs available`;
+        skuCount.style.color = '#107c10'; // Success green
+        
+    } catch (error) {
+        console.error('Failed to load SKUs:', error);
+        skuSelect.innerHTML = '<option value="">Error loading SKUs - try again</option>';
+        skuCount.textContent = 'Failed to load SKUs';
+        skuCount.style.color = '#d13438'; // Error red
+    }
+}
+
+// Populate SKU dropdown with formatted options
+function populateSkuDropdown(skus) {
+    const skuSelect = document.getElementById('skuName');
+    
+    // Sort by vCPUs, then memory
+    skus.sort((a, b) => {
+        if (a.vCPUs !== b.vCPUs) return a.vCPUs - b.vCPUs;
+        return a.memoryGB - b.memoryGB;
+    });
+    
+    // Build options HTML
+    let html = '<option value="">Select a VM SKU...</option>';
+    
+    skus.forEach(sku => {
+        // Use displayName which is already formatted: "Standard_D2s_v3 (2 vCPUs, 8.0 GB) - $0.096/hr"
+        const displayText = sku.displayName || `${sku.name} (${sku.vCPUs} vCPUs, ${sku.memoryGB} GB)`;
+        html += `<option value="${sku.name}">${displayText}</option>`;
+    });
+    
+    skuSelect.innerHTML = html;
+    skuSelect.disabled = false;
+}
+
 // Handle Compare Button Click
 async function handleCompare() {
-    const skuName = document.getElementById('skuName').value.trim();
+    const skuName = document.getElementById('skuName').value;
     const location = document.getElementById('location').value;
 
     if (!skuName || !location) {
