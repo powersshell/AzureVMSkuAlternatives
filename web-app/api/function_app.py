@@ -821,9 +821,14 @@ def detect_cpu_vendor(sku_name: str, architecture: str) -> str:
     if architecture and architecture.lower() in ['arm64', 'arm']:
         return 'ARM'
     
-    # AMD - Contains 'a' before 's' in suffix (e.g., 'as', 'ads')
-    # Patterns: Standard_D2as_v4, Standard_E4ads_v5, Standard_F4as_v5
-    if re.search(r'a[d]?s_v[3-6]', sku_lower) or re.search(r'_a_v', sku_lower):
+    # AMD - Contains 'a' before 's' in suffix
+    # Patterns: 
+    #   - Standard_D2as_v4, Standard_E4as_v5 (AMD standard)
+    #   - Standard_D2ads_v5 (AMD with disk storage)
+    #   - Standard_D2als_v6 (AMD with local storage)
+    #   - Standard_D2a_v4 (AMD without suffix)
+    # Match: 'a' + optional ('d' or 'l') + 's' + '_v' + version number
+    if re.search(r'a[dl]?s_v\d', sku_lower) or re.search(r'_a_v\d', sku_lower):
         return 'AMD'
     
     # Intel - Default for x64 that don't match AMD pattern
