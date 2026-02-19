@@ -65,7 +65,37 @@ document.addEventListener('DOMContentLoaded', () => {
         // Fetch SKUs for selected region
         await loadSkusForRegion(location);
     });
+    
+    // Listen for CPU vendor filter changes
+    document.getElementById('filterIntel').addEventListener('change', updateSkuFilters);
+    document.getElementById('filterAMD').addEventListener('change', updateSkuFilters);
+    document.getElementById('filterARM').addEventListener('change', updateSkuFilters);
 });
+
+// Store all SKUs for current region (unfiltered)
+let allSkusForRegion = [];
+
+// Update SKU dropdown based on CPU vendor filters
+function updateSkuFilters() {
+    if (allSkusForRegion.length === 0) return;
+    
+    const filteredSkus = getFilteredSkus(allSkusForRegion);
+    populateSkuChoices(filteredSkus);
+}
+
+// Filter SKUs based on checked CPU vendor checkboxes
+function getFilteredSkus(skus) {
+    const showIntel = document.getElementById('filterIntel').checked;
+    const showAMD = document.getElementById('filterAMD').checked;
+    const showARM = document.getElementById('filterARM').checked;
+    
+    return skus.filter(sku => {
+        if (sku.cpuVendor === 'Intel' && showIntel) return true;
+        if (sku.cpuVendor === 'AMD' && showAMD) return true;
+        if (sku.cpuVendor === 'ARM' && showARM) return true;
+        return false;
+    });
+}
 
 // Load SKUs from cache for selected region
 async function loadSkusForRegion(location) {
@@ -90,17 +120,28 @@ async function loadSkusForRegion(location) {
         const skus = data.skus || []; // Extract skus array from response
         
         if (!skus || skus.length === 0) {
+            allSkusForRegion = [];
             skuChoices.setChoices([{ value: '', label: 'No SKUs available for this region', disabled: true }], 'value', 'label', true);
             skuCount.textContent = 'No SKUs found';
             skuCount.style.color = '#d13438';
             return;
         }
         
-        // Populate dropdown with Choices.js
-        populateSkuChoices(skus);
+        // Store all SKUs for filtering
+        allSkusForRegion = skus;
         
-        // Update count and enable dropdown
-        skuCount.textContent = `${skus.length} SKUs available`;
+        // Apply current filters and populate dropdown
+        const filteredSkus = getFilteredSkus(skus);
+        populateSkuChoices(filteredSkus);
+        
+        // Update count - show filtered/total
+        const totalCount = skus.length;
+        const filteredCount = filteredSkus.length;
+        if (filteredCount === totalCount) {
+            skuCount.textContent = `${totalCount} SKUs available`;
+        } else {
+            skuCount.textContent = `${filteredCount} of ${totalCount} SKUs (filtered by vendor)`;
+        }
         skuCount.style.color = '#107c10'; // Success green
         skuChoices.enable();
         

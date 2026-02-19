@@ -71,6 +71,25 @@
                         <small>Select a region to see available VM SKUs</small>
                     </div>
 
+                    <!-- CPU Vendor Filter - Between region and SKU dropdowns -->
+                    <div class="form-group">
+                        <label>Filter by CPU Vendor:</label>
+                        <div class="checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="filterIntel" checked>
+                                Intel (x64)
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="filterAMD" checked>
+                                AMD (x64)
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="filterARM" checked>
+                                ARM (Arm64)
+                            </label>
+                        </div>
+                    </div>
+
                     <!-- SKU Dropdown Second - Populated based on selected region -->
                     <div class="form-group">
                         <label for="skuName">VM SKU Name *</label>
