@@ -314,7 +314,9 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
             skus.append({
                 'name': entity['name'],
                 'vCPUs': entity['vCPUs'],
-                'memoryGB': entity['memoryGB']
+                'memoryGB': entity['memoryGB'],
+                'cpuVendor': entity.get('cpuVendor', 'Intel'),  # Default to Intel if missing
+                'architecture': entity.get('architecture', 'x64')  # Default to x64 if missing
             })
         
         # Sort by vCPUs then memory
@@ -730,8 +732,11 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
     
     for sku in skus:
         try:
-            # Extract capabilities
+            # Extract capabilities (includes architecture from Azure API)
             capabilities = extract_capabilities_for_cache(sku)
+            
+            # Detect CPU vendor from SKU name + architecture
+            cpu_vendor = detect_cpu_vendor(sku['name'], capabilities.get('architecture', 'x64'))
             
             # Get pricing from concurrent fetch results
             pricing = pricing_data.get(sku['name'])
@@ -756,6 +761,8 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
                 'encryptionAtHost': capabilities['encryptionAtHost'],
                 'ephemeralOSDisk': capabilities['ephemeralOSDisk'],
                 'nvme': capabilities['nvme'],
+                'architecture': capabilities['architecture'],
+                'cpuVendor': cpu_vendor,
                 'hourlyPriceUSD': pricing['hourlyPrice'] if pricing else None,
                 'monthlyPriceUSD': pricing['monthlyPrice'] if pricing else None,
                 'pricingCurrency': pricing['currency'] if pricing else 'USD',
@@ -790,5 +797,28 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
         'acceleratedNetworking': capabilities.get('AcceleratedNetworkingEnabled', '').lower() == 'true',
         'encryptionAtHost': capabilities.get('EncryptionAtHostSupported', '').lower() == 'true',
         'ephemeralOSDisk': capabilities.get('EphemeralOSDiskSupported', '').lower() == 'true',
-        'nvme': capabilities.get('NVMe', '').lower() == 'true'
+        'nvme': capabilities.get('NVMe', '').lower() == 'true',
+        'architecture': capabilities.get('CpuArchitectureType', 'x64')  # Extract from Azure API
     }
+
+
+def detect_cpu_vendor(sku_name: str, architecture: str) -> str:
+    """
+    Detect CPU vendor from SKU name and architecture
+    Returns: 'Intel', 'AMD', or 'ARM'
+    """
+    import re
+    
+    sku_lower = sku_name.lower()
+    
+    # ARM - Architecture is Arm64
+    if architecture and architecture.lower() in ['arm64', 'arm']:
+        return 'ARM'
+    
+    # AMD - Contains 'a' before 's' in suffix (e.g., 'as', 'ads')
+    # Patterns: Standard_D2as_v4, Standard_E4ads_v5, Standard_F4as_v5
+    if re.search(r'a[d]?s_v[3-6]', sku_lower) or re.search(r'_a_v', sku_lower):
+        return 'AMD'
+    
+    # Intel - Default for x64 that don't match AMD pattern
+    return 'Intel'
