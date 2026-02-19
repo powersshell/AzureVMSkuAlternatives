@@ -178,25 +178,6 @@
                             </label>
                             <small>Only show GPU alternatives if target has GPU</small>
                         </div>
-
-                        <div class="form-group">
-                            <label>Filter Results by CPU Vendor:</label>
-                            <div class="checkbox-group">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="resultFilterIntel" checked>
-                                    Intel (x64)
-                                </label>
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="resultFilterAMD" checked>
-                                    AMD (x64)
-                                </label>
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="resultFilterARM" checked>
-                                    ARM (Arm64)
-                                </label>
-                            </div>
-                            <small>Filter comparison results by CPU vendor</small>
-                        </div>
                     </div>
                 </details>
 
@@ -229,6 +210,25 @@
                 </div>
 
                 <div id="targetSkuInfo" class="target-sku-card"></div>
+
+                <!-- CPU Vendor Filters for Results -->
+                <div class="results-filters">
+                    <label>Filter Results by CPU Vendor:</label>
+                    <div class="checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="resultFilterIntel" checked>
+                            Intel (x64)
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="resultFilterAMD" checked>
+                            AMD (x64)
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="resultFilterARM" checked>
+                            ARM (Arm64)
+                        </label>
+                    </div>
+                </div>
 
                 <div class="table-container">
                     <table id="resultsTable">

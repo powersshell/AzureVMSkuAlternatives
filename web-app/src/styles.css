@@ -385,6 +385,39 @@ input[list]::-webkit-calendar-picker-indicator:hover {
     flex-direction: column;
 }
 
+.results-filters {
+    background: var(--bg-secondary);
+    padding: 1rem 1.5rem;
+    border-radius: var(--border-radius);
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border-color);
+}
+
+.results-filters label:first-child {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.5rem;
+    display: block;
+}
+
+.results-filters .checkbox-group {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.results-filters .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.95rem;
+}
+
+.results-filters .checkbox-label input[type="checkbox"] {
+    cursor: pointer;
+}
+
 .target-sku-item strong {
     color: var(--text-secondary);
     font-size: 0.875rem;
