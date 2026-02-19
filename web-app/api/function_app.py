@@ -178,6 +178,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 alternatives.append({
                     'name': sku['name'],
                     'similarityScore': round(similarity_score, 2),
+                    'cpuVendor': sku.get('cpuVendor', 'Intel'),
+                    'architecture': sku.get('architecture', 'x64'),
                     'vCPUs': sku_capabilities['vCPUs'],
                     'memoryGB': sku_capabilities['memoryGB'],
                     'gpuCount': sku_capabilities['gpuCount'],
@@ -196,6 +198,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         response_data = {
             'targetSku': {
                 'name': target_sku['name'],
+                'cpuVendor': target_sku.get('cpuVendor', 'Intel'),
+                'architecture': target_sku.get('architecture', 'x64'),
                 'vCPUs': target_capabilities['vCPUs'],
                 'memoryGB': target_capabilities['memoryGB'],
                 'gpuCount': target_capabilities['gpuCount'],
@@ -599,6 +603,8 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                 # Convert cached entity to SKU format
                 sku = {
                     'name': entity['name'],
+                    'cpuVendor': entity.get('cpuVendor', 'Intel'),
+                    'architecture': entity.get('architecture', 'x64'),
                     'capabilities': [
                         {'name': 'vCPUs', 'value': str(entity['vCPUs'])},
                         {'name': 'MemoryGB', 'value': str(entity['memoryGB'])},

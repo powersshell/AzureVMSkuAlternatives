@@ -66,10 +66,15 @@ document.addEventListener('DOMContentLoaded', () => {
         await loadSkusForRegion(location);
     });
     
-    // Listen for CPU vendor filter changes
+    // Listen for CPU vendor filter changes (dropdown filters)
     document.getElementById('filterIntel').addEventListener('change', updateSkuFilters);
     document.getElementById('filterAMD').addEventListener('change', updateSkuFilters);
     document.getElementById('filterARM').addEventListener('change', updateSkuFilters);
+    
+    // Listen for CPU vendor filter changes (result filters)
+    document.getElementById('resultFilterIntel').addEventListener('change', updateResultsFilters);
+    document.getElementById('resultFilterAMD').addEventListener('change', updateResultsFilters);
+    document.getElementById('resultFilterARM').addEventListener('change', updateResultsFilters);
 });
 
 // Store all SKUs for current region (unfiltered)
@@ -81,6 +86,14 @@ function updateSkuFilters() {
     
     const filteredSkus = getFilteredSkus(allSkusForRegion);
     populateSkuChoices(filteredSkus);
+}
+
+// Update comparison results based on CPU vendor filters
+function updateResultsFilters() {
+    if (!currentResults || !currentResults.alternatives) return;
+    
+    // Re-display results with current filters
+    displayResults(currentResults);
 }
 
 // Filter SKUs based on checked CPU vendor checkboxes
@@ -254,9 +267,26 @@ function displayResults(data) {
     } else {
         noResults.classList.add('hidden');
         displayTargetSku(data.targetSku);
-        displayAlternatives(data.alternatives);
+        
+        // Apply CPU vendor filter to results
+        const filteredAlternatives = filterResultsByVendor(data.alternatives);
+        displayAlternatives(filteredAlternatives);
     }
     resultsSection.classList.remove('hidden');
+}
+
+// Filter results by CPU vendor checkboxes
+function filterResultsByVendor(alternatives) {
+    const showIntel = document.getElementById('resultFilterIntel').checked;
+    const showAMD = document.getElementById('resultFilterAMD').checked;
+    const showARM = document.getElementById('resultFilterARM').checked;
+    
+    return alternatives.filter(alt => {
+        if (alt.cpuVendor === 'Intel' && showIntel) return true;
+        if (alt.cpuVendor === 'AMD' && showAMD) return true;
+        if (alt.cpuVendor === 'ARM' && showARM) return true;
+        return false;
+    });
 }
 
 // Display Target SKU Info
@@ -306,6 +336,9 @@ function displayAlternatives(alternatives) {
                           alt.similarityScore >= 60 ? 'score-medium' : 'score-low';
 
         const rankClass = index < 3 ? `rank-${index + 1}` : '';
+        
+        // Format CPU vendor with architecture
+        const cpuDisplay = `${alt.cpuVendor || 'Intel'} (${alt.architecture || 'x64'})`;
 
         row.innerHTML = `
             <td><span class="rank-badge ${rankClass}">${index + 1}</span></td>
@@ -315,6 +348,7 @@ function displayAlternatives(alternatives) {
                     <span class="score-badge ${scoreClass}">${alt.similarityScore.toFixed(1)}%</span>
                 </div>
             </td>
+            <td>${cpuDisplay}</td>
             <td>${alt.vCPUs || 'N/A'}</td>
             <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'}</td>
             <td>${alt.pricing ? formatCurrency(alt.pricing.hourlyPrice, alt.pricing.currency) : 'N/A'}</td>
