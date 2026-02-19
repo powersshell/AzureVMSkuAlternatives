@@ -114,16 +114,12 @@ async function loadSkusForRegion(location) {
 
 // Populate SKU dropdown with Choices.js
 function populateSkuChoices(skus) {
-    // Sort by vCPUs, then memory
-    skus.sort((a, b) => {
-        if (a.vCPUs !== b.vCPUs) return a.vCPUs - b.vCPUs;
-        return a.memoryGB - b.memoryGB;
-    });
+    // Backend already sorts by vCPUs then memory, so we trust that order
     
-    // Build choices array
+    // Build choices array with displayName constructed on frontend
     const choices = skus.map(sku => ({
         value: sku.name,
-        label: sku.displayName || `${sku.name} (${sku.vCPUs} vCPUs, ${sku.memoryGB} GB)`,
+        label: `${sku.name} (${sku.vCPUs} vCPUs, ${sku.memoryGB} GB)`,
         customProperties: {
             vCPUs: sku.vCPUs,
             memoryGB: sku.memoryGB

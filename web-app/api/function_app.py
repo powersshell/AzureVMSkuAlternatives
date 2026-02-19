@@ -308,18 +308,13 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
         query_filter = f"PartitionKey eq '{location}'"
         entities = table_client.query_entities(query_filter=query_filter)
         
-        # Format for frontend dropdown
+        # Format for frontend dropdown - minimal payload for performance
         skus = []
         for entity in entities:
             skus.append({
                 'name': entity['name'],
-                'displayName': f"{entity['name']} ({entity['vCPUs']} vCPUs, {entity['memoryGB']} GB)",
                 'vCPUs': entity['vCPUs'],
-                'memoryGB': entity['memoryGB'],
-                'hourlyPrice': entity.get('hourlyPrice', 0),
-                'monthlyPrice': entity.get('monthlyPrice', 0),
-                'currency': entity.get('currency', 'USD'),
-                'gpuCount': entity.get('gpuCount', 0)
+                'memoryGB': entity['memoryGB']
             })
         
         # Sort by vCPUs then memory
