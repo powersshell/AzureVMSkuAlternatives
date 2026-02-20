@@ -3,3 +3,27 @@
 azure-credentials.json
 publish-profile*.xml
 *.PublishSettings
+
+# Azure Functions
+local.settings.json
+local.settings.*.json
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Build artifacts and deployment packages
+*.zip
+*.tar.gz
+
+# Logs
+*.log
+logs/
+
+# Azure/deployment configuration
+github-oidc-config.txt
+
+# OS files
+.DS_Store
+Thumbs.db
