@@ -80,12 +80,24 @@ document.addEventListener('DOMContentLoaded', () => {
 // Store all SKUs for current region (unfiltered)
 let allSkusForRegion = [];
 
+// Update SKU count display
+function updateSkuCount(filteredCount, totalCount) {
+    const skuCount = document.getElementById('skuCount');
+    if (filteredCount === totalCount) {
+        skuCount.textContent = `${totalCount} SKUs available`;
+    } else {
+        skuCount.textContent = `${filteredCount} of ${totalCount} SKUs (filtered by vendor)`;
+    }
+    skuCount.style.color = '#107c10'; // Success green
+}
+
 // Update SKU dropdown based on CPU vendor filters
 function updateSkuFilters() {
     if (allSkusForRegion.length === 0) return;
     
     const filteredSkus = getFilteredSkus(allSkusForRegion);
     populateSkuChoices(filteredSkus);
+    updateSkuCount(filteredSkus.length, allSkusForRegion.length);
 }
 
 // Update comparison results based on CPU vendor filters
@@ -148,14 +160,7 @@ async function loadSkusForRegion(location) {
         populateSkuChoices(filteredSkus);
         
         // Update count - show filtered/total
-        const totalCount = skus.length;
-        const filteredCount = filteredSkus.length;
-        if (filteredCount === totalCount) {
-            skuCount.textContent = `${totalCount} SKUs available`;
-        } else {
-            skuCount.textContent = `${filteredCount} of ${totalCount} SKUs (filtered by vendor)`;
-        }
-        skuCount.style.color = '#107c10'; // Success green
+        updateSkuCount(filteredSkus.length, skus.length);
         skuChoices.enable();
         
     } catch (error) {
