@@ -887,6 +887,9 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
                 'maxDataDisks': capabilities['maxDataDisks'],
                 'maxNics': capabilities['maxNics'],
                 'uncachedDiskIOPS': capabilities['uncachedDiskIOPS'],
+                'uncachedDiskBytesPerSecond': capabilities['uncachedDiskBytesPerSecond'],
+                'cachedDiskIOPS': capabilities['cachedDiskIOPS'],
+                'cachedDiskBytesPerSecond': capabilities['cachedDiskBytesPerSecond'],
                 'gpuCount': capabilities['gpuCount'],
                 'gpuType': capabilities['gpuType'] or '',
                 'premiumIO': capabilities['premiumIO'],
@@ -924,6 +927,9 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
         'maxDataDisks': int(capabilities.get('MaxDataDiskCount', 0)),
         'maxNics': int(capabilities.get('MaxNetworkInterfaces', 0)),
         'uncachedDiskIOPS': int(capabilities.get('UncachedDiskIOPS', 0)),
+        'uncachedDiskBytesPerSecond': int(capabilities.get('UncachedDiskBytesPerSecond', 0)),
+        'cachedDiskIOPS': int(capabilities.get('CachedDiskIOPS', 0)),
+        'cachedDiskBytesPerSecond': int(capabilities.get('CachedDiskBytesPerSecond', 0)),
         'gpuCount': int(capabilities.get('GPUs', 0)),
         'gpuType': capabilities.get('GPUType'),
         'premiumIO': capabilities.get('PremiumIO', '').lower() == 'true',
@@ -969,30 +975,27 @@ def detect_cpu_vendor(sku_name: str, architecture: str) -> str:
 # ============================================================================
 
 def extract_capabilities_for_diff(sku: dict) -> dict:
-    """Extract capabilities from SKU for detailed comparison."""
+    """Extract capabilities from cached SKU for detailed comparison."""
     caps = {}
-    capabilities = sku.get('capabilities', {})
     
-    if isinstance(capabilities, str):
-        try:
-            capabilities = json.loads(capabilities)
-        except:
-            capabilities = {}
+    # The cached SKUs already have parsed capabilities at the top level
+    # Not nested in a 'capabilities' field
+    caps['maxDataDisks'] = sku.get('maxDataDisks')
+    caps['cachedDiskIOPS'] = sku.get('cachedDiskIOPS')
+    caps['cachedDiskThroughput'] = sku.get('cachedDiskBytesPerSecond')  
+    caps['uncachedDiskIOPS'] = sku.get('uncachedDiskIOPS')
+    caps['uncachedDiskThroughput'] = sku.get('uncachedDiskBytesPerSecond')
+    caps['networkBandwidth'] = sku.get('maxNics')
+    caps['acceleratedNetworking'] = sku.get('acceleratedNetworking', False)
+    caps['nvme'] = sku.get('nvme', False)
     
-    # Extract common capabilities
-    caps['maxDataDisks'] = capabilities.get('MaxDataDiskCount')
-    caps['cachedDiskIOPS'] = capabilities.get('CachedDiskIOPS')
-    caps['cachedDiskThroughput'] = capabilities.get('CachedDiskBytes')
-    caps['uncachedDiskIOPS'] = capabilities.get('UncachedDiskIOPS')
-    caps['uncachedDiskThroughput'] = capabilities.get('UncachedDiskBytes')
-    caps['networkBandwidth'] = capabilities.get('MaxNetworkInterfaces')
-    caps['acceleratedNetworking'] = capabilities.get('AcceleratedNetworkingEnabled', 'False') == 'True'
-    caps['nvme'] = capabilities.get('EphemeralOSDiskSupported', 'False') == 'True'
-    
-    # Convert strings to numbers
+    # These are already numbers in the cache, no conversion needed
+    # But ensure None if not present
     for key in ['maxDataDisks', 'cachedDiskIOPS', 'cachedDiskThroughput', 
                 'uncachedDiskIOPS', 'uncachedDiskThroughput', 'networkBandwidth']:
-        if caps.get(key):
+        if caps.get(key) is None:
+            caps[key] = None
+        elif not isinstance(caps[key], (int, float)):
             try:
                 caps[key] = float(caps[key])
             except:
