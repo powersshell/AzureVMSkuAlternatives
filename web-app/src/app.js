@@ -348,11 +348,11 @@ function getDirectionIndicator(targetValue, altValue) {
     }
     
     if (altValue > targetValue) {
-        return { direction: 'upgrade', icon: '🔼', changed: true };
+        return { direction: 'upgrade', icon: '▲', changed: true };
     } else if (altValue < targetValue) {
-        return { direction: 'downgrade', icon: '🔽', changed: true };
+        return { direction: 'downgrade', icon: '▼', changed: true };
     } else {
-        return { direction: 'same', icon: '✓', changed: false };
+        return { direction: 'same', icon: '●', changed: false };
     }
 }
 
@@ -363,34 +363,34 @@ function getPriceIndicator(targetPrice, altPrice) {
     
     if (altPrice > targetPrice) {
         // Higher price = bad (RED)
-        return { direction: 'higher', icon: '🔼', changed: true, negative: true };
+        return { direction: 'higher', icon: '▲', changed: true, negative: true };
     } else if (altPrice < targetPrice) {
         // Lower price = good (GREEN)
-        return { direction: 'lower', icon: '🔽', changed: true, positive: true };
+        return { direction: 'lower', icon: '▼', changed: true, positive: true };
     } else {
-        return { direction: 'same', icon: '✓', changed: false };
+        return { direction: 'same', icon: '●', changed: false };
     }
 }
 
 function renderIndicator(indicator, fieldName) {
     if (!indicator.changed) {
-        return `<span class="diff-indicator diff-same" title="${fieldName}: Same as target">✓</span>`;
+        return `<span class="diff-indicator diff-same" title="${fieldName}: Same as target">●</span>`;
     }
     
     // Price has inverted logic (higher = bad, lower = good)
     if (fieldName === 'price') {
         if (indicator.negative) {
-            return `<span class="diff-indicator diff-negative" title="${fieldName}: Higher than target (worse)">🔼</span>`;
+            return `<span class="diff-indicator diff-negative" title="${fieldName}: Higher than target (worse)">▲</span>`;
         } else if (indicator.positive) {
-            return `<span class="diff-indicator diff-positive" title="${fieldName}: Lower than target (better)">🔽</span>`;
+            return `<span class="diff-indicator diff-positive" title="${fieldName}: Lower than target (better)">▼</span>`;
         }
     }
     
     // Normal fields (more = upgrade, less = downgrade)
     if (indicator.direction === 'upgrade') {
-        return `<span class="diff-indicator diff-upgrade" title="${fieldName}: More than target">🔼</span>`;
+        return `<span class="diff-indicator diff-upgrade" title="${fieldName}: More than target">▲</span>`;
     } else if (indicator.direction === 'downgrade') {
-        return `<span class="diff-indicator diff-downgrade" title="${fieldName}: Less than target">🔽</span>`;
+        return `<span class="diff-indicator diff-downgrade" title="${fieldName}: Less than target">▼</span>`;
     }
     
     return '';
