@@ -17,6 +17,7 @@ const exportBtn = document.getElementById('exportBtn');
 let currentResults = null;
 let locationChoices = null; // Choices.js instance for location
 let skuChoices = null; // Choices.js instance for SKU
+const expandedDetailsCache = new Map(); // Cache for expanded row details (Phase 2)
 
 // Event Listeners
 compareBtn.addEventListener('click', handleCompare);
@@ -435,7 +436,11 @@ function displayAlternatives(alternatives) {
     }
 
     alternatives.forEach((alt, index) => {
+        // Main result row
         const row = document.createElement('tr');
+        row.classList.add('result-row', 'clickable');
+        row.dataset.index = index;
+        row.dataset.skuName = alt.name;
 
         const scoreClass = alt.similarityScore >= 80 ? 'score-high' :
                           alt.similarityScore >= 60 ? 'score-medium' : 'score-low';
@@ -463,9 +468,222 @@ function displayAlternatives(alternatives) {
             <td>${alt.pricing ? formatCurrency(alt.pricing.monthlyPrice, alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.monthlyPrice, 'Monthly Price')}</td>
             <td>${alt.zones || 'N/A'}</td>
         `;
-
+        
+        // Click handler for expand/collapse (Phase 2)
+        row.addEventListener('click', () => toggleDetails(index, alt, targetSku));
+        
         resultsTableBody.appendChild(row);
+        
+        // Create hidden details row (Phase 2)
+        const detailsRow = document.createElement('tr');
+        detailsRow.classList.add('details-row', 'hidden');
+        detailsRow.dataset.index = index;
+        detailsRow.innerHTML = `<td colspan="9"><div class="details-content"></div></td>`;
+        
+        resultsTableBody.appendChild(detailsRow);
     });
+}
+
+// Toggle details row expand/collapse (Phase 2)
+async function toggleDetails(index, altSku, targetSku) {
+    const detailsRow = document.querySelector(`.details-row[data-index="${index}"]`);
+    const detailsContent = detailsRow.querySelector('.details-content');
+    
+    // Toggle visibility
+    if (detailsRow.classList.contains('hidden')) {
+        // Show details
+        detailsRow.classList.remove('hidden');
+        
+        // Check cache first
+        const cacheKey = `${targetSku.name}_${altSku.name}`;
+        if (expandedDetailsCache.has(cacheKey)) {
+            detailsContent.innerHTML = renderDetailedComparison(
+                expandedDetailsCache.get(cacheKey),
+                targetSku,
+                altSku
+            );
+        } else {
+            // Show loading state
+            detailsContent.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading detailed comparison...</p></div>';
+            
+            // Fetch from API
+            try {
+                const details = await fetchComparisonDetails(
+                    targetSku.name,
+                    altSku.name,
+                    currentResults.location || document.getElementById('location').value
+                );
+                
+                // Cache it
+                expandedDetailsCache.set(cacheKey, details);
+                
+                // Render it
+                detailsContent.innerHTML = renderDetailedComparison(details, targetSku, altSku);
+            } catch (error) {
+                console.error('Failed to load details:', error);
+                detailsContent.innerHTML = '<div class="error"><p>❌ Failed to load details. Click row again to retry.</p></div>';
+            }
+        }
+    } else {
+        // Hide details
+        detailsRow.classList.add('hidden');
+    }
+}
+
+// Fetch comparison details from API (Phase 2)
+async function fetchComparisonDetails(targetName, altName, location) {
+    const params = new URLSearchParams({
+        target: targetName,
+        alternative: altName,
+        location: location,
+        currency: document.getElementById('currencyCode')?.value || 'USD'
+    });
+    
+    const response = await fetch(`${API_BASE_URL}/compare_details?${params}`);
+    
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    return await response.json();
+}
+
+// Render detailed comparison (Phase 2)
+function renderDetailedComparison(data, targetSku, altSku) {
+    const diff = data.differences;
+    
+    return `
+        <div class="comparison-details">
+            <h4>📊 Detailed Comparison: ${altSku.name} vs ${targetSku.name}</h4>
+            
+            <div class="details-grid">
+                <!-- Compute Section -->
+                <div class="details-section">
+                    <h5>Compute</h5>
+                    ${renderNumericDiff('vCPUs', diff.compute.vCPUs)}
+                    ${renderNumericDiff('Memory', diff.compute.memory)}
+                </div>
+                
+                <!-- Storage Section -->
+                <div class="details-section">
+                    <h5>Storage</h5>
+                    ${renderNumericDiff('Max Data Disks', diff.storage.maxDataDisks)}
+                    ${renderNumericDiff('Cached IOPS', diff.storage.cachedIOPS)}
+                    ${renderNumericDiff('Cached Throughput', diff.storage.cachedThroughput)}
+                    ${renderBooleanDiff(diff.storage.nvmeSupport)}
+                </div>
+                
+                <!-- Network Section -->
+                <div class="details-section">
+                    <h5>Network</h5>
+                    ${renderNumericDiff('Bandwidth', diff.network.bandwidth)}
+                    ${renderBooleanDiff(diff.network.acceleratedNetworking)}
+                </div>
+                
+                <!-- Cost Section -->
+                <div class="details-section">
+                    <h5>Cost Analysis</h5>
+                    ${renderPriceDiff('Hourly Price', diff.pricing.hourly)}
+                    ${renderPriceDiff('Monthly Price', diff.pricing.monthly)}
+                    ${renderEfficiency(diff.pricing.efficiency)}
+                </div>
+            </div>
+            
+            <!-- Features Section -->
+            ${renderFeatures(diff.features)}
+        </div>
+    `;
+}
+
+function renderNumericDiff(label, diff) {
+    if (!diff.changed) {
+        return `<div class="diff-item same">● ${label}: ${diff.alternative} ${diff.unit} (same)</div>`;
+    }
+    
+    const icon = diff.direction === 'upgrade' ? '▲' : '▼';
+    const className = diff.direction === 'upgrade' ? 'diff-item upgrade' : 'diff-item downgrade';
+    const sign = diff.delta > 0 ? '+' : '';
+    const percent = diff.percentChange ? ` (${sign}${diff.percentChange}%)` : '';
+    
+    return `
+        <div class="${className}">
+            ${icon} ${label}: ${diff.target} → ${diff.alternative} ${diff.unit}
+            <span class="delta">${sign}${diff.delta} ${diff.unit}${percent}</span>
+        </div>
+    `;
+}
+
+function renderPriceDiff(label, diff) {
+    if (!diff.changed) {
+        return `<div class="diff-item same">● ${label}: ${diff.currency} ${diff.alternative} (same)</div>`;
+    }
+    
+    const icon = diff.isNegative ? '⚠️' : '✅';
+    const className = diff.isNegative ? 'diff-item negative' : 'diff-item positive';
+    const sign = diff.delta > 0 ? '+' : '';
+    const percent = diff.percentChange ? ` (${sign}${diff.percentChange}%)` : '';
+    
+    return `
+        <div class="${className}">
+            ${icon} ${label}: ${diff.currency} ${diff.target.toFixed(2)} → ${diff.currency} ${diff.alternative.toFixed(2)}
+            <span class="delta">${sign}${diff.currency} ${Math.abs(diff.delta).toFixed(2)}${percent}</span>
+        </div>
+    `;
+}
+
+function renderBooleanDiff(diff) {
+    const icon = diff.changed ? (diff.direction === 'added' ? '✅' : '❌') : '●';
+    const className = diff.changed ? 'diff-item' : 'diff-item same';
+    const text = diff.changed ? 
+        `${diff.target ? 'Yes' : 'No'} → ${diff.alternative ? 'Yes' : 'No'}` :
+        `${diff.alternative ? 'Yes' : 'No'} (same)`;
+    
+    return `<div class="${className}">${icon} ${diff.feature}: ${text}</div>`;
+}
+
+function renderEfficiency(efficiency) {
+    let html = '';
+    
+    if (efficiency.costPerVCPU) {
+        const icon = efficiency.costPerVCPU.betterEfficiency ? '✅' : '⚠️';
+        html += `
+            <div class="diff-item">
+                ${icon} Cost per vCPU: $${efficiency.costPerVCPU.alternative.toFixed(4)}
+                (${efficiency.costPerVCPU.betterEfficiency ? 'better' : 'worse'} efficiency)
+            </div>
+        `;
+    }
+    
+    if (efficiency.costPerGB) {
+        const icon = efficiency.costPerGB.betterEfficiency ? '✅' : '⚠️';
+        html += `
+            <div class="diff-item">
+                ${icon} Cost per GB: $${efficiency.costPerGB.alternative.toFixed(4)}
+                (${efficiency.costPerGB.betterEfficiency ? 'better' : 'worse'} efficiency)
+            </div>
+        `;
+    }
+    
+    return html;
+}
+
+function renderFeatures(features) {
+    if (features.added.length === 0 && features.removed.length === 0) {
+        return '<div class="features-diff"><div class="diff-item same">● All features unchanged</div></div>';
+    }
+    
+    let html = '<div class="features-diff">';
+    
+    if (features.added.length > 0) {
+        html += `<div class="features-added">✅ <strong>Added:</strong> ${features.added.join(', ')}</div>`;
+    }
+    
+    if (features.removed.length > 0) {
+        html += `<div class="features-removed">❌ <strong>Removed:</strong> ${features.removed.join(', ')}</div>`;
+    }
+    
+    html += '</div>';
+    return html;
 }
 
 // Format Currency
