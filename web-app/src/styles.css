@@ -587,3 +587,42 @@ footer {
         padding: 0.5rem;
     }
 }
+
+/* Difference Indicators (Phase 1) */
+.diff-indicator {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 0.85em;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+    cursor: help;
+}
+
+.diff-indicator:hover {
+    opacity: 1;
+    font-size: 0.95em;
+}
+
+/* Upgrade = More (Green for compute, orange/red for price) */
+.diff-upgrade {
+    color: #107c10; /* Green */
+}
+
+/* Downgrade = Less (Red for compute, green for price) */
+.diff-downgrade {
+    color: #d13438; /* Red */
+}
+
+/* Same = No change */
+.diff-same {
+    color: #666666; /* Gray */
+}
+
+/* Price-specific colors (inverted logic) */
+.diff-positive {
+    color: #107c10; /* Green - lower price is good */
+}
+
+.diff-negative {
+    color: #d13438; /* Red - higher price is bad */
+}

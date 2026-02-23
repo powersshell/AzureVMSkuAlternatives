@@ -330,9 +330,103 @@ function displayTargetSku(targetSku) {
     targetSkuInfo.innerHTML = html;
 }
 
+// Calculate difference indicators from existing data
+function calculateIndicators(targetSku, alternativeSku) {
+    return {
+        vCPUs: getDirectionIndicator(targetSku.vCPUs, alternativeSku.vCPUs),
+        memory: getDirectionIndicator(targetSku.memoryGB, alternativeSku.memoryGB),
+        price: getPriceIndicator(
+            targetSku.pricing?.hourlyPrice, 
+            alternativeSku.pricing?.hourlyPrice
+        )
+    };
+}
+
+function getDirectionIndicator(targetValue, altValue) {
+    if (targetValue == null || altValue == null) {
+        return { direction: 'unknown', icon: '', changed: false };
+    }
+    
+    if (altValue > targetValue) {
+        return { direction: 'upgrade', icon: '🔼', changed: true };
+    } else if (altValue < targetValue) {
+        return { direction: 'downgrade', icon: '🔽', changed: true };
+    } else {
+        return { direction: 'same', icon: '✓', changed: false };
+    }
+}
+
+function getPriceIndicator(targetPrice, altPrice) {
+    if (targetPrice == null || altPrice == null) {
+        return { direction: 'unknown', icon: '', changed: false };
+    }
+    
+    if (altPrice > targetPrice) {
+        // Higher price = bad (RED)
+        return { direction: 'higher', icon: '🔼', changed: true, negative: true };
+    } else if (altPrice < targetPrice) {
+        // Lower price = good (GREEN)
+        return { direction: 'lower', icon: '🔽', changed: true, positive: true };
+    } else {
+        return { direction: 'same', icon: '✓', changed: false };
+    }
+}
+
+function renderIndicator(indicator, fieldName) {
+    if (!indicator.changed) {
+        return `<span class="diff-indicator diff-same" title="${fieldName}: Same as target">✓</span>`;
+    }
+    
+    // Price has inverted logic (higher = bad, lower = good)
+    if (fieldName === 'price') {
+        if (indicator.negative) {
+            return `<span class="diff-indicator diff-negative" title="${fieldName}: Higher than target (worse)">🔼</span>`;
+        } else if (indicator.positive) {
+            return `<span class="diff-indicator diff-positive" title="${fieldName}: Lower than target (better)">🔽</span>`;
+        }
+    }
+    
+    // Normal fields (more = upgrade, less = downgrade)
+    if (indicator.direction === 'upgrade') {
+        return `<span class="diff-indicator diff-upgrade" title="${fieldName}: More than target">🔼</span>`;
+    } else if (indicator.direction === 'downgrade') {
+        return `<span class="diff-indicator diff-downgrade" title="${fieldName}: Less than target">🔽</span>`;
+    }
+    
+    return '';
+}
+
 // Display Alternatives Table
 function displayAlternatives(alternatives) {
     resultsTableBody.innerHTML = '';
+    
+    // Get target SKU for comparison
+    const targetSku = currentResults?.targetSku;
+    if (!targetSku) {
+        console.error('No target SKU available for comparison');
+        // Fall back to display without indicators
+        alternatives.forEach((alt, index) => {
+            const row = document.createElement('tr');
+            const scoreClass = alt.similarityScore >= 80 ? 'score-high' :
+                              alt.similarityScore >= 60 ? 'score-medium' : 'score-low';
+            const rankClass = index < 3 ? `rank-${index + 1}` : '';
+            const cpuDisplay = `${alt.cpuVendor || 'Intel'} (${alt.architecture || 'x64'})`;
+
+            row.innerHTML = `
+                <td><span class="rank-badge ${rankClass}">${index + 1}</span></td>
+                <td><span class="sku-name">${alt.name}</span></td>
+                <td><div class="similarity-score"><span class="score-badge ${scoreClass}">${alt.similarityScore.toFixed(1)}%</span></div></td>
+                <td>${cpuDisplay}</td>
+                <td>${alt.vCPUs || 'N/A'}</td>
+                <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'}</td>
+                <td>${alt.pricing ? formatCurrency(alt.pricing.hourlyPrice, alt.pricing.currency) : 'N/A'}</td>
+                <td>${alt.pricing ? formatCurrency(alt.pricing.monthlyPrice, alt.pricing.currency) : 'N/A'}</td>
+                <td>${alt.zones || 'N/A'}</td>
+            `;
+            resultsTableBody.appendChild(row);
+        });
+        return;
+    }
 
     alternatives.forEach((alt, index) => {
         const row = document.createElement('tr');
@@ -344,6 +438,9 @@ function displayAlternatives(alternatives) {
         
         // Format CPU vendor with architecture
         const cpuDisplay = `${alt.cpuVendor || 'Intel'} (${alt.architecture || 'x64'})`;
+        
+        // Calculate indicators from existing data
+        const indicators = calculateIndicators(targetSku, alt);
 
         row.innerHTML = `
             <td><span class="rank-badge ${rankClass}">${index + 1}</span></td>
@@ -354,9 +451,9 @@ function displayAlternatives(alternatives) {
                 </div>
             </td>
             <td>${cpuDisplay}</td>
-            <td>${alt.vCPUs || 'N/A'}</td>
-            <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'}</td>
-            <td>${alt.pricing ? formatCurrency(alt.pricing.hourlyPrice, alt.pricing.currency) : 'N/A'}</td>
+            <td>${alt.vCPUs || 'N/A'} ${renderIndicator(indicators.vCPUs, 'vCPUs')}</td>
+            <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'} ${renderIndicator(indicators.memory, 'Memory')}</td>
+            <td>${alt.pricing ? formatCurrency(alt.pricing.hourlyPrice, alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.price, 'price')}</td>
             <td>${alt.pricing ? formatCurrency(alt.pricing.monthlyPrice, alt.pricing.currency) : 'N/A'}</td>
             <td>${alt.zones || 'N/A'}</td>
         `;
