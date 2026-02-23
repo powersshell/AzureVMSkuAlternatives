@@ -968,8 +968,8 @@ def detect_cpu_vendor(sku_name: str, architecture: str) -> str:
 # Helper Functions for SKU Comparison Details (Phase 2)
 # ============================================================================
 
-def extract_capabilities(sku: dict) -> dict:
-    """Extract capabilities from SKU for comparison."""
+def extract_capabilities_for_diff(sku: dict) -> dict:
+    """Extract capabilities from SKU for detailed comparison."""
     caps = {}
     capabilities = sku.get('capabilities', {})
     
@@ -1153,8 +1153,8 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
         }
     
     # Extract capabilities for storage/network comparison
-    target_caps = extract_capabilities(target_sku)
-    alt_caps = extract_capabilities(alternative_sku)
+    target_caps = extract_capabilities_for_diff(target_sku)
+    alt_caps = extract_capabilities_for_diff(alternative_sku)
     
     # Storage differences
     differences['storage'] = {
