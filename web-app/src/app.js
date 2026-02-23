@@ -335,9 +335,13 @@ function calculateIndicators(targetSku, alternativeSku) {
     return {
         vCPUs: getDirectionIndicator(targetSku.vCPUs, alternativeSku.vCPUs),
         memory: getDirectionIndicator(targetSku.memoryGB, alternativeSku.memoryGB),
-        price: getPriceIndicator(
+        hourlyPrice: getPriceIndicator(
             targetSku.pricing?.hourlyPrice, 
             alternativeSku.pricing?.hourlyPrice
+        ),
+        monthlyPrice: getPriceIndicator(
+            targetSku.pricing?.monthlyPrice, 
+            alternativeSku.pricing?.monthlyPrice
         )
     };
 }
@@ -378,7 +382,9 @@ function renderIndicator(indicator, fieldName) {
     }
     
     // Price has inverted logic (higher = bad, lower = good)
-    if (fieldName === 'price') {
+    const isPriceField = fieldName.toLowerCase().includes('price');
+    
+    if (isPriceField) {
         if (indicator.negative) {
             return `<span class="diff-indicator diff-negative" title="${fieldName}: Higher than target (worse)">▲</span>`;
         } else if (indicator.positive) {
@@ -453,8 +459,8 @@ function displayAlternatives(alternatives) {
             <td>${cpuDisplay}</td>
             <td>${alt.vCPUs || 'N/A'} ${renderIndicator(indicators.vCPUs, 'vCPUs')}</td>
             <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'} ${renderIndicator(indicators.memory, 'Memory')}</td>
-            <td>${alt.pricing ? formatCurrency(alt.pricing.hourlyPrice, alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.price, 'price')}</td>
-            <td>${alt.pricing ? formatCurrency(alt.pricing.monthlyPrice, alt.pricing.currency) : 'N/A'}</td>
+            <td>${alt.pricing ? formatCurrency(alt.pricing.hourlyPrice, alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.hourlyPrice, 'Hourly Price')}</td>
+            <td>${alt.pricing ? formatCurrency(alt.pricing.monthlyPrice, alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.monthlyPrice, 'Monthly Price')}</td>
             <td>${alt.zones || 'N/A'}</td>
         `;
 
