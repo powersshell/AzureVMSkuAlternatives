@@ -268,6 +268,133 @@ def health(req: func.HttpRequest) -> func.HttpResponse:
 
 
 # ============================================================================
+# HTTP Route: /compare_details - Get detailed comparison between two SKUs
+# ============================================================================
+@app.route(route="compare_details", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def compare_details(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Get detailed comparison between two specific SKUs.
+    Called when user expands a row to see full details.
+    
+    Query Parameters:
+    - target: Target SKU name
+    - alternative: Alternative SKU name
+    - location: Azure region
+    - currency: (optional) Currency code, default USD
+    """
+    logging.info('Processing compare_details request')
+    
+    try:
+        # Get parameters
+        target_name = req.params.get('target')
+        alternative_name = req.params.get('alternative')
+        location = req.params.get('location')
+        currency_code = req.params.get('currency', 'USD')
+        
+        if not target_name or not alternative_name or not location:
+            return func.HttpResponse(
+                json.dumps({'error': 'Missing required parameters: target, alternative, location'}),
+                mimetype='application/json',
+                status_code=400
+            )
+        
+        # Get SKUs from cache
+        target_sku = get_sku_from_cache(target_name, location)
+        alt_sku = get_sku_from_cache(alternative_name, location)
+        
+        if not target_sku:
+            return func.HttpResponse(
+                json.dumps({'error': f'Target SKU not found: {target_name}'}),
+                mimetype='application/json',
+                status_code=404
+            )
+        
+        if not alt_sku:
+            return func.HttpResponse(
+                json.dumps({'error': f'Alternative SKU not found: {alternative_name}'}),
+                mimetype='application/json',
+                status_code=404
+            )
+        
+        # Get pricing
+        if currency_code == 'USD' and target_sku.get('pricing'):
+            target_pricing = target_sku.get('pricing')
+        else:
+            target_pricing = get_vm_pricing(target_name, location, currency_code)
+        
+        if currency_code == 'USD' and alt_sku.get('pricing'):
+            alt_pricing = alt_sku.get('pricing')
+        else:
+            alt_pricing = get_vm_pricing(alternative_name, location, currency_code)
+        
+        # Calculate detailed differences
+        differences = calculate_detailed_differences(
+            target_sku, alt_sku,
+            target_pricing, alt_pricing
+        )
+        
+        # Return response
+        response_data = {
+            'target': target_name,
+            'alternative': alternative_name,
+            'location': location,
+            'differences': differences
+        }
+        
+        return func.HttpResponse(
+            json.dumps(response_data),
+            mimetype='application/json',
+            status_code=200
+        )
+        
+    except Exception as e:
+        logging.error(f'Error in compare_details: {str(e)}')
+        return func.HttpResponse(
+            json.dumps({'error': f'Internal server error: {str(e)}'}),
+            mimetype='application/json',
+            status_code=500
+        )
+
+
+def get_sku_from_cache(sku_name: str, location: str) -> dict:
+    """Get single SKU details from cache."""
+    try:
+        storage_account_name = os.environ.get('SKU_CACHE_STORAGE_ACCOUNT')
+        if not storage_account_name:
+            return None
+        
+        credential = DefaultAzureCredential()
+        table_service_client = TableServiceClient(
+            endpoint=f"https://{storage_account_name}.table.core.windows.net/",
+            credential=credential
+        )
+        table_client = table_service_client.get_table_client(table_name="vmskus")
+        
+        # Query for specific SKU
+        entity = table_client.get_entity(partition_key=location, row_key=sku_name)
+        
+        # Parse capabilities JSON if present
+        if 'capabilities' in entity and entity['capabilities']:
+            try:
+                entity['capabilities'] = json.loads(entity['capabilities'])
+            except:
+                entity['capabilities'] = {}
+        
+        # Parse pricing if present
+        if 'pricing' in entity and entity['pricing']:
+            try:
+                entity['pricing'] = json.loads(entity['pricing'])
+            except:
+                entity['pricing'] = None
+        
+        return entity
+        
+    except Exception as e:
+        logging.error(f'Error fetching SKU from cache: {str(e)}')
+        return None
+
+
+# ============================================================================
 # HTTP Route: /skus - List available VM SKUs from cache
 # ============================================================================
 @app.route(route="skus", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
@@ -835,3 +962,246 @@ def detect_cpu_vendor(sku_name: str, architecture: str) -> str:
     
     # Intel - Default for x64 that don't match AMD pattern
     return 'Intel'
+
+
+# ============================================================================
+# Helper Functions for SKU Comparison Details (Phase 2)
+# ============================================================================
+
+def extract_capabilities(sku: dict) -> dict:
+    """Extract capabilities from SKU for comparison."""
+    caps = {}
+    capabilities = sku.get('capabilities', {})
+    
+    if isinstance(capabilities, str):
+        try:
+            capabilities = json.loads(capabilities)
+        except:
+            capabilities = {}
+    
+    # Extract common capabilities
+    caps['maxDataDisks'] = capabilities.get('MaxDataDiskCount')
+    caps['cachedDiskIOPS'] = capabilities.get('CachedDiskIOPS')
+    caps['cachedDiskThroughput'] = capabilities.get('CachedDiskBytes')
+    caps['uncachedDiskIOPS'] = capabilities.get('UncachedDiskIOPS')
+    caps['uncachedDiskThroughput'] = capabilities.get('UncachedDiskBytes')
+    caps['networkBandwidth'] = capabilities.get('MaxNetworkInterfaces')
+    caps['acceleratedNetworking'] = capabilities.get('AcceleratedNetworkingEnabled', 'False') == 'True'
+    caps['nvme'] = capabilities.get('EphemeralOSDiskSupported', 'False') == 'True'
+    
+    # Convert strings to numbers
+    for key in ['maxDataDisks', 'cachedDiskIOPS', 'cachedDiskThroughput', 
+                'uncachedDiskIOPS', 'uncachedDiskThroughput', 'networkBandwidth']:
+        if caps.get(key):
+            try:
+                caps[key] = float(caps[key])
+            except:
+                caps[key] = None
+    
+    return caps
+
+
+def calculate_numeric_diff(target_val, alt_val, unit: str = '') -> dict:
+    """Calculate difference for numeric values with percentage change."""
+    if target_val is None or alt_val is None:
+        return {
+            'target': target_val,
+            'alternative': alt_val,
+            'changed': False,
+            'unit': unit
+        }
+    
+    delta = alt_val - target_val
+    if target_val == 0:
+        percent_change = None
+    else:
+        percent_change = (delta / target_val) * 100
+    
+    return {
+        'target': target_val,
+        'alternative': alt_val,
+        'delta': delta,
+        'percentChange': round(percent_change, 1) if percent_change is not None else None,
+        'direction': 'upgrade' if delta > 0 else 'downgrade' if delta < 0 else 'same',
+        'changed': delta != 0,
+        'unit': unit
+    }
+
+
+def calculate_price_diff(target_price, alt_price, currency: str) -> dict:
+    """Calculate price difference (higher = negative, lower = positive)."""
+    if target_price is None or alt_price is None:
+        return {
+            'target': target_price,
+            'alternative': alt_price,
+            'changed': False,
+            'currency': currency
+        }
+    
+    delta = alt_price - target_price
+    percent_change = (delta / target_price) * 100 if target_price != 0 else None
+    
+    return {
+        'target': round(target_price, 4),
+        'alternative': round(alt_price, 4),
+        'delta': round(delta, 4),
+        'percentChange': round(percent_change, 1) if percent_change is not None else None,
+        'direction': 'higher' if delta > 0 else 'lower' if delta < 0 else 'same',
+        'changed': delta != 0,
+        'currency': currency,
+        'isPositive': delta < 0,  # Lower price = positive
+        'isNegative': delta > 0   # Higher price = negative
+    }
+
+
+def calculate_cost_efficiency(target_sku, alt_sku, target_pricing, alt_pricing) -> dict:
+    """Calculate cost per vCPU and cost per GB metrics."""
+    target_vcpus = target_sku.get('vCPUs', 0)
+    alt_vcpus = alt_sku.get('vCPUs', 0)
+    target_memory = target_sku.get('memoryGB', 0)
+    alt_memory = alt_sku.get('memoryGB', 0)
+    target_price = target_pricing.get('hourlyPrice', 0)
+    alt_price = alt_pricing.get('hourlyPrice', 0)
+    
+    efficiency = {}
+    
+    if target_vcpus > 0 and alt_vcpus > 0:
+        target_cost_per_vcpu = target_price / target_vcpus
+        alt_cost_per_vcpu = alt_price / alt_vcpus
+        efficiency['costPerVCPU'] = {
+            'target': round(target_cost_per_vcpu, 4),
+            'alternative': round(alt_cost_per_vcpu, 4),
+            'delta': round(alt_cost_per_vcpu - target_cost_per_vcpu, 4),
+            'betterEfficiency': alt_cost_per_vcpu <= target_cost_per_vcpu
+        }
+    
+    if target_memory > 0 and alt_memory > 0:
+        target_cost_per_gb = target_price / target_memory
+        alt_cost_per_gb = alt_price / alt_memory
+        efficiency['costPerGB'] = {
+            'target': round(target_cost_per_gb, 4),
+            'alternative': round(alt_cost_per_gb, 4),
+            'delta': round(alt_cost_per_gb - target_cost_per_gb, 4),
+            'betterEfficiency': alt_cost_per_gb <= target_cost_per_gb
+        }
+    
+    return efficiency
+
+
+def calculate_boolean_diff(target_val: bool, alt_val: bool, feature_name: str) -> dict:
+    """Calculate difference for boolean features."""
+    changed = target_val != alt_val
+    
+    if changed:
+        if not target_val and alt_val:
+            direction = 'added'
+        elif target_val and not alt_val:
+            direction = 'removed'
+        else:
+            direction = 'changed'
+    else:
+        direction = 'same'
+    
+    return {
+        'target': target_val,
+        'alternative': alt_val,
+        'changed': changed,
+        'direction': direction,
+        'feature': feature_name
+    }
+
+
+def calculate_detailed_differences(target_sku: dict, alternative_sku: dict, 
+                                   target_pricing: dict, alt_pricing: dict) -> dict:
+    """
+    Calculate comprehensive differences between target and alternative SKU.
+    Returns structured difference object with deltas, percentages, and directions.
+    """
+    differences = {}
+    
+    # Compute differences
+    differences['compute'] = {
+        'vCPUs': calculate_numeric_diff(
+            target_sku.get('vCPUs'), 
+            alternative_sku.get('vCPUs'),
+            'cores'
+        ),
+        'memory': calculate_numeric_diff(
+            target_sku.get('memoryGB'), 
+            alternative_sku.get('memoryGB'),
+            'GB'
+        )
+    }
+    
+    # Price differences
+    if target_pricing and alt_pricing:
+        differences['pricing'] = {
+            'hourly': calculate_price_diff(
+                target_pricing.get('hourlyPrice'),
+                alt_pricing.get('hourlyPrice'),
+                target_pricing.get('currency', 'USD')
+            ),
+            'monthly': calculate_price_diff(
+                target_pricing.get('monthlyPrice'),
+                alt_pricing.get('monthlyPrice'),
+                target_pricing.get('currency', 'USD')
+            ),
+            'efficiency': calculate_cost_efficiency(
+                target_sku, alternative_sku,
+                target_pricing, alt_pricing
+            )
+        }
+    
+    # Extract capabilities for storage/network comparison
+    target_caps = extract_capabilities(target_sku)
+    alt_caps = extract_capabilities(alternative_sku)
+    
+    # Storage differences
+    differences['storage'] = {
+        'maxDataDisks': calculate_numeric_diff(
+            target_caps.get('maxDataDisks'),
+            alt_caps.get('maxDataDisks'),
+            'disks'
+        ),
+        'cachedIOPS': calculate_numeric_diff(
+            target_caps.get('cachedDiskIOPS'),
+            alt_caps.get('cachedDiskIOPS'),
+            'IOPS'
+        ),
+        'cachedThroughput': calculate_numeric_diff(
+            target_caps.get('cachedDiskThroughput'),
+            alt_caps.get('cachedDiskThroughput'),
+            'MB/s'
+        ),
+        'nvmeSupport': calculate_boolean_diff(
+            target_caps.get('nvme', False),
+            alt_caps.get('nvme', False),
+            'NVMe Support'
+        )
+    }
+    
+    # Network differences
+    differences['network'] = {
+        'bandwidth': calculate_numeric_diff(
+            target_caps.get('networkBandwidth'),
+            alt_caps.get('networkBandwidth'),
+            'Mbps'
+        ),
+        'acceleratedNetworking': calculate_boolean_diff(
+            target_caps.get('acceleratedNetworking', False),
+            alt_caps.get('acceleratedNetworking', False),
+            'Accelerated Networking'
+        )
+    }
+    
+    # Feature differences
+    target_features = set(target_sku.get('capabilities', {}).keys() if isinstance(target_sku.get('capabilities'), dict) else [])
+    alt_features = set(alternative_sku.get('capabilities', {}).keys() if isinstance(alternative_sku.get('capabilities'), dict) else [])
+    
+    differences['features'] = {
+        'added': sorted(list(alt_features - target_features)),
+        'removed': sorted(list(target_features - alt_features)),
+        'unchanged': sorted(list(target_features & alt_features))
+    }
+    
+    return differences
