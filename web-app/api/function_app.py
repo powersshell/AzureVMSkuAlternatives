@@ -886,6 +886,7 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
                 'memoryGB': capabilities['memoryGB'],
                 'maxDataDisks': capabilities['maxDataDisks'],
                 'maxNics': capabilities['maxNics'],
+                'networkBandwidthMbps': capabilities['networkBandwidthMbps'],
                 'uncachedDiskIOPS': capabilities['uncachedDiskIOPS'],
                 'uncachedDiskBytesPerSecond': capabilities['uncachedDiskBytesPerSecond'],
                 'cachedDiskIOPS': capabilities['cachedDiskIOPS'],
@@ -926,6 +927,7 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
         'memoryGB': float(capabilities.get('MemoryGB', 0)),
         'maxDataDisks': int(capabilities.get('MaxDataDiskCount', 0)),
         'maxNics': int(capabilities.get('MaxNetworkInterfaces', 0)),
+        'networkBandwidthMbps': int(capabilities.get('NetworkBandwidthInMbps', 0)),
         'uncachedDiskIOPS': int(capabilities.get('UncachedDiskIOPS', 0)),
         'uncachedDiskBytesPerSecond': int(capabilities.get('UncachedDiskBytesPerSecond', 0)),
         'cachedDiskIOPS': int(capabilities.get('CachedDiskIOPS', 0)),
@@ -985,7 +987,7 @@ def extract_capabilities_for_diff(sku: dict) -> dict:
     caps['cachedDiskThroughput'] = sku.get('cachedDiskBytesPerSecond')  
     caps['uncachedDiskIOPS'] = sku.get('uncachedDiskIOPS')
     caps['uncachedDiskThroughput'] = sku.get('uncachedDiskBytesPerSecond')
-    caps['networkBandwidth'] = sku.get('maxNics')
+    caps['networkBandwidth'] = sku.get('networkBandwidthMbps')
     caps['acceleratedNetworking'] = sku.get('acceleratedNetworking', False)
     caps['nvme'] = sku.get('nvme', False)
     
