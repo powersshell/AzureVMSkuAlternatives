@@ -917,6 +917,24 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
         except Exception as e:
             logging.warning(f"Failed to process SKU {sku.get('name', 'unknown')}: {e}")
     
+    # Prune SKUs that no longer exist in the Azure API for this region
+    api_sku_names = {s['name'] for s in skus}
+    try:
+        cached_entities = table_client.query_entities(
+            query_filter=f"PartitionKey eq '{region}'",
+            select=['RowKey']
+        )
+        pruned = 0
+        for entity in cached_entities:
+            if entity['RowKey'] not in api_sku_names:
+                table_client.delete_entity(partition_key=region, row_key=entity['RowKey'])
+                logging.info(f"Pruned retired SKU: {entity['RowKey']} in {region}")
+                pruned += 1
+        if pruned:
+            logging.info(f"Pruned {pruned} retired SKUs from {region}")
+    except Exception as e:
+        logging.warning(f"Failed to prune stale SKUs for {region}: {e}")
+    
     return count
 
 

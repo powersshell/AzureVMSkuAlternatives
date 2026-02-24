@@ -297,9 +297,14 @@ function filterResultsByVendor(alternatives) {
 
 // Display Target SKU Info
 function displayTargetSku(targetSku) {
+    const cpuDisplay = targetSku.cpuVendor ? `${targetSku.cpuVendor} (${targetSku.architecture || 'x64'})` : 'N/A';
     const html = `
         <h3>Target SKU: ${targetSku.name}</h3>
         <div class="target-sku-grid">
+            <div class="target-sku-item">
+                <strong>CPU Vendor</strong>
+                <span>${cpuDisplay}</span>
+            </div>
             <div class="target-sku-item">
                 <strong>vCPUs</strong>
                 <span>${targetSku.vCPUs || 'N/A'}</span>
