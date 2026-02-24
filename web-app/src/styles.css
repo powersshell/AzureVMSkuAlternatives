@@ -393,7 +393,7 @@ input[list]::-webkit-calendar-picker-indicator:hover {
     border: 1px solid var(--border-color);
 }
 
-.results-filters label:first-child {
+.results-filters > label:first-child {
     font-weight: 600;
     color: var(--text-primary);
     margin-bottom: 0.5rem;
