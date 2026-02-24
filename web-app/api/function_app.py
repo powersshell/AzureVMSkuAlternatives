@@ -582,9 +582,9 @@ def extract_capabilities(sku: Dict) -> Dict:
         'nvme': int(capabilities.get('NvmeDiskSizeInMiB', 0)) > 0,
         'uncachedDiskIOPS': int(capabilities.get('UncachedDiskIOPS', 0)),
         'uncachedDiskBytesPerSecond': int(capabilities.get('UncachedDiskBytesPerSecond', 0)),
-        'cachedDiskIOPS': int(capabilities.get('MaxCachedDiskIOPS', 0)) or int(capabilities.get('CachedDiskIOPS', 0)),
-        'cachedDiskBytesPerSecond': int(capabilities.get('MaxCachedDiskBytesPerSecond', 0)) or int(capabilities.get('CachedDiskBytesPerSecond', 0)),
-        'maxWriteAcceleratorDisks': int(capabilities.get('MaxWriteAcceleratorDisksAllowed', 0))
+        'maxWriteAcceleratorDisks': int(capabilities.get('MaxWriteAcceleratorDisksAllowed', 0)),
+        'osVhdSizeMB': int(capabilities.get('OSVhdSizeMB', 0)),
+        'capacityReservationSupported': capabilities.get('CapacityReservationSupported') == 'True'
     }
 
 
@@ -739,16 +739,15 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         {'name': 'MaxNetworkInterfaces', 'value': str(entity['maxNics'])},
                         {'name': 'UncachedDiskIOPS', 'value': str(entity['uncachedDiskIOPS'])},
                         {'name': 'UncachedDiskBytesPerSecond', 'value': str(entity.get('uncachedDiskBytesPerSecond', 0))},
-                        {'name': 'MaxCachedDiskIOPS', 'value': str(entity.get('cachedDiskIOPS', 0))},
-                        {'name': 'MaxCachedDiskBytesPerSecond', 'value': str(entity.get('cachedDiskBytesPerSecond', 0))},
-                        {'name': 'MaxNetworkBandwidthInMbps', 'value': str(entity.get('networkBandwidthMbps', 0))},
                         {'name': 'GPUs', 'value': str(entity['gpuCount'])},
                         {'name': 'GPUType', 'value': entity.get('gpuType', '')},
                         {'name': 'PremiumIO', 'value': 'True' if entity['premiumIO'] else 'False'},
                         {'name': 'AcceleratedNetworkingEnabled', 'value': 'True' if entity['acceleratedNetworking'] else 'False'},
                         {'name': 'EncryptionAtHostSupported', 'value': 'True' if entity['encryptionAtHost'] else 'False'},
                         {'name': 'EphemeralOSDiskSupported', 'value': 'True' if entity['ephemeralOSDisk'] else 'False'},
-                        {'name': 'NvmeDiskSizeInMiB', 'value': '1' if entity.get('nvme', False) else '0'}
+                        {'name': 'NvmeDiskSizeInMiB', 'value': '1' if entity.get('nvme', False) else '0'},
+                        {'name': 'OSVhdSizeMB', 'value': str(entity.get('osVhdSizeMB', 0))},
+                        {'name': 'CapacityReservationSupported', 'value': 'True' if entity.get('capacityReservationSupported', False) else 'False'}
                     ],
                     'locationInfo': [{
                         'location': location,
@@ -890,11 +889,8 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
                 'memoryGB': capabilities['memoryGB'],
                 'maxDataDisks': capabilities['maxDataDisks'],
                 'maxNics': capabilities['maxNics'],
-                'networkBandwidthMbps': capabilities['networkBandwidthMbps'],
                 'uncachedDiskIOPS': capabilities['uncachedDiskIOPS'],
                 'uncachedDiskBytesPerSecond': capabilities['uncachedDiskBytesPerSecond'],
-                'cachedDiskIOPS': capabilities['cachedDiskIOPS'],
-                'cachedDiskBytesPerSecond': capabilities['cachedDiskBytesPerSecond'],
                 'gpuCount': capabilities['gpuCount'],
                 'gpuType': capabilities['gpuType'] or '',
                 'premiumIO': capabilities['premiumIO'],
@@ -904,6 +900,8 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
                 'nvme': capabilities['nvme'],
                 'architecture': capabilities['architecture'],
                 'cpuVendor': cpu_vendor,
+                'osVhdSizeMB': capabilities['osVhdSizeMB'],
+                'capacityReservationSupported': capabilities['capacityReservationSupported'],
                 'hourlyPriceUSD': pricing['hourlyPrice'] if pricing else None,
                 'monthlyPriceUSD': pricing['monthlyPrice'] if pricing else None,
                 'pricingCurrency': pricing['currency'] if pricing else 'USD',
@@ -931,11 +929,8 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
         'memoryGB': float(capabilities.get('MemoryGB', 0)),
         'maxDataDisks': int(capabilities.get('MaxDataDiskCount', 0)),
         'maxNics': int(capabilities.get('MaxNetworkInterfaces', 0)),
-        'networkBandwidthMbps': int(capabilities.get('MaxNetworkBandwidthInMbps', 0)) or int(capabilities.get('NetworkBandwidthInMbps', 0)) or int(capabilities.get('ExpectedNetworkBandwidth', 0)),
         'uncachedDiskIOPS': int(capabilities.get('UncachedDiskIOPS', 0)),
         'uncachedDiskBytesPerSecond': int(capabilities.get('UncachedDiskBytesPerSecond', 0)),
-        'cachedDiskIOPS': int(capabilities.get('MaxCachedDiskIOPS', 0)) or int(capabilities.get('CachedDiskIOPS', 0)),
-        'cachedDiskBytesPerSecond': int(capabilities.get('MaxCachedDiskBytesPerSecond', 0)) or int(capabilities.get('CachedDiskBytesPerSecond', 0)),
         'gpuCount': int(capabilities.get('GPUs', 0)),
         'gpuType': capabilities.get('GPUType'),
         'premiumIO': capabilities.get('PremiumIO', '').lower() == 'true',
@@ -943,7 +938,9 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
         'encryptionAtHost': capabilities.get('EncryptionAtHostSupported', '').lower() == 'true',
         'ephemeralOSDisk': capabilities.get('EphemeralOSDiskSupported', '').lower() == 'true',
         'nvme': int(capabilities.get('NvmeDiskSizeInMiB', 0)) > 0,
-        'architecture': capabilities.get('CpuArchitectureType', 'x64')  # Extract from Azure API
+        'architecture': capabilities.get('CpuArchitectureType', 'x64'),
+        'osVhdSizeMB': int(capabilities.get('OSVhdSizeMB', 0)),
+        'capacityReservationSupported': capabilities.get('CapacityReservationSupported', '').lower() == 'true'
     }
 
 
@@ -987,20 +984,19 @@ def extract_capabilities_for_diff(sku: dict) -> dict:
     # The cached SKUs already have parsed capabilities at the top level
     # Not nested in a 'capabilities' field
     caps['maxDataDisks'] = sku.get('maxDataDisks')
-    caps['cachedDiskIOPS'] = sku.get('cachedDiskIOPS')
-    raw_cached_bps = sku.get('cachedDiskBytesPerSecond') or 0
-    caps['cachedDiskThroughput'] = raw_cached_bps // (1024 * 1024) if raw_cached_bps > 0 else 0
     caps['uncachedDiskIOPS'] = sku.get('uncachedDiskIOPS')
     raw_uncached_bps = sku.get('uncachedDiskBytesPerSecond') or 0
     caps['uncachedDiskThroughput'] = raw_uncached_bps // (1024 * 1024) if raw_uncached_bps > 0 else 0
-    caps['networkBandwidth'] = sku.get('networkBandwidthMbps')
-    caps['acceleratedNetworking'] = sku.get('acceleratedNetworking', False)
+    caps['premiumIO'] = sku.get('premiumIO', False)
+    caps['ephemeralOSDisk'] = sku.get('ephemeralOSDisk', False)
     caps['nvme'] = sku.get('nvme', False)
+    caps['osVhdSizeMB'] = sku.get('osVhdSizeMB')
+    caps['maxNics'] = sku.get('maxNics')
+    caps['acceleratedNetworking'] = sku.get('acceleratedNetworking', False)
+    caps['capacityReservationSupported'] = sku.get('capacityReservationSupported', False)
     
-    # These are already numbers in the cache, no conversion needed
-    # But ensure None if not present
-    for key in ['maxDataDisks', 'cachedDiskIOPS', 'cachedDiskThroughput', 
-                'uncachedDiskIOPS', 'uncachedDiskThroughput', 'networkBandwidth']:
+    # Ensure numeric fields are numbers, not strings (Table Storage may return strings)
+    for key in ['maxDataDisks', 'uncachedDiskIOPS', 'uncachedDiskThroughput', 'maxNics', 'osVhdSizeMB']:
         if caps.get(key) is None:
             caps[key] = None
         elif not isinstance(caps[key], (int, float)):
@@ -1130,6 +1126,10 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
     """
     differences = {}
     
+    # Extract capabilities for comparison (used in compute, storage, and network sections)
+    target_caps = extract_capabilities_for_diff(target_sku)
+    alt_caps = extract_capabilities_for_diff(alternative_sku)
+    
     # Compute differences
     differences['compute'] = {
         'vCPUs': calculate_numeric_diff(
@@ -1141,6 +1141,11 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
             target_sku.get('memoryGB'), 
             alternative_sku.get('memoryGB'),
             'GB'
+        ),
+        'capacityReservation': calculate_boolean_diff(
+            target_caps.get('capacityReservationSupported', False),
+            alt_caps.get('capacityReservationSupported', False),
+            'Capacity Reservation'
         )
     }
     
@@ -1163,10 +1168,6 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
             )
         }
     
-    # Extract capabilities for storage/network comparison
-    target_caps = extract_capabilities_for_diff(target_sku)
-    alt_caps = extract_capabilities_for_diff(alternative_sku)
-    
     # Storage differences
     differences['storage'] = {
         'maxDataDisks': calculate_numeric_diff(
@@ -1184,15 +1185,20 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
             alt_caps.get('uncachedDiskThroughput'),
             'MB/s'
         ),
-        'cachedIOPS': calculate_numeric_diff(
-            target_caps.get('cachedDiskIOPS'),
-            alt_caps.get('cachedDiskIOPS'),
-            'IOPS'
+        'osVhdSizeMB': calculate_numeric_diff(
+            target_caps.get('osVhdSizeMB'),
+            alt_caps.get('osVhdSizeMB'),
+            'MB'
         ),
-        'cachedThroughput': calculate_numeric_diff(
-            target_caps.get('cachedDiskThroughput'),
-            alt_caps.get('cachedDiskThroughput'),
-            'MB/s'
+        'premiumIO': calculate_boolean_diff(
+            target_caps.get('premiumIO', False),
+            alt_caps.get('premiumIO', False),
+            'Premium IO'
+        ),
+        'ephemeralOSDisk': calculate_boolean_diff(
+            target_caps.get('ephemeralOSDisk', False),
+            alt_caps.get('ephemeralOSDisk', False),
+            'Ephemeral OS Disk'
         ),
         'nvmeSupport': calculate_boolean_diff(
             target_caps.get('nvme', False),
@@ -1203,10 +1209,10 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
     
     # Network differences
     differences['network'] = {
-        'bandwidth': calculate_numeric_diff(
-            target_caps.get('networkBandwidth'),
-            alt_caps.get('networkBandwidth'),
-            'Mbps'
+        'maxNics': calculate_numeric_diff(
+            target_caps.get('maxNics'),
+            alt_caps.get('maxNics'),
+            'NICs'
         ),
         'acceleratedNetworking': calculate_boolean_diff(
             target_caps.get('acceleratedNetworking', False),

@@ -562,6 +562,7 @@ function renderDetailedComparison(data, targetSku, altSku) {
                     <h5>Compute</h5>
                     ${renderNumericDiff('vCPUs', diff.compute.vCPUs)}
                     ${renderNumericDiff('Memory', diff.compute.memory)}
+                    ${renderBooleanDiff(diff.compute.capacityReservation)}
                 </div>
                 
                 <!-- Storage Section -->
@@ -570,15 +571,16 @@ function renderDetailedComparison(data, targetSku, altSku) {
                     ${renderNumericDiff('Max Data Disks', diff.storage.maxDataDisks)}
                     ${renderNumericDiff('Uncached IOPS', diff.storage.uncachedIOPS)}
                     ${renderNumericDiff('Uncached Throughput', diff.storage.uncachedThroughput)}
-                    ${renderNumericDiff('Cached IOPS', diff.storage.cachedIOPS)}
-                    ${renderNumericDiff('Cached Throughput', diff.storage.cachedThroughput)}
+                    ${renderNumericDiff('OS VHD Size', diff.storage.osVhdSizeMB)}
+                    ${renderBooleanDiff(diff.storage.premiumIO)}
+                    ${renderBooleanDiff(diff.storage.ephemeralOSDisk)}
                     ${renderBooleanDiff(diff.storage.nvmeSupport)}
                 </div>
                 
                 <!-- Network Section -->
                 <div class="details-section">
                     <h5>Network</h5>
-                    ${renderNumericDiff('Bandwidth', diff.network.bandwidth)}
+                    ${renderNumericDiff('Max NICs', diff.network.maxNics)}
                     ${renderBooleanDiff(diff.network.acceleratedNetworking)}
                 </div>
                 
