@@ -579,11 +579,11 @@ def extract_capabilities(sku: Dict) -> Dict:
         'encryptionAtHost': capabilities.get('EncryptionAtHostSupported') == 'True',
         'gpuCount': int(capabilities.get('GPUs', 0)),
         'gpuType': capabilities.get('GPUName'),
-        'nvme': int(capabilities.get('UncachedDiskIOPS', 0)) > 100000,
+        'nvme': int(capabilities.get('NvmeDiskSizeInMiB', 0)) > 0,
         'uncachedDiskIOPS': int(capabilities.get('UncachedDiskIOPS', 0)),
         'uncachedDiskBytesPerSecond': int(capabilities.get('UncachedDiskBytesPerSecond', 0)),
-        'cachedDiskIOPS': int(capabilities.get('CachedDiskIOPS', 0)),
-        'cachedDiskBytesPerSecond': int(capabilities.get('CachedDiskBytesPerSecond', 0)),
+        'cachedDiskIOPS': int(capabilities.get('MaxCachedDiskIOPS', 0)) or int(capabilities.get('CachedDiskIOPS', 0)),
+        'cachedDiskBytesPerSecond': int(capabilities.get('MaxCachedDiskBytesPerSecond', 0)) or int(capabilities.get('CachedDiskBytesPerSecond', 0)),
         'maxWriteAcceleratorDisks': int(capabilities.get('MaxWriteAcceleratorDisksAllowed', 0))
     }
 
@@ -738,13 +738,17 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         {'name': 'MaxDataDiskCount', 'value': str(entity['maxDataDisks'])},
                         {'name': 'MaxNetworkInterfaces', 'value': str(entity['maxNics'])},
                         {'name': 'UncachedDiskIOPS', 'value': str(entity['uncachedDiskIOPS'])},
+                        {'name': 'UncachedDiskBytesPerSecond', 'value': str(entity.get('uncachedDiskBytesPerSecond', 0))},
+                        {'name': 'MaxCachedDiskIOPS', 'value': str(entity.get('cachedDiskIOPS', 0))},
+                        {'name': 'MaxCachedDiskBytesPerSecond', 'value': str(entity.get('cachedDiskBytesPerSecond', 0))},
+                        {'name': 'MaxNetworkBandwidthInMbps', 'value': str(entity.get('networkBandwidthMbps', 0))},
                         {'name': 'GPUs', 'value': str(entity['gpuCount'])},
                         {'name': 'GPUType', 'value': entity.get('gpuType', '')},
                         {'name': 'PremiumIO', 'value': 'True' if entity['premiumIO'] else 'False'},
                         {'name': 'AcceleratedNetworkingEnabled', 'value': 'True' if entity['acceleratedNetworking'] else 'False'},
                         {'name': 'EncryptionAtHostSupported', 'value': 'True' if entity['encryptionAtHost'] else 'False'},
                         {'name': 'EphemeralOSDiskSupported', 'value': 'True' if entity['ephemeralOSDisk'] else 'False'},
-                        {'name': 'NVMe', 'value': 'True' if entity.get('nvme', False) else 'False'}
+                        {'name': 'NvmeDiskSizeInMiB', 'value': '1' if entity.get('nvme', False) else '0'}
                     ],
                     'locationInfo': [{
                         'location': location,
@@ -927,18 +931,18 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
         'memoryGB': float(capabilities.get('MemoryGB', 0)),
         'maxDataDisks': int(capabilities.get('MaxDataDiskCount', 0)),
         'maxNics': int(capabilities.get('MaxNetworkInterfaces', 0)),
-        'networkBandwidthMbps': int(capabilities.get('NetworkBandwidthInMbps', 0)),
+        'networkBandwidthMbps': int(capabilities.get('MaxNetworkBandwidthInMbps', 0)) or int(capabilities.get('NetworkBandwidthInMbps', 0)) or int(capabilities.get('ExpectedNetworkBandwidth', 0)),
         'uncachedDiskIOPS': int(capabilities.get('UncachedDiskIOPS', 0)),
         'uncachedDiskBytesPerSecond': int(capabilities.get('UncachedDiskBytesPerSecond', 0)),
-        'cachedDiskIOPS': int(capabilities.get('CachedDiskIOPS', 0)),
-        'cachedDiskBytesPerSecond': int(capabilities.get('CachedDiskBytesPerSecond', 0)),
+        'cachedDiskIOPS': int(capabilities.get('MaxCachedDiskIOPS', 0)) or int(capabilities.get('CachedDiskIOPS', 0)),
+        'cachedDiskBytesPerSecond': int(capabilities.get('MaxCachedDiskBytesPerSecond', 0)) or int(capabilities.get('CachedDiskBytesPerSecond', 0)),
         'gpuCount': int(capabilities.get('GPUs', 0)),
         'gpuType': capabilities.get('GPUType'),
         'premiumIO': capabilities.get('PremiumIO', '').lower() == 'true',
         'acceleratedNetworking': capabilities.get('AcceleratedNetworkingEnabled', '').lower() == 'true',
         'encryptionAtHost': capabilities.get('EncryptionAtHostSupported', '').lower() == 'true',
         'ephemeralOSDisk': capabilities.get('EphemeralOSDiskSupported', '').lower() == 'true',
-        'nvme': capabilities.get('NVMe', '').lower() == 'true',
+        'nvme': int(capabilities.get('NvmeDiskSizeInMiB', 0)) > 0,
         'architecture': capabilities.get('CpuArchitectureType', 'x64')  # Extract from Azure API
     }
 
@@ -984,9 +988,11 @@ def extract_capabilities_for_diff(sku: dict) -> dict:
     # Not nested in a 'capabilities' field
     caps['maxDataDisks'] = sku.get('maxDataDisks')
     caps['cachedDiskIOPS'] = sku.get('cachedDiskIOPS')
-    caps['cachedDiskThroughput'] = sku.get('cachedDiskBytesPerSecond')  
+    raw_cached_bps = sku.get('cachedDiskBytesPerSecond') or 0
+    caps['cachedDiskThroughput'] = raw_cached_bps // (1024 * 1024) if raw_cached_bps > 0 else 0
     caps['uncachedDiskIOPS'] = sku.get('uncachedDiskIOPS')
-    caps['uncachedDiskThroughput'] = sku.get('uncachedDiskBytesPerSecond')
+    raw_uncached_bps = sku.get('uncachedDiskBytesPerSecond') or 0
+    caps['uncachedDiskThroughput'] = raw_uncached_bps // (1024 * 1024) if raw_uncached_bps > 0 else 0
     caps['networkBandwidth'] = sku.get('networkBandwidthMbps')
     caps['acceleratedNetworking'] = sku.get('acceleratedNetworking', False)
     caps['nvme'] = sku.get('nvme', False)
@@ -1167,6 +1173,16 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
             target_caps.get('maxDataDisks'),
             alt_caps.get('maxDataDisks'),
             'disks'
+        ),
+        'uncachedIOPS': calculate_numeric_diff(
+            target_caps.get('uncachedDiskIOPS'),
+            alt_caps.get('uncachedDiskIOPS'),
+            'IOPS'
+        ),
+        'uncachedThroughput': calculate_numeric_diff(
+            target_caps.get('uncachedDiskThroughput'),
+            alt_caps.get('uncachedDiskThroughput'),
+            'MB/s'
         ),
         'cachedIOPS': calculate_numeric_diff(
             target_caps.get('cachedDiskIOPS'),

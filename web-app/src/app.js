@@ -568,6 +568,8 @@ function renderDetailedComparison(data, targetSku, altSku) {
                 <div class="details-section">
                     <h5>Storage</h5>
                     ${renderNumericDiff('Max Data Disks', diff.storage.maxDataDisks)}
+                    ${renderNumericDiff('Uncached IOPS', diff.storage.uncachedIOPS)}
+                    ${renderNumericDiff('Uncached Throughput', diff.storage.uncachedThroughput)}
                     ${renderNumericDiff('Cached IOPS', diff.storage.cachedIOPS)}
                     ${renderNumericDiff('Cached Throughput', diff.storage.cachedThroughput)}
                     ${renderBooleanDiff(diff.storage.nvmeSupport)}
