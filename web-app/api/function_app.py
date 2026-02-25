@@ -1163,7 +1163,7 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
         'hyperVGen2': calculate_boolean_diff(
             target_caps.get('hyperVGen2', False),
             alt_caps.get('hyperVGen2', False),
-            'Hyper-V Gen 2'
+            'Hyper-V Gen 2 Supported'
         )
     }
     
