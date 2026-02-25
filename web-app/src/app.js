@@ -426,7 +426,7 @@ function displayAlternatives(alternatives) {
             const cpuDisplay = `${alt.cpuVendor || 'Intel'} (${alt.architecture || 'x64'})`;
 
             row.innerHTML = `
-                <td><span class="rank-badge ${rankClass}">${index + 1}</span></td>
+                <td><span class="rank-badge">${index + 1}</span></td>
                 <td><span class="sku-name">${alt.name}</span></td>
                 <td><div class="similarity-score"><span class="score-badge ${scoreClass}">${alt.similarityScore.toFixed(1)}%</span></div></td>
                 <td>${cpuDisplay}</td>
@@ -460,7 +460,7 @@ function displayAlternatives(alternatives) {
         const indicators = calculateIndicators(targetSku, alt);
 
         row.innerHTML = `
-            <td><span class="rank-badge ${rankClass}">${index + 1}</span></td>
+            <td><span class="rank-badge">${index + 1}</span></td>
             <td><span class="sku-name">${alt.name}</span></td>
             <td>
                 <div class="similarity-score">

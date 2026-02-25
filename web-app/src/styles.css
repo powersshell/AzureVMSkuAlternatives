@@ -508,20 +508,6 @@ tbody tr:hover {
     font-weight: 600;
 }
 
-.rank-1 {
-    background: linear-gradient(135deg, #FFD700, #FFA500);
-    color: white;
-}
-
-.rank-2 {
-    background: linear-gradient(135deg, #C0C0C0, #A8A8A8);
-    color: white;
-}
-
-.rank-3 {
-    background: linear-gradient(135deg, #CD7F32, #B87333);
-    color: white;
-}
 
 .no-results,
 .error-card {
