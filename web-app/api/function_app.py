@@ -584,7 +584,7 @@ def extract_capabilities(sku: Dict) -> Dict:
         'uncachedDiskBytesPerSecond': int(capabilities.get('UncachedDiskBytesPerSecond', 0)),
         'maxWriteAcceleratorDisks': int(capabilities.get('MaxWriteAcceleratorDisksAllowed', 0)),
         'osVhdSizeMB': int(capabilities.get('OSVhdSizeMB', 0)),
-        'capacityReservationSupported': capabilities.get('CapacityReservationSupported') == 'True'
+        'hyperVGenerations': capabilities.get('HyperVGenerations', '')
     }
 
 
@@ -747,7 +747,7 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         {'name': 'EphemeralOSDiskSupported', 'value': 'True' if entity['ephemeralOSDisk'] else 'False'},
                         {'name': 'NvmeDiskSizeInMiB', 'value': '1' if entity.get('nvme', False) else '0'},
                         {'name': 'OSVhdSizeMB', 'value': str(entity.get('osVhdSizeMB', 0))},
-                        {'name': 'CapacityReservationSupported', 'value': 'True' if entity.get('capacityReservationSupported', False) else 'False'}
+                        {'name': 'HyperVGenerations', 'value': entity.get('hyperVGenerations', '')}
                     ],
                     'locationInfo': [{
                         'location': location,
@@ -901,7 +901,7 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
                 'architecture': capabilities['architecture'],
                 'cpuVendor': cpu_vendor,
                 'osVhdSizeMB': capabilities['osVhdSizeMB'],
-                'capacityReservationSupported': capabilities['capacityReservationSupported'],
+                'hyperVGenerations': capabilities['hyperVGenerations'],
                 'hourlyPriceUSD': pricing['hourlyPrice'] if pricing else None,
                 'monthlyPriceUSD': pricing['monthlyPrice'] if pricing else None,
                 'pricingCurrency': pricing['currency'] if pricing else 'USD',
@@ -958,7 +958,7 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
         'nvme': int(capabilities.get('NvmeDiskSizeInMiB', 0)) > 0,
         'architecture': capabilities.get('CpuArchitectureType', 'x64'),
         'osVhdSizeMB': int(capabilities.get('OSVhdSizeMB', 0)),
-        'capacityReservationSupported': capabilities.get('CapacityReservationSupported', '').lower() == 'true'
+        'hyperVGenerations': capabilities.get('HyperVGenerations', '')
     }
 
 
@@ -1011,7 +1011,7 @@ def extract_capabilities_for_diff(sku: dict) -> dict:
     caps['osVhdSizeMB'] = sku.get('osVhdSizeMB')
     caps['maxNics'] = sku.get('maxNics')
     caps['acceleratedNetworking'] = sku.get('acceleratedNetworking', False)
-    caps['capacityReservationSupported'] = sku.get('capacityReservationSupported', False)
+    caps['hyperVGen2'] = 'V2' in (sku.get('hyperVGenerations') or '')
     
     # Ensure numeric fields are numbers, not strings (Table Storage may return strings)
     for key in ['maxDataDisks', 'uncachedDiskIOPS', 'uncachedDiskThroughput', 'maxNics', 'osVhdSizeMB']:
@@ -1160,10 +1160,10 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
             alternative_sku.get('memoryGB'),
             'GB'
         ),
-        'capacityReservation': calculate_boolean_diff(
-            target_caps.get('capacityReservationSupported', False),
-            alt_caps.get('capacityReservationSupported', False),
-            'Capacity Reservation'
+        'hyperVGen2': calculate_boolean_diff(
+            target_caps.get('hyperVGen2', False),
+            alt_caps.get('hyperVGen2', False),
+            'Hyper-V Gen 2'
         )
     }
     

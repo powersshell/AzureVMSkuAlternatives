@@ -567,7 +567,7 @@ function renderDetailedComparison(data, targetSku, altSku) {
                     <h5>Compute</h5>
                     ${renderNumericDiff('vCPUs', diff.compute.vCPUs)}
                     ${renderNumericDiff('Memory', diff.compute.memory)}
-                    ${renderBooleanDiff(diff.compute.capacityReservation)}
+                    ${renderBooleanDiff(diff.compute.hyperVGen2)}
                 </div>
                 
                 <!-- Storage Section -->
