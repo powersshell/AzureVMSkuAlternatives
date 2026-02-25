@@ -422,7 +422,6 @@ function displayAlternatives(alternatives) {
             const row = document.createElement('tr');
             const scoreClass = alt.similarityScore >= 80 ? 'score-high' :
                               alt.similarityScore >= 60 ? 'score-medium' : 'score-low';
-            const rankClass = index < 3 ? `rank-${index + 1}` : '';
             const cpuDisplay = `${alt.cpuVendor || 'Intel'} (${alt.architecture || 'x64'})`;
 
             row.innerHTML = `
@@ -451,8 +450,6 @@ function displayAlternatives(alternatives) {
         const scoreClass = alt.similarityScore >= 80 ? 'score-high' :
                           alt.similarityScore >= 60 ? 'score-medium' : 'score-low';
 
-        const rankClass = index < 3 ? `rank-${index + 1}` : '';
-        
         // Format CPU vendor with architecture
         const cpuDisplay = `${alt.cpuVendor || 'Intel'} (${alt.architecture || 'x64'})`;
         
