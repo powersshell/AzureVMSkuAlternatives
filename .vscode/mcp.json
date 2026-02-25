@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "azure-vm-skus": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["mcp-server/mcp_server.py"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}

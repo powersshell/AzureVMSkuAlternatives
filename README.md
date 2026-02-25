@@ -51,6 +51,20 @@ cd powershell-script
 
 📖 **Full documentation:** [powershell-script/README.md](powershell-script/README.md)
 
+### 🤖 MCP Server (AI Agent Integration)
+
+Use the included MCP server to let AI agents (GitHub Copilot, Claude Desktop, etc.)
+find and compare Azure VM SKUs in natural language:
+
+```bash
+pip install -r mcp-server/requirements.txt
+```
+
+Then ask your AI agent:
+> *"Find alternatives to Standard_D8s_v5 in eastus that are cheaper"*
+
+📖 **Full documentation:** [mcp-server/README.md](mcp-server/README.md)
+
 ---
 
 ## 🧮 How the Comparison Works
