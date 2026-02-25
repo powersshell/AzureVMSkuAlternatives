@@ -18,6 +18,7 @@ let currentResults = null;
 let locationChoices = null; // Choices.js instance for location
 let skuChoices = null; // Choices.js instance for SKU
 const expandedDetailsCache = new Map(); // Cache for expanded row details (Phase 2)
+let prefetchAbortController = null; // Cancels in-flight prefetch wave on new search (Phase 3)
 
 // Event Listeners
 compareBtn.addEventListener('click', handleCompare);
@@ -487,6 +488,10 @@ function displayAlternatives(alternatives) {
         
         resultsTableBody.appendChild(detailsRow);
     });
+
+    // Kick off background prefetch for top 10 rows (Phase 3)
+    const location = currentResults?.location || document.getElementById('location').value;
+    prefetchTopDetails(alternatives, targetSku, location);
 }
 
 // Toggle details row expand/collapse (Phase 2)
@@ -551,6 +556,45 @@ async function fetchComparisonDetails(targetName, altName, location) {
     }
     
     return await response.json();
+}
+
+// Fire a single prefetch for one alternative, storing in cache on success (Phase 3)
+function prefetchOne(alt, targetSku, location, signal) {
+    const cacheKey = `${targetSku.name}_${alt.name}`;
+    if (expandedDetailsCache.has(cacheKey)) return;
+    const params = new URLSearchParams({
+        target: targetSku.name,
+        alternative: alt.name,
+        location: location,
+        currency: document.getElementById('currencyCode')?.value || 'USD'
+    });
+    fetch(`${API_BASE_URL}/compare_details?${params}`, { signal })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data && !signal.aborted) expandedDetailsCache.set(cacheKey, data); })
+        .catch(() => {}); // fire-and-forget — errors silently swallowed
+}
+
+// Speculatively prefetch top 10 alternatives after results render (Phase 3)
+// Top 3 fire immediately; rows 4-10 stagger in pairs after 200ms to avoid cold-start stampede.
+function prefetchTopDetails(alternatives, targetSku, location) {
+    if (prefetchAbortController) prefetchAbortController.abort();
+    prefetchAbortController = new AbortController();
+    const signal = prefetchAbortController.signal;
+
+    const toPrefetch = alternatives.slice(0, 10);
+    toPrefetch.slice(0, 3).forEach(alt => prefetchOne(alt, targetSku, location, signal));
+
+    const deferred = toPrefetch.slice(3);
+    setTimeout(() => {
+        let i = 0;
+        function next() {
+            if (signal.aborted || i >= deferred.length) return;
+            prefetchOne(deferred[i++], targetSku, location, signal);
+            if (i < deferred.length) prefetchOne(deferred[i++], targetSku, location, signal);
+            setTimeout(next, 50);
+        }
+        next();
+    }, 200);
 }
 
 // Render detailed comparison (Phase 2)
