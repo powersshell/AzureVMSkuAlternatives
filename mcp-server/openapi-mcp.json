@@ -60,10 +60,11 @@
   "securityDefinitions": {
     "entraId": {
       "type": "oauth2",
-      "flow": "implicit",
+      "flow": "accessCode",
       "authorizationUrl": "https://login.microsoftonline.com/REPLACE_WITH_YOUR_TENANT_ID/oauth2/v2.0/authorize",
+      "tokenUrl": "https://login.microsoftonline.com/REPLACE_WITH_YOUR_TENANT_ID/oauth2/v2.0/token",
       "scopes": {
-        "api://REPLACE_WITH_YOUR_CLIENT_ID/.default": "Access Azure VM SKU MCP server"
+        "api://REPLACE_WITH_YOUR_CLIENT_ID/access": "Access Azure VM SKU MCP server"
       }
     }
   }

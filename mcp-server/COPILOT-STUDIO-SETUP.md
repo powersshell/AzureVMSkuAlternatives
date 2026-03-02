@@ -21,7 +21,7 @@ The MCP server uses Azure Container Apps Easy Auth — authentication is enforce
 2. Name: `vmsku-mcp-server`
 3. Supported account types: **Single tenant** (or your org's preferred setting)
 4. Click **Register**
-5. Copy the **Application (client) ID** and **Directory (tenant) ID** — you'll need these in Step 2
+5. Copy the **Application (client) ID** and **Directory (tenant) ID** — you'll need these throughout this guide
 
 **Expose an API:**
 1. In the app registration → **Expose an API** → **Add a scope**
@@ -29,6 +29,18 @@ The MCP server uses Azure Container Apps Easy Auth — authentication is enforce
 3. Scope name: `access`
 4. Who can consent: **Admins and users**
 5. Click **Add scope**
+
+**Create a Client Secret:**
+1. In the app registration → **Certificates & secrets** → **New client secret**
+2. Description: `Copilot Studio`
+3. Choose an expiry (e.g., 24 months)
+4. Click **Add**
+5. **Copy the secret Value immediately** — it won't be shown again
+
+**Add a Redirect URI** (you will update this after Step 4):
+1. In the app registration → **Authentication** → **Add a platform** → **Web**
+2. Leave the redirect URI blank for now — you'll fill it in after getting the URL from Copilot Studio in Step 4
+3. Click **Configure**
 
 ---
 
@@ -76,11 +88,21 @@ Copy this URL — you need it in Step 4.
 3. Navigate to **Actions** → **Add an action** → **New action** → **Model Context Protocol**
 4. Paste your MCP endpoint URL: `https://<fqdn>/mcp`
 5. Upload `mcp-server/openapi-mcp.json` as the connector schema
-6. For authentication, select **Microsoft Entra ID** and enter:
-   - **Client ID**: your app registration client ID
-   - **Tenant ID**: your Entra tenant ID
-   - **Scope**: `api://<client-id>/access`
-7. Click **Save**
+6. For authentication, select **OAuth 2.0** and fill in:
+
+   | Field | Value |
+   |-------|-------|
+   | **Service Provider** | Generic OAuth 2 |
+   | **Client ID** | Application (client) ID from Step 1 |
+   | **Client Secret** | Secret value from Step 1 |
+   | **Authorization URL** | `https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/authorize` |
+   | **Token URL** | `https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token` |
+   | **Refresh URL** | `https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token` |
+   | **Scope** | `api://<client-id>/access` |
+
+7. After saving, Copilot Studio will display a **Redirect URL** — copy it
+8. Go back to the Entra app registration → **Authentication** → add that redirect URL to the Web platform you created in Step 1
+9. Click **Save**
 
 Copilot Studio will discover the four available tools:
 - `health_check` — verify API connectivity
