@@ -29,11 +29,8 @@ resource containerAppsEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   name: '${mcpAppName}-env'
   location: location
   tags: tags
-  properties: {
-    appLogsConfiguration: {
-      destination: 'none'
-    }
-  }
+  properties: {}
+
 }
 
 // MCP Server Container App
@@ -97,7 +94,6 @@ resource containerAppAuth 'Microsoft.App/containerApps/authConfigs@2023-05-01' =
   parent: containerApp
   properties: {
     globalValidation: {
-      requireAuthentication: true
       unauthenticatedClientAction: 'Return401'
     }
     identityProviders: {
@@ -105,7 +101,7 @@ resource containerAppAuth 'Microsoft.App/containerApps/authConfigs@2023-05-01' =
         enabled: true
         registration: {
           clientId: entraClientId
-          openIdIssuer: 'https://login.microsoftonline.com/${entraTenantId}/v2.0'
+          openIdIssuer: '${environment().authentication.loginEndpoint}${entraTenantId}/v2.0'
         }
         validation: {
           allowedAudiences: [
