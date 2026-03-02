@@ -1,0 +1,111 @@
+name: Deploy MCP Server Container
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'mcp-server/**'
+      - 'web-app/infra/modules/container-app-mcp.bicep'
+      - '.github/workflows/deploy-mcp-container.yml'
+  workflow_dispatch:
+    inputs:
+      deploy_infrastructure:
+        description: 'Deploy/update Container App infrastructure (Bicep)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/mcp-server
+  RESOURCE_GROUP: rg-vmsku-alternatives
+
+# Required permissions for OIDC authentication and GHCR push
+permissions:
+  id-token: write    # Required for OIDC Azure login
+  contents: read     # Required for checkout
+  packages: write    # Required for pushing to GHCR
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./mcp-server
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Image summary
+        run: |
+          echo "✅ Image pushed to GHCR:"
+          echo "   ${{ steps.meta.outputs.tags }}"
+
+  deploy-infrastructure:
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    if: github.event.inputs.deploy_infrastructure == 'true' || github.event_name == 'push'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Container App via Bicep
+        uses: azure/arm-deploy@v1
+        with:
+          resourceGroupName: ${{ env.RESOURCE_GROUP }}
+          template: ./web-app/infra/modules/container-app-mcp.bicep
+          parameters: >
+            containerImage=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            entraClientId=${{ secrets.MCP_ENTRA_CLIENT_ID }}
+            entraTenantId=${{ secrets.AZURE_TENANT_ID }}
+          failOnStdErr: false
+
+      - name: Get MCP endpoint URL
+        run: |
+          FQDN=$(az containerapp show \
+            --name vmsku-mcp-server \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo ""
+          echo "═══════════════════════════════════════════════════════"
+          echo "✅ MCP SERVER DEPLOYED"
+          echo "═══════════════════════════════════════════════════════"
+          echo ""
+          echo "MCP Endpoint: https://${FQDN}/mcp"
+          echo ""
+          echo "Register this URL as a custom connector in Copilot Studio."
+          echo "See mcp-server/COPILOT-STUDIO-SETUP.md for instructions."
+          echo ""

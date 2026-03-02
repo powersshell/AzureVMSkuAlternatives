@@ -37,6 +37,15 @@ param tags object = {
   ManagedBy: 'Bicep'
 }
 
+@description('Container image for the MCP server (e.g. ghcr.io/owner/repo:latest). Leave empty to skip MCP deployment.')
+param mcpContainerImage string = ''
+
+@description('Entra ID Application (client) ID for MCP server Easy Auth. Required when mcpContainerImage is set.')
+param mcpEntraClientId string = ''
+
+@description('Entra ID Tenant ID for MCP server Easy Auth. Required when mcpContainerImage is set.')
+param mcpEntraTenantId string = ''
+
 // Create resource group
 resource resourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = {
   name: resourceGroupName
@@ -56,6 +65,9 @@ module mainInfra 'main.bicep' = {
     branch: branch
     repositoryToken: repositoryToken
     tags: tags
+    mcpContainerImage: mcpContainerImage
+    mcpEntraClientId: mcpEntraClientId
+    mcpEntraTenantId: mcpEntraTenantId
   }
 }
 
@@ -92,3 +104,6 @@ output identityPrincipalId string = sku == 'Standard' ? mainInfra.outputs.identi
 
 @description('Subscription ID configured for VM SKU queries')
 output azureSubscriptionId string = azureSubscriptionId
+
+@description('MCP server endpoint URL (empty if not deployed)')
+output mcpEndpointUrl string = mainInfra.outputs.mcpEndpointUrl

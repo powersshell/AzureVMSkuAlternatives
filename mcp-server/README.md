@@ -12,22 +12,32 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 | `list_vm_skus` | List all SKUs available in a region |
 | `health_check` | Verify API connectivity |
 
-## Prerequisites
-
-```bash
-pip install -r mcp-server/requirements.txt
-```
-
-Requires Python 3.10+ and the `fastmcp` and `httpx` packages.
+---
 
 ## VS Code / GitHub Copilot Setup
 
-A `.vscode/mcp.json` is included in this repo. VS Code with GitHub Copilot will
-automatically discover the server. No extra configuration required.
+**Prerequisite:** Install [`uv`](https://docs.astral.sh/uv/) — a single binary that manages Python and packages automatically. No separate Python or `pip install` needed.
+
+```powershell
+# Windows
+winget install astral-sh.uv
+
+# macOS
+brew install uv
+
+# Linux / WSL
+curl -LsSf https://astral.uv.sh/install.sh | sh
+```
+
+A `.vscode/mcp.json` is included in this repo. VS Code with GitHub Copilot will automatically discover and launch the server using `uv run` — which downloads the correct Python version and installs dependencies on first use (subsequent runs are near-instant from cache).
 
 If prompted, approve the server when VS Code asks to start it.
 
+---
+
 ## Claude Desktop Setup
+
+**Prerequisite:** Install `uv` as above.
 
 Add the following to your `claude_desktop_config.json`
 (`%APPDATA%\Claude\claude_desktop_config.json` on Windows,
@@ -37,15 +47,33 @@ Add the following to your `claude_desktop_config.json`
 {
   "mcpServers": {
     "azure-vm-skus": {
-      "command": "python",
-      "args": ["C:\\Azure\\AzureVMSkuAlternatives\\mcp-server\\mcp_server.py"]
+      "command": "uv",
+      "args": ["run", "C:\\Azure\\AzureVMSkuAlternatives\\mcp-server\\mcp_server.py"]
     }
   }
 }
 ```
 
-Adjust the path to match where the repo is cloned on your machine. Restart Claude Desktop
-after saving.
+Adjust the path to match where the repo is cloned on your machine. Restart Claude Desktop after saving.
+
+---
+
+## Microsoft M365 Copilot Setup
+
+The MCP server can be deployed to Azure Container Apps and connected to M365 Copilot via Copilot Studio. Authentication is handled by Azure Container Apps Easy Auth (Entra ID) — no credentials are needed in the application code.
+
+See **[COPILOT-STUDIO-SETUP.md](COPILOT-STUDIO-SETUP.md)** for the full step-by-step guide.
+
+**High-level overview:**
+1. Register an Entra ID app in Azure Portal
+2. Add `MCP_ENTRA_CLIENT_ID` to GitHub Actions secrets
+3. Push to `main` — the `deploy-mcp-container.yml` workflow builds the image (pushed to GHCR) and deploys the Container App via Bicep into `rg-vmsku-alternatives`
+4. Register the `/mcp` endpoint as a custom connector in Copilot Studio
+5. Surface the agent in M365 Copilot
+
+**Cost:** $0/month — Container App scales to zero when idle; GHCR is free for public repos.
+
+---
 
 ## Example Prompts
 
@@ -57,32 +85,29 @@ Once the server is active, try prompts like:
 - **"List all available VM SKUs in eastasia and summarize the options"**
 - **"I need to migrate from Standard_E16s_v4, what are the closest matches in West US 2?"**
 
+---
+
 ## Architecture
 
-The MCP server is a thin HTTP client that calls the deployed Azure Functions API.
-No credentials are required — all endpoints are public read-only APIs.
-
 ```
-AI Agent (Copilot / Claude)
-       │  MCP (stdio)
-       ▼
+AI Agent (VS Code Copilot / Claude Desktop / M365 Copilot)
+        │  MCP (stdio for local, streamable-HTTP for M365)
+        ▼
 mcp_server.py (FastMCP)
-       │  HTTPS
-       ▼
+        │  HTTPS
+        ▼
 Azure Functions API
   vmsku-api-functions-flex.azurewebsites.net/api
-       │
-       ▼
-Azure Table Storage (SKU cache)
-Azure Retail Pricing API (live pricing)
-Azure Management API (SKU capabilities)
+        │
+        ▼
+Azure Table Storage (SKU cache) + Azure Retail Pricing API
 ```
 
 ## Troubleshooting
 
-**Server doesn't start**: Ensure `fastmcp` is installed — `pip install fastmcp httpx`
+**Server doesn't start (VS Code / Claude Desktop):** Ensure `uv` is installed — `winget install astral-sh.uv`
 
-**Slow first response**: The Azure Functions backend uses Flex Consumption, which may
-take 3-5 seconds to cold start. Subsequent calls within a few minutes are fast.
+**Slow first response:** The Azure Functions backend uses Flex Consumption, which may take 3-5 seconds to cold start. Subsequent calls are fast. The Container App (M365 mode) also cold-starts after idle periods.
 
-**Tool returns error**: Run `health_check` first to verify API connectivity.
+**Tool returns error:** Run `health_check` first to verify API connectivity.
+

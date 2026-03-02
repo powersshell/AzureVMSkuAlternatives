@@ -32,6 +32,15 @@
         "Application": "Azure VM SKU Alternatives",
         "ManagedBy": "Bicep"
       }
+    },
+    "mcpContainerImage": {
+      "value": ""
+    },
+    "mcpEntraClientId": {
+      "value": ""
+    },
+    "mcpEntraTenantId": {
+      "value": ""
     }
   }
 }

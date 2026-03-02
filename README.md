@@ -53,12 +53,23 @@ cd powershell-script
 
 ### 🤖 MCP Server (AI Agent Integration)
 
-Use the included MCP server to let AI agents (GitHub Copilot, Claude Desktop, etc.)
-find and compare Azure VM SKUs in natural language:
+Use the included MCP server to let AI agents (GitHub Copilot, Claude Desktop, M365 Copilot, etc.)
+find and compare Azure VM SKUs in natural language.
 
-```bash
-pip install -r mcp-server/requirements.txt
+**VS Code / Claude Desktop** — install [`uv`](https://docs.astral.sh/uv/) (handles Python + packages automatically):
+
+```powershell
+# Windows
+winget install astral-sh.uv
+# macOS
+brew install uv
 ```
+
+Then open the repo in VS Code — the server starts automatically. No `pip install` needed.
+
+**Microsoft M365 Copilot** — deploy to Azure Container Apps and register in Copilot Studio:
+
+📖 **Setup guide:** [mcp-server/COPILOT-STUDIO-SETUP.md](mcp-server/COPILOT-STUDIO-SETUP.md)
 
 Then ask your AI agent:
 > *"Find alternatives to Standard_D8s_v5 in eastus that are cheaper"*

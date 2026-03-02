@@ -1,0 +1,70 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Azure VM SKU Alternatives MCP Server",
+    "description": "Model Context Protocol server for finding and comparing Azure Virtual Machine SKUs. Exposes tools for listing SKUs, finding alternatives ranked by similarity, and detailed side-by-side comparisons.",
+    "version": "1.0.0"
+  },
+  "host": "REPLACE_WITH_YOUR_CONTAINER_APP_FQDN",
+  "basePath": "/",
+  "schemes": ["https"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "paths": {
+    "/mcp": {
+      "post": {
+        "operationId": "mcpEndpoint",
+        "summary": "MCP Streamable HTTP endpoint",
+        "description": "Model Context Protocol endpoint. Supports Azure VM SKU tools: list_vm_skus, find_alternative_skus, compare_sku_details, health_check.",
+        "x-ms-agentic-protocol": "mcp-streamable-1.0",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Accept",
+            "type": "string",
+            "default": "application/json, text/event-stream",
+            "required": true
+          },
+          {
+            "in": "header",
+            "name": "Content-Type",
+            "type": "string",
+            "default": "application/json",
+            "required": true
+          },
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "schema": {
+              "type": "object"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "MCP response"
+          },
+          "401": {
+            "description": "Unauthorized — valid Entra ID token required"
+          }
+        },
+        "security": [
+          {
+            "entraId": []
+          }
+        ]
+      }
+    }
+  },
+  "securityDefinitions": {
+    "entraId": {
+      "type": "oauth2",
+      "flow": "implicit",
+      "authorizationUrl": "https://login.microsoftonline.com/REPLACE_WITH_YOUR_TENANT_ID/oauth2/v2.0/authorize",
+      "scopes": {
+        "api://REPLACE_WITH_YOUR_CLIENT_ID/.default": "Access Azure VM SKU MCP server"
+      }
+    }
+  }
+}

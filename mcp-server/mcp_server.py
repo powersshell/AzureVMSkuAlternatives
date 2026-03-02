@@ -1,8 +1,15 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "fastmcp>=2.0",
+#   "httpx>=0.27",
+# ]
+# ///
 """
 Azure VM SKU Alternatives — MCP Server
 
 A Model Context Protocol server that lets AI agents (GitHub Copilot, Claude Desktop,
-etc.) find and compare Azure VM SKUs using the Azure VM SKU Alternatives API.
+M365 Copilot, etc.) find and compare Azure VM SKUs using the Azure VM SKU Alternatives API.
 
 Tools:
   - list_vm_skus          List available SKUs in a region
@@ -10,9 +17,14 @@ Tools:
   - compare_sku_details   Detailed side-by-side comparison between two SKUs
   - health_check          Verify API connectivity
 
+Transport modes:
+  - stdio (default)       For VS Code / Claude Desktop — launched as a local subprocess
+  - streamable-http       For M365 Copilot — set MCP_TRANSPORT=http, deployed to Azure Container Apps
+
 Setup: see README.md
 """
 
+import os
 import httpx
 from fastmcp import FastMCP
 
@@ -153,4 +165,18 @@ async def compare_sku_details(
 
 
 if __name__ == "__main__":
-    mcp.run()
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+
+    if transport == "http":
+        # HTTP (streamable-http) mode — for M365 Copilot via Azure Container Apps.
+        # Authentication is handled at the infrastructure level via Azure Container Apps
+        # Easy Auth (Entra ID) — no auth logic needed here.
+        mcp.run(
+            transport="streamable-http",
+            host="0.0.0.0",
+            port=int(os.environ.get("PORT", 8000)),
+            stateless_http=True,
+        )
+    else:
+        # stdio mode (default) — for VS Code / Claude Desktop
+        mcp.run()

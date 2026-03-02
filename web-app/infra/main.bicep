@@ -31,6 +31,15 @@ param tags object = {
   ManagedBy: 'Bicep'
 }
 
+@description('Container image for the MCP server (from GHCR), e.g. ghcr.io/owner/repo:latest')
+param mcpContainerImage string = ''
+
+@description('Entra ID Application (client) ID for MCP server Easy Auth')
+param mcpEntraClientId string = ''
+
+@description('Entra ID Tenant ID for MCP server Easy Auth')
+param mcpEntraTenantId string = ''
+
 // Static Web App with integrated Azure Functions
 // If no repository URL is provided, deploy without GitHub integration (can be configured later)
 resource staticWebApp 'Microsoft.Web/staticSites@2023-01-01' = {
@@ -128,3 +137,18 @@ output identityPrincipalId string = staticWebApp.identity.principalId
 
 @description('System-Assigned Managed Identity Tenant ID')
 output identityTenantId string = staticWebApp.identity.tenantId
+
+// MCP Server Container App (deployed only when mcpContainerImage is provided)
+module mcpServer 'modules/container-app-mcp.bicep' = if (!empty(mcpContainerImage)) {
+  name: 'mcp-server-container-app'
+  params: {
+    containerImage: mcpContainerImage
+    entraClientId: mcpEntraClientId
+    entraTenantId: mcpEntraTenantId
+    location: location
+    tags: tags
+  }
+}
+
+@description('MCP server endpoint URL (empty if not deployed)')
+output mcpEndpointUrl string = !empty(mcpContainerImage) ? mcpServer.outputs.mcpEndpointUrl : ''
