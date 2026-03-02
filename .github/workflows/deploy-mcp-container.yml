@@ -18,7 +18,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/mcp-server
+  IMAGE_NAME: ${{ github.repository_owner }}/azurevmskalternatives/mcp-server
   RESOURCE_GROUP: rg-vmsku-alternatives
 
 # Required permissions for OIDC authentication and GHCR push
