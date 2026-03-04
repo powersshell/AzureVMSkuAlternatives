@@ -305,6 +305,38 @@ input[list]::-webkit-calendar-picker-indicator:hover {
     background: var(--bg-hover);
 }
 
+.os-pricing-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.os-pricing-toggle span {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.btn-os {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.btn-os.active {
+    background: var(--primary-color);
+    color: #fff;
+    border-color: var(--primary-color);
+}
+
+.btn-os:hover:not(.active) {
+    background: var(--bg-hover);
+}
+
 .loading-overlay {
     position: fixed;
     top: 0;
@@ -359,6 +391,13 @@ input[list]::-webkit-calendar-picker-indicator:hover {
 .results-header h2 {
     color: var(--primary-color);
     font-size: 1.5rem;
+}
+
+.results-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
 }
 
 .target-sku-card {

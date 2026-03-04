@@ -387,6 +387,16 @@ def get_sku_from_cache(sku_name: str, location: str) -> dict:
             except:
                 entity['pricing'] = None
         
+        # Reconstruct pricing from separate fields if no JSON pricing field
+        if not entity.get('pricing') and entity.get('hourlyPriceUSD') is not None:
+            entity['pricing'] = {
+                'hourlyPrice': entity.get('hourlyPriceUSD'),
+                'monthlyPrice': entity.get('monthlyPriceUSD'),
+                'hourlyPriceWindows': entity.get('hourlyPriceUSDWindows'),
+                'monthlyPriceWindows': entity.get('monthlyPriceUSDWindows'),
+                'currency': entity.get('pricingCurrency', 'USD')
+            }
+        
         return entity
         
     except Exception as e:
@@ -558,6 +568,64 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
 
 
 # ============================================================================
+# HTTP Route: /admin/refresh-region - Manual cache refresh for a region
+# ============================================================================
+@app.route(route="admin/refresh-region", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+def admin_refresh_region(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Manually trigger a cache refresh for a specific region.
+    Useful for correcting stale pricing data without waiting for the daily timer.
+    
+    Query Parameters:
+    - region: Azure region name (e.g., 'eastus')
+    """
+    logging.info('Processing manual cache refresh request')
+    
+    region = req.params.get('region')
+    if not region:
+        return func.HttpResponse(
+            json.dumps({'error': 'region parameter is required'}),
+            mimetype='application/json',
+            status_code=400
+        )
+    
+    storage_account_name = os.environ.get('SKU_CACHE_STORAGE_ACCOUNT')
+    subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID')
+    
+    if not storage_account_name or not subscription_id:
+        return func.HttpResponse(
+            json.dumps({'error': 'Missing required environment variables'}),
+            mimetype='application/json',
+            status_code=500
+        )
+    
+    try:
+        credential = DefaultAzureCredential()
+        table_service = TableServiceClient(
+            endpoint=f"https://{storage_account_name}.table.core.windows.net",
+            credential=credential
+        )
+        table_service.create_table_if_not_exists("vmskus")
+        table_client = table_service.get_table_client("vmskus")
+        
+        token = get_access_token()
+        count = refresh_region(region, subscription_id, token, table_client)
+        
+        return func.HttpResponse(
+            json.dumps({'region': region, 'skusUpdated': count, 'status': 'success'}),
+            mimetype='application/json',
+            status_code=200
+        )
+    except Exception as e:
+        logging.error(f'Error refreshing region {region}: {e}')
+        return func.HttpResponse(
+            json.dumps({'error': str(e), 'region': region}),
+            mimetype='application/json',
+            status_code=500
+        )
+
+
+# ============================================================================
 # Helper Functions (shared across all functions)
 # ============================================================================
 
@@ -651,21 +719,52 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
             return None
 
         data = response.json()
-        if data.get('Items'):
-            # Prefer Linux pricing
-            price_item = next((item for item in data['Items'] 
-                             if 'productName' in item and 'windows' not in item['productName'].lower()), None)
+        items = data.get('Items', [])
+        if not items:
+            return None
 
-            if not price_item:
-                price_item = data['Items'][0]
+        # Select Linux PAYG: productName contains "Virtual Machines" but NOT "windows",
+        # and skuName does NOT contain "Spot" or "Low Priority"
+        linux_item = next((
+            item for item in items
+            if 'productName' in item
+            and 'virtual machines' in item['productName'].lower()
+            and 'windows' not in item['productName'].lower()
+            and 'Spot' not in item.get('skuName', '')
+            and 'Low Priority' not in item.get('skuName', '')
+        ), None)
 
-            return {
-                'hourlyPrice': round(price_item['unitPrice'], 4),
-                'monthlyPrice': round(price_item['unitPrice'] * 730, 2),
-                'currency': price_item['currencyCode']
-            }
+        # Select Windows PAYG: productName contains "Virtual Machines" AND "windows",
+        # and skuName does NOT contain "Spot" or "Low Priority"
+        windows_item = next((
+            item for item in items
+            if 'productName' in item
+            and 'virtual machines' in item['productName'].lower()
+            and 'windows' in item['productName'].lower()
+            and 'Spot' not in item.get('skuName', '')
+            and 'Low Priority' not in item.get('skuName', '')
+        ), None)
 
-        return None
+        # Fall back to first non-Spot/non-Low Priority item if no Linux item found
+        if not linux_item:
+            linux_item = next((
+                item for item in items
+                if 'Spot' not in item.get('skuName', '')
+                and 'Low Priority' not in item.get('skuName', '')
+            ), None)
+
+        if not linux_item:
+            return None
+
+        currency = linux_item.get('currencyCode', currency_code)
+        return {
+            'hourlyPrice': round(linux_item['unitPrice'], 4),
+            'monthlyPrice': round(linux_item['unitPrice'] * 730, 2),
+            'hourlyPriceWindows': round(windows_item['unitPrice'], 4) if windows_item else None,
+            'monthlyPriceWindows': round(windows_item['unitPrice'] * 730, 2) if windows_item else None,
+            'currency': currency
+        }
+
     except Exception as error:
         logging.warning(f'Error fetching pricing for {sku_name}: {error}')
         return None
@@ -756,6 +855,8 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                     'pricing': {
                         'hourlyPrice': entity.get('hourlyPriceUSD'),
                         'monthlyPrice': entity.get('monthlyPriceUSD'),
+                        'hourlyPriceWindows': entity.get('hourlyPriceUSDWindows'),
+                        'monthlyPriceWindows': entity.get('monthlyPriceUSDWindows'),
                         'currency': entity.get('pricingCurrency', 'USD')
                     } if entity.get('hourlyPriceUSD') is not None else None
                 }
@@ -904,6 +1005,8 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
                 'hyperVGenerations': capabilities['hyperVGenerations'],
                 'hourlyPriceUSD': pricing['hourlyPrice'] if pricing else None,
                 'monthlyPriceUSD': pricing['monthlyPrice'] if pricing else None,
+                'hourlyPriceUSDWindows': pricing.get('hourlyPriceWindows') if pricing else None,
+                'monthlyPriceUSDWindows': pricing.get('monthlyPriceWindows') if pricing else None,
                 'pricingCurrency': pricing['currency'] if pricing else 'USD',
                 'pricingLastUpdated': timestamp,
                 'availabilityZones': ','.join(zones) if zones else '',

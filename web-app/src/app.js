@@ -15,6 +15,7 @@ const noResults = document.getElementById('noResults');
 const exportBtn = document.getElementById('exportBtn');
 
 let currentResults = null;
+let currentPricingOS = 'linux';
 let locationChoices = null; // Choices.js instance for location
 let skuChoices = null; // Choices.js instance for SKU
 const expandedDetailsCache = new Map(); // Cache for expanded row details (Phase 2)
@@ -265,6 +266,34 @@ async function handleCompare() {
     }
 }
 
+// OS Pricing toggle
+function setPricingOS(os) {
+    currentPricingOS = os;
+    document.getElementById('btn-linux-pricing')?.classList.toggle('active', os === 'linux');
+    document.getElementById('btn-windows-pricing')?.classList.toggle('active', os === 'windows');
+    document.getElementById('th-hourly').textContent = os === 'windows' ? 'Hourly Cost (Win)' : 'Hourly Cost (Linux)';
+    document.getElementById('th-monthly').textContent = os === 'windows' ? 'Monthly Cost (Win)' : 'Monthly Cost (Linux)';
+    // Re-render results if available
+    if (currentResults) {
+        displayAlternatives(filterResultsByVendor(currentResults.alternatives));
+        displayTargetSku(currentResults.targetSku);
+    }
+}
+
+function getHourlyPrice(pricing) {
+    if (!pricing) return null;
+    return currentPricingOS === 'windows'
+        ? (pricing.hourlyPriceWindows ?? pricing.hourlyPrice)
+        : pricing.hourlyPrice;
+}
+
+function getMonthlyPrice(pricing) {
+    if (!pricing) return null;
+    return currentPricingOS === 'windows'
+        ? (pricing.monthlyPriceWindows ?? pricing.monthlyPrice)
+        : pricing.monthlyPrice;
+}
+
 // Display Results
 function displayResults(data) {
     if (!data.alternatives || data.alternatives.length === 0) {
@@ -322,11 +351,11 @@ function displayTargetSku(targetSku) {
             ` : ''}
             <div class="target-sku-item">
                 <strong>Hourly Cost</strong>
-                <span>${targetSku.pricing ? formatCurrency(targetSku.pricing.hourlyPrice, targetSku.pricing.currency) : 'N/A'}</span>
+                <span>${targetSku.pricing ? formatCurrency(getHourlyPrice(targetSku.pricing), targetSku.pricing.currency) : 'N/A'}</span>
             </div>
             <div class="target-sku-item">
                 <strong>Monthly Cost</strong>
-                <span>${targetSku.pricing ? formatCurrency(targetSku.pricing.monthlyPrice, targetSku.pricing.currency) : 'N/A'}</span>
+                <span>${targetSku.pricing ? formatCurrency(getMonthlyPrice(targetSku.pricing), targetSku.pricing.currency) : 'N/A'}</span>
             </div>
             <div class="target-sku-item">
                 <strong>Availability Zones</strong>
@@ -343,12 +372,12 @@ function calculateIndicators(targetSku, alternativeSku) {
         vCPUs: getDirectionIndicator(targetSku.vCPUs, alternativeSku.vCPUs),
         memory: getDirectionIndicator(targetSku.memoryGB, alternativeSku.memoryGB),
         hourlyPrice: getPriceIndicator(
-            targetSku.pricing?.hourlyPrice, 
-            alternativeSku.pricing?.hourlyPrice
+            getHourlyPrice(targetSku.pricing), 
+            getHourlyPrice(alternativeSku.pricing)
         ),
         monthlyPrice: getPriceIndicator(
-            targetSku.pricing?.monthlyPrice, 
-            alternativeSku.pricing?.monthlyPrice
+            getMonthlyPrice(targetSku.pricing), 
+            getMonthlyPrice(alternativeSku.pricing)
         )
     };
 }
@@ -431,8 +460,8 @@ function displayAlternatives(alternatives) {
                 <td>${cpuDisplay}</td>
                 <td>${alt.vCPUs || 'N/A'}</td>
                 <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'}</td>
-                <td>${alt.pricing ? formatCurrency(alt.pricing.hourlyPrice, alt.pricing.currency) : 'N/A'}</td>
-                <td>${alt.pricing ? formatCurrency(alt.pricing.monthlyPrice, alt.pricing.currency) : 'N/A'}</td>
+                <td>${alt.pricing ? formatCurrency(getHourlyPrice(alt.pricing), alt.pricing.currency) : 'N/A'}</td>
+                <td>${alt.pricing ? formatCurrency(getMonthlyPrice(alt.pricing), alt.pricing.currency) : 'N/A'}</td>
                 <td>${alt.zones || 'N/A'}</td>
             `;
             resultsTableBody.appendChild(row);
@@ -467,8 +496,8 @@ function displayAlternatives(alternatives) {
             <td>${cpuDisplay}</td>
             <td>${alt.vCPUs || 'N/A'} ${renderIndicator(indicators.vCPUs, 'vCPUs')}</td>
             <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'} ${renderIndicator(indicators.memory, 'Memory')}</td>
-            <td>${alt.pricing ? formatCurrency(alt.pricing.hourlyPrice, alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.hourlyPrice, 'Hourly Price')}</td>
-            <td>${alt.pricing ? formatCurrency(alt.pricing.monthlyPrice, alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.monthlyPrice, 'Monthly Price')}</td>
+            <td>${alt.pricing ? formatCurrency(getHourlyPrice(alt.pricing), alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.hourlyPrice, 'Hourly Price')}</td>
+            <td>${alt.pricing ? formatCurrency(getMonthlyPrice(alt.pricing), alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.monthlyPrice, 'Monthly Price')}</td>
             <td>${alt.zones || 'N/A'}</td>
         `;
         
@@ -754,7 +783,7 @@ function exportToCSV() {
         return;
     }
 
-    const headers = ['Rank', 'SKU Name', 'Similarity Score', 'vCPUs', 'Memory (GB)', 'Hourly Cost', 'Monthly Cost', 'Currency', 'Availability Zones'];
+    const headers = ['Rank', 'SKU Name', 'Similarity Score', 'vCPUs', 'Memory (GB)', 'Hourly Cost (Linux)', 'Monthly Cost (Linux)', 'Hourly Cost (Windows)', 'Monthly Cost (Windows)', 'Currency', 'Availability Zones'];
     const rows = currentResults.alternatives.map((alt, index) => [
         index + 1,
         alt.name,
@@ -763,6 +792,8 @@ function exportToCSV() {
         alt.memoryGB || 'N/A',
         alt.pricing ? alt.pricing.hourlyPrice : 'N/A',
         alt.pricing ? alt.pricing.monthlyPrice : 'N/A',
+        alt.pricing ? (alt.pricing.hourlyPriceWindows ?? 'N/A') : 'N/A',
+        alt.pricing ? (alt.pricing.monthlyPriceWindows ?? 'N/A') : 'N/A',
         alt.pricing ? alt.pricing.currency : 'N/A',
         alt.zones || 'N/A'
     ]);
