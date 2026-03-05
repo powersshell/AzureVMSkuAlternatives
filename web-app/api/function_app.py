@@ -758,9 +758,9 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
 
         currency = linux_item.get('currencyCode', currency_code)
         return {
-            'hourlyPrice': round(linux_item['unitPrice'], 4),
+            'hourlyPrice': linux_item['unitPrice'],
             'monthlyPrice': round(linux_item['unitPrice'] * 730, 2),
-            'hourlyPriceWindows': round(windows_item['unitPrice'], 4) if windows_item else None,
+            'hourlyPriceWindows': windows_item['unitPrice'] if windows_item else None,
             'monthlyPriceWindows': round(windows_item['unitPrice'] * 730, 2) if windows_item else None,
             'currency': currency
         }

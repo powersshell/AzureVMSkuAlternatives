@@ -351,7 +351,7 @@ function displayTargetSku(targetSku) {
             ` : ''}
             <div class="target-sku-item">
                 <strong>Hourly Cost</strong>
-                <span>${targetSku.pricing ? formatCurrency(getHourlyPrice(targetSku.pricing), targetSku.pricing.currency) : 'N/A'}</span>
+                <span>${targetSku.pricing ? formatHourlyCurrency(getHourlyPrice(targetSku.pricing), targetSku.pricing.currency) : 'N/A'}</span>
             </div>
             <div class="target-sku-item">
                 <strong>Monthly Cost</strong>
@@ -460,7 +460,7 @@ function displayAlternatives(alternatives) {
                 <td>${cpuDisplay}</td>
                 <td>${alt.vCPUs || 'N/A'}</td>
                 <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'}</td>
-                <td>${alt.pricing ? formatCurrency(getHourlyPrice(alt.pricing), alt.pricing.currency) : 'N/A'}</td>
+                <td>${alt.pricing ? formatHourlyCurrency(getHourlyPrice(alt.pricing), alt.pricing.currency) : 'N/A'}</td>
                 <td>${alt.pricing ? formatCurrency(getMonthlyPrice(alt.pricing), alt.pricing.currency) : 'N/A'}</td>
                 <td>${alt.zones || 'N/A'}</td>
             `;
@@ -496,7 +496,7 @@ function displayAlternatives(alternatives) {
             <td>${cpuDisplay}</td>
             <td>${alt.vCPUs || 'N/A'} ${renderIndicator(indicators.vCPUs, 'vCPUs')}</td>
             <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'} ${renderIndicator(indicators.memory, 'Memory')}</td>
-            <td>${alt.pricing ? formatCurrency(getHourlyPrice(alt.pricing), alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.hourlyPrice, 'Hourly Price')}</td>
+            <td>${alt.pricing ? formatHourlyCurrency(getHourlyPrice(alt.pricing), alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.hourlyPrice, 'Hourly Price')}</td>
             <td>${alt.pricing ? formatCurrency(getMonthlyPrice(alt.pricing), alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.monthlyPrice, 'Monthly Price')}</td>
             <td>${alt.zones || 'N/A'}</td>
         `;
@@ -773,6 +773,17 @@ function formatCurrency(amount, currency = 'USD') {
         currency: currency,
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
+    }).format(amount);
+}
+
+// Use for hourly prices — 4 decimal places to match Azure Pricing Calculator precision
+function formatHourlyCurrency(amount, currency = 'USD') {
+    if (amount === null || amount === undefined) return 'N/A';
+    return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: currency,
+        minimumFractionDigits: 4,
+        maximumFractionDigits: 4
     }).format(amount);
 }
 
