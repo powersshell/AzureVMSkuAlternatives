@@ -554,9 +554,12 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
     total_updated = 0
     total_errors = 0
 
+    # Fetch network bandwidth data once before parallel region processing
+    network_bw = fetch_network_bandwidth()
+
     def process_region(region):
         logging.info(f"Processing region: {region}")
-        count = refresh_region(region, subscription_id, token, table_client)
+        count = refresh_region(region, subscription_id, token, table_client, network_bw)
         logging.info(f"Updated {count} SKUs for region {region}")
         return count
 
@@ -694,8 +697,15 @@ def calculate_similarity(target: Dict, candidate: Dict, weights: Dict) -> float:
         total_score += iops_score * weights['weightStorage']
         total_weight += weights['weightStorage']
 
-    # Network comparison
-    if target['maxNics'] > 0:
+    # Network comparison — prefer bandwidth (Mbps) when available, fall back to NIC count
+    target_bw = target.get('networkBandwidthMbps')
+    candidate_bw = candidate.get('networkBandwidthMbps')
+    if target_bw and target_bw > 0 and candidate_bw is not None:
+        bw_diff = abs(target_bw - candidate_bw) / target_bw
+        network_score = max(0, 100 - (bw_diff * 100))
+        total_score += network_score * weights['weightNetwork']
+        total_weight += weights['weightNetwork']
+    elif target['maxNics'] > 0:
         nic_diff = abs(target['maxNics'] - candidate['maxNics']) / target['maxNics']
         nic_score = max(0, 100 - (nic_diff * 100))
         total_score += nic_score * weights['weightNetwork']
@@ -864,7 +874,8 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         'hourlyPriceWindows': entity.get('hourlyPriceUSDWindows'),
                         'monthlyPriceWindows': entity.get('monthlyPriceUSDWindows'),
                         'currency': entity.get('pricingCurrency', 'USD')
-                    } if entity.get('hourlyPriceUSD') is not None else None
+                    } if entity.get('hourlyPriceUSD') is not None else None,
+                    'networkBandwidthMbps': entity.get('networkBandwidthMbps')
                 }
                 skus.append(sku)
             
@@ -1011,12 +1022,88 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
     return result
 
 
-def refresh_region(region: str, subscription_id: str, token: str, table_client) -> int:
+def fetch_network_bandwidth() -> Dict[str, int]:
+    """
+    Fetch max network bandwidth (Mbps) for all Azure VM SKUs from the public azure-compute-docs repo.
+    Uses one GitHub git tree API call to enumerate all *-series.md files, then fetches each file
+    concurrently via raw.githubusercontent.com (CDN, not subject to the 60 req/hr REST rate limit).
+    Returns dict: {"Standard_D2_v5": 12500, ...}
+    """
+    import re
+
+    def parse_network_table(content: str) -> Dict[str, int]:
+        """Extract Size Name -> Max Network Bandwidth (Mb/s) from a series markdown file."""
+        bw: Dict[str, int] = {}
+        # Find the Network tab section
+        network_match = re.search(r'###\s+\[Network\].*?(?=###|\Z)', content, re.DOTALL | re.IGNORECASE)
+        if not network_match:
+            return bw
+        section = network_match.group(0)
+        # Parse markdown table rows: | Size Name | ... | <number> |
+        for line in section.splitlines():
+            cols = [c.strip() for c in line.split('|') if c.strip()]
+            if len(cols) < 2:
+                continue
+            size_name = cols[0]
+            # Skip header/separator rows
+            if not size_name.startswith('Standard_') and not size_name.startswith('Basic_'):
+                continue
+            # Last numeric column is the bandwidth
+            for col in reversed(cols[1:]):
+                cleaned = col.replace(',', '').replace(' ', '')
+                if cleaned.isdigit():
+                    bw[size_name] = int(cleaned)
+                    break
+        return bw
+
+    try:
+        # Step 1: Get full file tree in one API call
+        tree_url = "https://api.github.com/repos/MicrosoftDocs/azure-compute-docs/git/trees/main?recursive=1"
+        tree_resp = requests.get(tree_url, headers={'Accept': 'application/vnd.github+json'}, timeout=30)
+        if not tree_resp.ok:
+            logging.warning(f"Failed to fetch azure-compute-docs file tree: {tree_resp.status_code}")
+            return {}
+
+        series_paths = [
+            item['path'] for item in tree_resp.json().get('tree', [])
+            if item['path'].startswith('articles/virtual-machines/sizes/')
+            and item['path'].endswith('-series.md')
+        ]
+        logging.info(f"Found {len(series_paths)} series markdown files to parse for network bandwidth")
+
+        # Step 2: Fetch and parse all files concurrently
+        base_url = "https://raw.githubusercontent.com/MicrosoftDocs/azure-compute-docs/main"
+
+        def fetch_and_parse(path: str) -> Dict[str, int]:
+            try:
+                resp = requests.get(f"{base_url}/{path}", timeout=15)
+                if resp.ok:
+                    return parse_network_table(resp.text)
+            except Exception as e:
+                logging.debug(f"Failed to fetch {path}: {e}")
+            return {}
+
+        result: Dict[str, int] = {}
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            for bw_map in executor.map(fetch_and_parse, series_paths):
+                result.update(bw_map)
+
+        logging.info(f"Network bandwidth loaded for {len(result)} SKUs from {len(series_paths)} series files")
+        return result
+
+    except Exception as e:
+        logging.warning(f"fetch_network_bandwidth failed: {e}")
+        return {}
+
+
+def refresh_region(region: str, subscription_id: str, token: str, table_client, network_bw: Dict[str, int] = None) -> int:
     """
     Refresh SKU data for a specific region
     Fetches SKU data and pricing concurrently for performance
     Returns number of SKUs updated
     """
+    if network_bw is None:
+        network_bw = {}
     # Get VM SKUs from Azure Management API
     api_version = '2021-07-01'
     url = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Compute/skus?api-version={api_version}&$filter=location eq '{region}'"
@@ -1077,6 +1164,7 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
                 'pricingCurrency': pricing['currency'] if pricing else 'USD',
                 'pricingLastUpdated': timestamp,
                 'availabilityZones': ','.join(zones) if zones else '',
+                'networkBandwidthMbps': network_bw.get(sku['name']),
                 'lastUpdated': timestamp
             }
             entities.append(entity)
@@ -1194,11 +1282,12 @@ def extract_capabilities_for_diff(sku: dict) -> dict:
     caps['nvme'] = sku.get('nvme', False)
     caps['osVhdSizeMB'] = sku.get('osVhdSizeMB')
     caps['maxNics'] = sku.get('maxNics')
+    caps['networkBandwidthMbps'] = sku.get('networkBandwidthMbps')
     caps['acceleratedNetworking'] = sku.get('acceleratedNetworking', False)
     caps['hyperVGen2'] = 'V2' in (sku.get('hyperVGenerations') or '')
     
     # Ensure numeric fields are numbers, not strings (Table Storage may return strings)
-    for key in ['maxDataDisks', 'uncachedDiskIOPS', 'uncachedDiskThroughput', 'maxNics', 'osVhdSizeMB']:
+    for key in ['maxDataDisks', 'uncachedDiskIOPS', 'uncachedDiskThroughput', 'maxNics', 'networkBandwidthMbps', 'osVhdSizeMB']:
         if caps.get(key) is None:
             caps[key] = None
         elif not isinstance(caps[key], (int, float)):
@@ -1411,6 +1500,11 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
     
     # Network differences
     differences['network'] = {
+        'networkBandwidthMbps': calculate_numeric_diff(
+            target_caps.get('networkBandwidthMbps'),
+            alt_caps.get('networkBandwidthMbps'),
+            'Mbps'
+        ),
         'maxNics': calculate_numeric_diff(
             target_caps.get('maxNics'),
             alt_caps.get('maxNics'),

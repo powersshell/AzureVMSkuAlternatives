@@ -368,6 +368,12 @@ function displayTargetSku(targetSku) {
                 <strong>Availability Zones</strong>
                 <span>${targetSku.zones || 'N/A'}</span>
             </div>
+            ${targetSku.networkBandwidthMbps ? `
+            <div class="target-sku-item">
+                <strong>Network Bandwidth</strong>
+                <span>${formatBandwidth(targetSku.networkBandwidthMbps)}</span>
+            </div>
+            ` : ''}
         </div>
     `;
     targetSkuInfo.innerHTML = html;
@@ -662,6 +668,7 @@ function renderDetailedComparison(data, targetSku, altSku) {
                 <!-- Network Section -->
                 <div class="details-section">
                     <h5>Network</h5>
+                    ${diff.network.networkBandwidthMbps && diff.network.networkBandwidthMbps.target != null ? renderNumericDiff('Max Bandwidth', diff.network.networkBandwidthMbps) : ''}
                     ${renderNumericDiff('Max NICs', diff.network.maxNics)}
                     ${renderBooleanDiff(diff.network.acceleratedNetworking)}
                 </div>
@@ -792,6 +799,14 @@ function formatHourlyCurrency(amount, currency = 'USD') {
         minimumFractionDigits: 4,
         maximumFractionDigits: 4
     }).format(amount);
+}
+
+function formatBandwidth(mbps) {
+    if (mbps === null || mbps === undefined) return 'N/A';
+    if (mbps >= 1000) {
+        return `${(mbps / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} Gbps`;
+    }
+    return `${mbps.toLocaleString('en-US')} Mbps`;
 }
 
 // Export to CSV
