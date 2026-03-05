@@ -128,38 +128,62 @@
                     <summary>Advanced Options</summary>
                     <div class="form-grid">
                         <div class="form-group">
-                            <label for="weightCPU">CPU Weight</label>
-                            <input type="number" id="weightCPU" value="2.0" min="0" max="10" step="0.1">
+                            <label for="weightCPU">CPU Priority</label>
+                            <select id="weightCPU">
+                                <option value="low">Low</option>
+                                <option value="normal">Normal</option>
+                                <option value="high" selected>High</option>
+                            </select>
                             <small>Importance of CPU matching</small>
                         </div>
 
                         <div class="form-group">
-                            <label for="weightMemory">Memory Weight</label>
-                            <input type="number" id="weightMemory" value="2.0" min="0" max="10" step="0.1">
+                            <label for="weightMemory">Memory Priority</label>
+                            <select id="weightMemory">
+                                <option value="low">Low</option>
+                                <option value="normal">Normal</option>
+                                <option value="high" selected>High</option>
+                            </select>
                             <small>Importance of memory matching</small>
                         </div>
 
                         <div class="form-group">
-                            <label for="weightGPU">GPU Weight</label>
-                            <input type="number" id="weightGPU" value="2.0" min="0" max="10" step="0.1">
+                            <label for="weightGPU">GPU Priority</label>
+                            <select id="weightGPU">
+                                <option value="low">Low</option>
+                                <option value="normal" selected>Normal</option>
+                                <option value="high">High</option>
+                            </select>
                             <small>Importance of GPU matching</small>
                         </div>
 
                         <div class="form-group">
-                            <label for="weightStorage">Storage Weight</label>
-                            <input type="number" id="weightStorage" value="1.0" min="0" max="10" step="0.1">
+                            <label for="weightStorage">Storage Priority</label>
+                            <select id="weightStorage">
+                                <option value="low">Low</option>
+                                <option value="normal" selected>Normal</option>
+                                <option value="high">High</option>
+                            </select>
                             <small>Importance of storage matching</small>
                         </div>
 
                         <div class="form-group">
-                            <label for="weightNetwork">Network Weight</label>
-                            <input type="number" id="weightNetwork" value="1.0" min="0" max="10" step="0.1">
+                            <label for="weightNetwork">Network Priority</label>
+                            <select id="weightNetwork">
+                                <option value="low" selected>Low</option>
+                                <option value="normal">Normal</option>
+                                <option value="high">High</option>
+                            </select>
                             <small>Importance of network matching</small>
                         </div>
 
                         <div class="form-group">
-                            <label for="weightFeatures">Features Weight</label>
-                            <input type="number" id="weightFeatures" value="0.5" min="0" max="10" step="0.1">
+                            <label for="weightFeatures">Features Priority</label>
+                            <select id="weightFeatures">
+                                <option value="low" selected>Low</option>
+                                <option value="normal">Normal</option>
+                                <option value="high">High</option>
+                            </select>
                             <small>Importance of feature matching</small>
                         </div>
 

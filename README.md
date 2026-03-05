@@ -16,6 +16,7 @@
 - **fix:** VM pricing now correctly selects Pay-As-You-Go Linux/Windows rates only (excludes Spot, Low Priority)
 - **fix:** Daily cache refresh timer trigger now fires reliably on Flex Consumption (`use_monitor=True`)
 - **fix:** Deployment workflow no longer fails on SyncTrigger timeout with private VNet — triggers synced via Azure management plane
+- **improvement:** Advanced Options weight inputs replaced with Low / Normal / High priority dropdowns
 
 ---
 

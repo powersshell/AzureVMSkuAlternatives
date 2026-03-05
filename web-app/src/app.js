@@ -2,6 +2,13 @@
 // Direct connection to Flex Consumption Function App (Static Web App rewrite doesn't support POST)
 const API_BASE_URL = 'https://vmsku-api-functions-flex.azurewebsites.net/api';
 
+// Maps priority dropdown values to numeric weights used by the comparison algorithm
+const PRIORITY_VALUES = { low: 0.5, normal: 1.5, high: 3.0 };
+
+function getPriorityWeight(id) {
+    return PRIORITY_VALUES[document.getElementById(id).value] ?? 1.5;
+}
+
 // DOM Elements
 const compareBtn = document.getElementById('compareBtn');
 const loadingOverlay = document.getElementById('loadingOverlay');
@@ -217,12 +224,12 @@ async function handleCompare() {
         location,
         minSimilarityScore: parseInt(document.getElementById('minSimilarityScore').value),
         currencyCode: document.getElementById('currencyCode').value,
-        weightCPU: parseFloat(document.getElementById('weightCPU').value),
-        weightMemory: parseFloat(document.getElementById('weightMemory').value),
-        weightGPU: parseFloat(document.getElementById('weightGPU').value),
-        weightStorage: parseFloat(document.getElementById('weightStorage').value),
-        weightNetwork: parseFloat(document.getElementById('weightNetwork').value),
-        weightFeatures: parseFloat(document.getElementById('weightFeatures').value),
+        weightCPU: getPriorityWeight('weightCPU'),
+        weightMemory: getPriorityWeight('weightMemory'),
+        weightGPU: getPriorityWeight('weightGPU'),
+        weightStorage: getPriorityWeight('weightStorage'),
+        weightNetwork: getPriorityWeight('weightNetwork'),
+        weightFeatures: getPriorityWeight('weightFeatures'),
         requireNVMeMatch: document.getElementById('requireNVMeMatch').checked,
         requireGPUMatch: document.getElementById('requireGPUMatch').checked
     };
