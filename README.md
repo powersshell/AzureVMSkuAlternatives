@@ -7,6 +7,18 @@
 
 ---
 
+## 📋 Changelog
+
+### 2026-03-05
+- **fix:** Hourly prices now display with 4 decimal places to match the Azure Pricing Calculator (e.g. `$0.0510` instead of `$0.05`)
+- **fix:** Removed backend rounding on hourly prices — full float precision stored from Azure Retail Prices API
+- **fix:** Target SKU pricing labels now show Linux/Windows based on the OS toggle (e.g. "Hourly Cost (Linux)")
+- **fix:** VM pricing now correctly selects Pay-As-You-Go Linux/Windows rates only (excludes Spot, Low Priority)
+- **fix:** Daily cache refresh timer trigger now fires reliably on Flex Consumption (`use_monitor=True`)
+- **fix:** Deployment workflow no longer fails on SyncTrigger timeout with private VNet — triggers synced via Azure management plane
+
+---
+
 ## 🎯 What is This?
 
 Azure VM SKU Alternatives helps you discover similar or alternative VM SKUs when:
