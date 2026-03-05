@@ -490,7 +490,7 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
 # ============================================================================
 # Timer Trigger: refresh_sku_cache - Daily SKU cache refresh
 # ============================================================================
-@app.timer_trigger(schedule="0 0 2 * * *", arg_name="timer", run_on_startup=False, use_monitor=False)
+@app.timer_trigger(schedule="0 0 2 * * *", arg_name="timer", run_on_startup=False, use_monitor=True)
 def refresh_sku_cache(timer: func.TimerRequest) -> None:
     """
     Timer-triggered Azure Function to refresh VM SKU cache
