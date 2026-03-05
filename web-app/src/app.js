@@ -350,11 +350,11 @@ function displayTargetSku(targetSku) {
             </div>
             ` : ''}
             <div class="target-sku-item">
-                <strong>Hourly Cost</strong>
+                <strong>Hourly Cost (${currentPricingOS === 'windows' ? 'Windows' : 'Linux'})</strong>
                 <span>${targetSku.pricing ? formatHourlyCurrency(getHourlyPrice(targetSku.pricing), targetSku.pricing.currency) : 'N/A'}</span>
             </div>
             <div class="target-sku-item">
-                <strong>Monthly Cost</strong>
+                <strong>Monthly Cost (${currentPricingOS === 'windows' ? 'Windows' : 'Linux'})</strong>
                 <span>${targetSku.pricing ? formatCurrency(getMonthlyPrice(targetSku.pricing), targetSku.pricing.currency) : 'N/A'}</span>
             </div>
             <div class="target-sku-item">
