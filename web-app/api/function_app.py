@@ -553,17 +553,23 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
     
     total_updated = 0
     total_errors = 0
-    
-    for region in regions:
-        try:
-            logging.info(f"Processing region: {region}")
-            count = refresh_region(region, subscription_id, token, table_client)
-            total_updated += count
-            logging.info(f"Updated {count} SKUs for region {region}")
-        except Exception as e:
-            logging.error(f"Error processing region {region}: {e}")
-            total_errors += 1
-    
+
+    def process_region(region):
+        logging.info(f"Processing region: {region}")
+        count = refresh_region(region, subscription_id, token, table_client)
+        logging.info(f"Updated {count} SKUs for region {region}")
+        return count
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_region = {executor.submit(process_region, r): r for r in regions}
+        for future in as_completed(future_to_region):
+            region = future_to_region[future]
+            try:
+                total_updated += future.result()
+            except Exception as e:
+                logging.error(f"Error processing region {region}: {e}")
+                total_errors += 1
+
     logging.info(f"SKU cache refresh completed. Updated: {total_updated}, Errors: {total_errors}")
 
 
@@ -936,6 +942,75 @@ def fetch_pricing_concurrent(sku_names: List[str], location: str, max_workers: i
     return pricing_results
 
 
+def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str, Dict]:
+    """
+    Fetch ALL VM pricing for a region in one paginated API call.
+    ~20x fewer HTTP calls vs fetching per-SKU.
+    Returns dict keyed by armSkuName -> pricing dict.
+    """
+    api_url = 'https://prices.azure.com/api/retail/prices'
+    filter_str = f"serviceName eq 'Virtual Machines' and armRegionName eq '{location}' and type eq 'Consumption'"
+    url = f"{api_url}?currencyCode={currency}&$filter={filter_str}"
+
+    all_items = []
+    page = 0
+    while url:
+        response = requests.get(url, headers={'Accept': 'application/json'}, timeout=30)
+        if not response.ok:
+            logging.warning(f'Bulk pricing fetch failed for {location} on page {page}: {response.status_code}')
+            break
+        data = response.json()
+        all_items.extend(data.get('Items', []))
+        url = data.get('NextPageLink')
+        page += 1
+
+    # Index by armSkuName, tracking best Linux, Windows, and fallback items per SKU
+    sku_linux: Dict[str, Dict] = {}
+    sku_windows: Dict[str, Dict] = {}
+    sku_fallback: Dict[str, Dict] = {}
+
+    for item in all_items:
+        sku_name = item.get('armSkuName', '')
+        if not sku_name:
+            continue
+        product_lower = item.get('productName', '').lower()
+        sku_label = item.get('skuName', '')
+
+        if 'virtual machines' not in product_lower:
+            continue
+        if 'Spot' in sku_label or 'Low Priority' in sku_label:
+            continue
+
+        is_windows = 'windows' in product_lower
+
+        if sku_name not in sku_fallback:
+            sku_fallback[sku_name] = item
+        if not is_windows and sku_name not in sku_linux:
+            sku_linux[sku_name] = item
+        if is_windows and sku_name not in sku_windows:
+            sku_windows[sku_name] = item
+
+    result: Dict[str, Dict] = {}
+    all_sku_names = sku_fallback.keys()
+    for sku_name in all_sku_names:
+        linux_item = sku_linux.get(sku_name) or sku_fallback.get(sku_name)
+        windows_item = sku_windows.get(sku_name)
+        if not linux_item:
+            continue
+        linux_price = linux_item['unitPrice']
+        windows_price = windows_item['unitPrice'] if windows_item else None
+        result[sku_name] = {
+            'hourlyPrice': linux_price,
+            'monthlyPrice': round(linux_price * 730, 2),
+            'hourlyPriceWindows': windows_price,
+            'monthlyPriceWindows': round(windows_price * 730, 2) if windows_price else None,
+            'currency': linux_item.get('currencyCode', currency)
+        }
+
+    logging.info(f"Bulk pricing fetch for {location}: {len(result)} SKUs from {len(all_items)} price items ({page} pages)")
+    return result
+
+
 def refresh_region(region: str, subscription_id: str, token: str, table_client) -> int:
     """
     Refresh SKU data for a specific region
@@ -959,29 +1034,21 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
     data = response.json()
     skus = [s for s in data.get('value', []) if s.get('resourceType') == 'virtualMachines']
     
-    logging.info(f"Fetching pricing for {len(skus)} SKUs in {region} concurrently...")
-    
-    # Fetch pricing concurrently for all SKUs
-    pricing_data = fetch_pricing_concurrent([sku['name'] for sku in skus], region, max_workers=20)
-    
-    count = 0
+    logging.info(f"Fetching pricing for {len(skus)} SKUs in {region} via bulk API call...")
+
+    # Fetch all pricing for the region in one paginated bulk call
+    pricing_data = fetch_bulk_region_pricing(region)
+
+    entities = []
     timestamp = datetime.now(timezone.utc).isoformat()
-    
+
     for sku in skus:
         try:
-            # Extract capabilities (includes architecture from Azure API)
             capabilities = extract_capabilities_for_cache(sku)
-            
-            # Detect CPU vendor from SKU name + architecture
             cpu_vendor = detect_cpu_vendor(sku['name'], capabilities.get('architecture', 'x64'))
-            
-            # Get pricing from concurrent fetch results
             pricing = pricing_data.get(sku['name'])
-            
-            # Get availability zones
             zones = get_availability_zones(sku, region)
-            
-            # Create entity for Storage Table
+
             entity = {
                 'PartitionKey': region,
                 'RowKey': sku['name'],
@@ -1012,13 +1079,27 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client) 
                 'availabilityZones': ','.join(zones) if zones else '',
                 'lastUpdated': timestamp
             }
-            
-            # Upsert entity (insert or update)
-            table_client.upsert_entity(entity)
-            count += 1
-            
+            entities.append(entity)
+
         except Exception as e:
             logging.warning(f"Failed to process SKU {sku.get('name', 'unknown')}: {e}")
+
+    # Batch upsert in groups of 100 (Azure Table Storage transaction limit)
+    count = 0
+    BATCH_SIZE = 100
+    for i in range(0, len(entities), BATCH_SIZE):
+        batch = entities[i:i + BATCH_SIZE]
+        try:
+            table_client.submit_transaction([("upsert", e) for e in batch])
+            count += len(batch)
+        except Exception as e:
+            logging.warning(f"Batch upsert failed for {region} batch {i // BATCH_SIZE}, falling back to individual upserts: {e}")
+            for entity in batch:
+                try:
+                    table_client.upsert_entity(entity)
+                    count += 1
+                except Exception as e2:
+                    logging.warning(f"Failed to upsert {entity.get('RowKey')}: {e2}")
     
     # Prune SKUs that no longer exist in the Azure API for this region
     api_sku_names = {s['name'] for s in skus}
