@@ -47,13 +47,24 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     
     // Initialize Choices.js for SKU dropdown
+    // fuseOptions: ignoreLocation allows matching anywhere in the label (not just the start),
+    // which is required because all SKU names begin with "Standard_" — without this, typing
+    // a single letter like "D" fails to match "Standard_D2_v5" since "D" is at position 9.
     skuChoices = new Choices(skuSelect, {
         searchEnabled: true,
         searchPlaceholderValue: 'Type to search SKUs...',
         itemSelectText: '',
         shouldSort: false,
         placeholder: true,
-        placeholderValue: 'Select a region first...'
+        placeholderValue: 'Select a region first...',
+        searchResultLimit: 200,
+        fuseOptions: {
+            includeScore: true,
+            threshold: 0.3,
+            ignoreLocation: true,
+            minMatchCharLength: 1,
+            keys: ['label', 'value']
+        }
     });
     
     // Disable SKU dropdown initially
