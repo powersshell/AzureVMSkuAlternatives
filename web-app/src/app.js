@@ -838,7 +838,7 @@ function formatHourlyCurrency(amount, currency = 'USD') {
 }
 
 function formatBandwidth(mbps) {
-    if (mbps === null || mbps === undefined) return 'N/A';
+    if (mbps === null || mbps === undefined || mbps === 0) return 'N/A';
     if (mbps >= 1000) {
         return `${(mbps / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })} Gbps`;
     }

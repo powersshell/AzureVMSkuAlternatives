@@ -1164,9 +1164,13 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'pricingCurrency': pricing['currency'] if pricing else 'USD',
                 'pricingLastUpdated': timestamp,
                 'availabilityZones': ','.join(zones) if zones else '',
-                'networkBandwidthMbps': network_bw.get(sku['name']),
                 'lastUpdated': timestamp
             }
+            # Only include networkBandwidthMbps when we have actual data —
+            # writing None to Table Storage coerces to integer 0
+            bw = network_bw.get(sku['name'])
+            if bw is not None:
+                entity['networkBandwidthMbps'] = bw
             entities.append(entity)
 
         except Exception as e:
