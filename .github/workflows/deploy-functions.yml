@@ -21,6 +21,7 @@ env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: 'web-app/api'
   PYTHON_VERSION: '3.11'
   RESOURCE_GROUP: 'rg-vmsku-alternatives'
+  LOG_ANALYTICS_WORKSPACE_NAME: 'vmsku-alternatives-webapp-logs'
 
 # Required permissions for OIDC authentication
 permissions:
@@ -50,7 +51,9 @@ jobs:
         with:
           resourceGroupName: ${{ env.RESOURCE_GROUP }}
           template: ./web-app/infra/functions-app-flex.bicep
-          parameters: functionsAppName=${{ env.AZURE_FUNCTIONAPP_NAME }}
+          parameters: >
+            functionsAppName=${{ env.AZURE_FUNCTIONAPP_NAME }}
+            logAnalyticsWorkspaceName=${{ env.LOG_ANALYTICS_WORKSPACE_NAME }}
           failOnStdErr: false
 
       - name: 'Assign Reader role at subscription level'

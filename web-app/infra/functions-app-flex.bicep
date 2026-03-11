@@ -34,6 +34,9 @@ param functionSubnetPrefix string = '10.0.1.0/24'
 @description('Private endpoint subnet address range')
 param privateEndpointSubnetPrefix string = '10.0.2.0/24'
 
+@description('Name of the existing Log Analytics workspace to link AppInsights to. Leave empty to skip workspace linking.')
+param logAnalyticsWorkspaceName string = ''
+
 // ============================================================================
 // NETWORKING RESOURCES
 // ============================================================================
@@ -149,12 +152,6 @@ resource blobPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   tags: tags
 }
 
-resource filePrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
-  name: 'privatelink.file.${environment().suffixes.storage}'
-  location: 'global'
-  tags: tags
-}
-
 resource queuePrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   name: 'privatelink.queue.${environment().suffixes.storage}'
   location: 'global'
@@ -171,18 +168,6 @@ resource tablePrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
 resource blobDnsZoneLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: blobPrivateDnsZone
   name: '${functionsAppName}-blob-link'
-  location: 'global'
-  properties: {
-    registrationEnabled: false
-    virtualNetwork: {
-      id: virtualNetwork.id
-    }
-  }
-}
-
-resource fileDnsZoneLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
-  parent: filePrivateDnsZone
-  name: '${functionsAppName}-file-link'
   location: 'global'
   properties: {
     registrationEnabled: false
@@ -252,44 +237,6 @@ resource blobPrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZ
         name: 'config'
         properties: {
           privateDnsZoneId: blobPrivateDnsZone.id
-        }
-      }
-    ]
-  }
-}
-
-// Private Endpoint for File
-resource filePrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-04-01' = {
-  name: '${storageAccountName}-file-pe'
-  location: location
-  tags: tags
-  properties: {
-    subnet: {
-      id: privateEndpointSubnetId
-    }
-    privateLinkServiceConnections: [
-      {
-        name: '${storageAccountName}-file-connection'
-        properties: {
-          privateLinkServiceId: storageAccount.id
-          groupIds: [
-            'file'
-          ]
-        }
-      }
-    ]
-  }
-}
-
-resource filePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-04-01' = {
-  parent: filePrivateEndpoint
-  name: 'default'
-  properties: {
-    privateDnsZoneConfigs: [
-      {
-        name: 'config'
-        properties: {
-          privateDnsZoneId: filePrivateDnsZone.id
         }
       }
     ]
@@ -376,6 +323,11 @@ resource tablePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDns
 // APPLICATION INSIGHTS
 // ============================================================================
 
+// Reference an existing Log Analytics workspace when logAnalyticsWorkspaceName is provided
+resource existingLogAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = if (!empty(logAnalyticsWorkspaceName)) {
+  name: logAnalyticsWorkspaceName
+}
+
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   name: '${functionsAppName}-insights'
   location: location
@@ -383,9 +335,8 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   kind: 'web'
   properties: {
     Application_Type: 'web'
-    RetentionInDays: 30
-    WorkspaceResourceId: null
-    IngestionMode: 'ApplicationInsights'
+    WorkspaceResourceId: !empty(logAnalyticsWorkspaceName) ? existingLogAnalyticsWorkspace.id : null
+    IngestionMode: !empty(logAnalyticsWorkspaceName) ? 'LogAnalytics' : 'ApplicationInsights'
     publicNetworkAccessForIngestion: 'Enabled'
     publicNetworkAccessForQuery: 'Enabled'
   }
@@ -526,7 +477,6 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
     // Ensure network is ready before creating Function App
     virtualNetwork
     blobPrivateEndpoint
-    filePrivateEndpoint
     queuePrivateEndpoint
     tablePrivateEndpoint
   ]
@@ -569,17 +519,6 @@ resource tableDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-
   }
 }
 
-// Storage File Data Privileged Contributor - Access to file shares (if needed)
-resource fileDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, functionsApp.id, 'StorageFileDataPrivilegedContributor')
-  scope: storageAccount
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '69566ab7-960f-475b-8e7c-b3118f30c6bd')
-    principalId: functionsApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
 // NOTE: Reader role at subscription level cannot be assigned from resource group scope
 // This must be assigned separately after deployment via Azure CLI or Portal
 // Role needed: Reader (acdd72a7-3385-48ef-bd42-f606fba81ae7)
@@ -600,8 +539,9 @@ output vnetId string = virtualNetwork.id
 output functionSubnetId string = functionSubnetId
 output privateEndpointSubnetId string = privateEndpointSubnetId
 
-output appInsightsInstrumentationKey string = appInsights.properties.InstrumentationKey
-output appInsightsConnectionString string = appInsights.properties.ConnectionString
+// NOTE: AppInsights InstrumentationKey and ConnectionString are intentionally NOT output here.
+// They are injected directly as app settings in the Function App resource above.
+// Exposing them as ARM outputs would make them visible in deployment history to any Reader.
 
 // NOTE: Private endpoint IPs are not output as customDnsConfigs may not be populated during initial deployment
 // Private endpoints are accessible via private DNS zones

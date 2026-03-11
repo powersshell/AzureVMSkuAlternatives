@@ -104,7 +104,7 @@ resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09
     sku: {
       name: 'PerGB2018'
     }
-    retentionInDays: 30
+    retentionInDays: 90
     features: {
       enableLogAccessUsingOnlyResourcePermissions: true
     }
@@ -126,11 +126,8 @@ output staticWebAppId string = staticWebApp.id
 @description('Static Web App name')
 output staticWebAppName string = staticWebApp.name
 
-@description('Application Insights Instrumentation Key')
-output appInsightsInstrumentationKey string = appInsights.properties.InstrumentationKey
-
-@description('Application Insights Connection String')
-output appInsightsConnectionString string = appInsights.properties.ConnectionString
+// NOTE: AppInsights InstrumentationKey and ConnectionString are intentionally NOT output here.
+// Exposing them as ARM outputs would make them visible in deployment history to any Reader.
 
 @description('System-Assigned Managed Identity Principal ID')
 output identityPrincipalId string = staticWebApp.identity.principalId
