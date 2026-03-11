@@ -474,8 +474,8 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
     }
   }
   dependsOn: [
-    // Ensure network is ready before creating Function App
-    virtualNetwork
+    // Ensure private endpoints are ready before creating Function App
+    // (virtualNetwork is implicitly depended on via virtualNetworkSubnetId)
     blobPrivateEndpoint
     queuePrivateEndpoint
     tablePrivateEndpoint
