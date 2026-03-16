@@ -37,6 +37,9 @@ param privateEndpointSubnetPrefix string = '10.0.2.0/24'
 @description('Name of the existing Log Analytics workspace to link AppInsights to. Leave empty to skip workspace linking.')
 param logAnalyticsWorkspaceName string = ''
 
+@description('Email address for alert notifications. Leave empty to skip monitoring setup.')
+param alertEmailAddress string = ''
+
 // ============================================================================
 // NETWORKING RESOURCES
 // ============================================================================
@@ -525,6 +528,39 @@ resource tableDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-
 // Purpose: Allow Function App to read VM SKU information from Azure Compute API
 
 // ============================================================================
+// DIAGNOSTIC SETTINGS - SEND LOGS TO LOG ANALYTICS
+// ============================================================================
+
+// Enable diagnostic settings when Log Analytics workspace is provided
+resource functionAppDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!empty(logAnalyticsWorkspaceName)) {
+  name: 'send-to-log-analytics'
+  scope: functionsApp
+  properties: {
+    workspaceId: !empty(logAnalyticsWorkspaceName) ? existingLogAnalyticsWorkspace.id : null
+    logs: [
+      {
+        category: 'FunctionAppLogs'
+        enabled: true
+        retentionPolicy: {
+          enabled: false
+          days: 0
+        }
+      }
+    ]
+    metrics: [
+      {
+        category: 'AllMetrics'
+        enabled: true
+        retentionPolicy: {
+          enabled: false
+          days: 0
+        }
+      }
+    ]
+  }
+}
+
+// ============================================================================
 // OUTPUTS
 // ============================================================================
 
@@ -545,3 +581,23 @@ output privateEndpointSubnetId string = privateEndpointSubnetId
 
 // NOTE: Private endpoint IPs are not output as customDnsConfigs may not be populated during initial deployment
 // Private endpoints are accessible via private DNS zones
+
+// ============================================================================
+// MONITORING & ALERTING
+// ============================================================================
+
+module monitoring 'modules/monitoring.bicep' = if (!empty(alertEmailAddress) && !empty(logAnalyticsWorkspaceName)) {
+  name: 'monitoring-deployment'
+  params: {
+    resourcePrefix: functionsAppName
+    alertEmailAddress: alertEmailAddress
+    functionAppHostname: functionsApp.properties.defaultHostName
+    appInsightsResourceId: appInsights.id
+    logAnalyticsWorkspaceResourceId: !empty(logAnalyticsWorkspaceName) ? existingLogAnalyticsWorkspace.id : ''
+    location: location
+    tags: tags
+  }
+}
+
+output monitoringDeployed bool = !empty(alertEmailAddress) && !empty(logAnalyticsWorkspaceName)
+output actionGroupId string = (!empty(alertEmailAddress) && !empty(logAnalyticsWorkspaceName)) ? monitoring!.outputs.actionGroupId : 'not-deployed'

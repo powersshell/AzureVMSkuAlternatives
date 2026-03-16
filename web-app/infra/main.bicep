@@ -104,12 +104,12 @@ resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09
     sku: {
       name: 'PerGB2018'
     }
-    retentionInDays: 90
+    retentionInDays: 90  // 90-day retention for compliance and troubleshooting
     features: {
       enableLogAccessUsingOnlyResourcePermissions: true
     }
     workspaceCapping: {
-      dailyQuotaGb: 1
+      dailyQuotaGb: 1  // Cost control: 1GB daily cap
     }
     publicNetworkAccessForIngestion: 'Enabled'
     publicNetworkAccessForQuery: 'Enabled'
@@ -135,6 +135,15 @@ output identityPrincipalId string = staticWebApp.identity.principalId
 @description('System-Assigned Managed Identity Tenant ID')
 output identityTenantId string = staticWebApp.identity.tenantId
 
+@description('Log Analytics Workspace name')
+output logAnalyticsWorkspaceName string = logAnalyticsWorkspace.name
+
+@description('Log Analytics Workspace resource ID')
+output logAnalyticsWorkspaceId string = logAnalyticsWorkspace.id
+
+@description('Application Insights resource ID')
+output appInsightsId string = appInsights.id
+
 // MCP Server Container App (deployed only when mcpContainerImage is provided)
 module mcpServer 'modules/container-app-mcp.bicep' = if (!empty(mcpContainerImage)) {
   name: 'mcp-server-container-app'
@@ -148,4 +157,4 @@ module mcpServer 'modules/container-app-mcp.bicep' = if (!empty(mcpContainerImag
 }
 
 @description('MCP server endpoint URL (empty if not deployed)')
-output mcpEndpointUrl string = !empty(mcpContainerImage) ? mcpServer.outputs.mcpEndpointUrl : ''
+output mcpEndpointUrl string = !empty(mcpContainerImage) ? mcpServer!.outputs.mcpEndpointUrl : ''

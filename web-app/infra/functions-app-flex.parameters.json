@@ -1,0 +1,29 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "functionsAppName": {
+      "value": "vmsku-api-functions-flex"
+    },
+    "location": {
+      "value": "eastus2"
+    },
+    "subscriptionId": {
+      "value": "YOUR_SUBSCRIPTION_ID_HERE"
+    },
+    "logAnalyticsWorkspaceName": {
+      "value": "vmsku-alternatives-webapp-logs"
+    },
+    "alertEmailAddress": {
+      "value": "YOUR_EMAIL_ADDRESS_HERE"
+    },
+    "tags": {
+      "value": {
+        "Application": "Azure VM SKU Alternatives API",
+        "Environment": "Production",
+        "ManagedBy": "Bicep",
+        "Security": "Private"
+      }
+    }
+  }
+}
