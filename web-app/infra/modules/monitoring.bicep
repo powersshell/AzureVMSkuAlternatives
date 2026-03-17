@@ -181,11 +181,11 @@ resource cacheRefreshMissingAlert 'Microsoft.Insights/scheduledQueryRules@2023-0
   tags: tags
   properties: {
     displayName: 'Cache Refresh Missing Alert'
-    description: 'Alert when daily cache refresh has not completed in 25 hours (scheduled daily at 2 AM UTC)'
+    description: 'Alert when the last successful cache refresh completion is older than 27 hours'
     severity: 1  // High severity
     enabled: true
     evaluationFrequency: 'PT1H'   // Every 1 hour
-    windowSize: 'PT48H'            // 25h unsupported; use 48h window and filter to 25h in KQL
+    windowSize: 'PT48H'            // Use 48h lookback to compute the last successful completion safely
     scopes: [
       logAnalyticsWorkspaceResourceId
     ]
@@ -193,12 +193,16 @@ resource cacheRefreshMissingAlert 'Microsoft.Insights/scheduledQueryRules@2023-0
       allOf: [
         {
           query: '''
-            AppTraces
-            | where TimeGenerated > ago(25h)
-            | where AppRoleName == "${resourcePrefix}" or AppRoleName contains "${resourcePrefix}"
-            | where Message contains "SKU cache refresh completed"
-            | summarize CompletionCount = count()
-            | where CompletionCount == 0
+            let LastCompletion = toscalar(
+              AppTraces
+              | where TimeGenerated > ago(48h)
+              | where AppRoleName == "${resourcePrefix}" or AppRoleName contains "${resourcePrefix}"
+              | where Message contains "SKU cache refresh completed"
+              | summarize max(TimeGenerated)
+            );
+            print LastCompletion = LastCompletion
+            | extend HoursSinceCompletion = iff(isnull(LastCompletion), 99999.0, datetime_diff('minute', now(), LastCompletion) / 60.0)
+            | where HoursSinceCompletion > 27.0
           '''
           timeAggregation: 'Count'
           dimensions: []
