@@ -16,6 +16,7 @@ local.settings.*.json
 # Build artifacts and deployment packages
 *.zip
 *.tar.gz
+web-app/infra/modules/*.json
 
 # Logs
 *.log
