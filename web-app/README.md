@@ -356,7 +356,7 @@ This project is provided as-is for educational and demonstration purposes.
 ## Support
 
 For issues and questions:
-- Open an issue in the GitHub repository
+- Use the in-app **Report an issue** link in the web app footer, or open an issue directly: [GitHub Issues](https://github.com/powersshell/AzureVMSkuAlternatives/issues/new/choose)
 - Check existing issues for solutions
 - Review Azure documentation
 

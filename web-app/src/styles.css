@@ -589,6 +589,27 @@ footer {
     margin-top: 2rem;
 }
 
+.footer-links {
+    margin-top: 0.5rem;
+}
+
+.footer-link {
+    color: #ffffff;
+    text-decoration: underline;
+    font-weight: 600;
+    text-underline-offset: 2px;
+}
+
+.footer-link:hover {
+    color: #d7f0ff;
+}
+
+.footer-link:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
 @media (max-width: 768px) {
     header h1 {
         font-size: 1.5rem;

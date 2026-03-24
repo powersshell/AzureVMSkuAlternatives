@@ -369,6 +369,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - 📖 **Documentation:** Check the guides in this repository
 - 🐛 **Issues:** [GitHub Issues](../../issues)
+- 🧭 **In-app reporting:** Use the **Report an issue** link in the web app footer (opens issue templates)
 - 💬 **Discussions:** [GitHub Discussions](../../discussions)
 
 ---

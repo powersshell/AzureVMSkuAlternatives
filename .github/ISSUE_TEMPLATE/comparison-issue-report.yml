@@ -1,0 +1,87 @@
+name: VM comparison issue
+description: Report incorrect or unexpected VM comparison/pricing results.
+title: "[Comparison Issue]: "
+labels:
+  - bug
+  - comparison
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for issues with VM matching, similarity score behavior, region availability, or pricing output.
+
+  - type: input
+    id: target_sku
+    attributes:
+      label: Target VM SKU
+      placeholder: "Example: Standard_D4s_v5"
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Azure region
+      placeholder: "Example: eastus"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Issue type
+      options:
+        - Unexpected alternatives returned
+        - Missing expected alternatives
+        - Similarity scores look wrong
+        - Pricing is incorrect
+        - Availability zones mismatch
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: What result did you get?
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to see instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: filters
+    attributes:
+      label: Filters/options used
+      description: Include similarity threshold, CPU vendor filters, discount, currency, and advanced options.
+      placeholder: |
+        Min similarity:
+        CPU vendor filters:
+        Discount:
+        Currency:
+        Advanced options:
+    validations:
+      required: true
+
+  - type: textarea
+    id: sample_results
+    attributes:
+      label: Sample returned results
+      description: Paste a few SKU rows, scores, and prices if possible.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Add links, screenshots, or reference sources if available.
+    validations:
+      required: false

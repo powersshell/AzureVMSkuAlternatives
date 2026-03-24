@@ -1,0 +1,83 @@
+name: Site bug report
+description: Report problems with the web UI, behavior, or usability.
+title: "[Site Bug]: "
+labels:
+  - bug
+  - site
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this issue.
+        Please provide as much detail as possible so we can reproduce it quickly.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area affected
+      description: Where are you seeing the issue?
+      options:
+        - Form inputs
+        - Results table
+        - Filters
+        - Pricing display
+        - Export CSV
+        - Accessibility
+        - Mobile layout
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+      placeholder: "When I click ..., I expected ..., but ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Please list clear, numbered steps.
+      placeholder: |
+        1. Go to ...
+        2. Select ...
+        3. Click ...
+        4. See error ...
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: "Edge 135, Chrome 134, Firefox 136"
+    validations:
+      required: true
+
+  - type: input
+    id: region
+    attributes:
+      label: Azure region used
+      placeholder: "eastus, westeurope, ..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or recordings
+      description: Drag and drop screenshots if available.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Include console/network errors if relevant.
+    validations:
+      required: false
