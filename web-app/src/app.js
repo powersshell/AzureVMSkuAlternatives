@@ -845,6 +845,41 @@ function formatBandwidth(mbps) {
     return `${mbps.toLocaleString('en-US')} Mbps`;
 }
 
+function escapeCsvCell(value) {
+    const stringValue = value === null || value === undefined ? '' : String(value);
+    return `"${stringValue.replace(/"/g, '""')}"`;
+}
+
+function toNumericOrNull(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatCapabilityValue(value, type = 'string', precision = 0) {
+    if (value === null || value === undefined || value === '') return 'N/A';
+
+    if (type === 'boolean') {
+        return value ? 'Yes' : 'No';
+    }
+
+    if (type === 'number') {
+        const numeric = toNumericOrNull(value);
+        if (numeric === null) return 'N/A';
+        return precision > 0 ? numeric.toFixed(precision) : String(Math.round(numeric));
+    }
+
+    return String(value);
+}
+
+function formatDeltaValue(targetValue, altValue, precision = 0) {
+    const target = toNumericOrNull(targetValue);
+    const alternative = toNumericOrNull(altValue);
+    if (target === null || alternative === null) return 'N/A';
+    const delta = alternative - target;
+    return precision > 0 ? delta.toFixed(precision) : String(Math.round(delta));
+}
+
 // Export to CSV
 function exportToCSV() {
     if (!currentResults || !currentResults.alternatives || currentResults.alternatives.length === 0) {
@@ -854,32 +889,104 @@ function exportToCSV() {
 
     const discount = getDiscountMultiplier();
     const discountNote = discount < 1.0 ? ` (${((1 - discount) * 100).toFixed(1)}% discount applied)` : '';
-    const headers = ['Rank', 'SKU Name', 'Similarity Score', 'vCPUs', 'Memory (GB)', `Hourly Cost Linux${discountNote}`, `Monthly Cost Linux${discountNote}`, `Hourly Cost Windows${discountNote}`, `Monthly Cost Windows${discountNote}`, 'Currency', 'Availability Zones'];
-    const rows = currentResults.alternatives.map((alt, index) => [
-        index + 1,
-        alt.name,
-        alt.similarityScore.toFixed(1),
-        alt.vCPUs || 'N/A',
-        alt.memoryGB || 'N/A',
-        alt.pricing ? (alt.pricing.hourlyPrice * discount).toFixed(4) : 'N/A',
-        alt.pricing ? (alt.pricing.monthlyPrice * discount).toFixed(2) : 'N/A',
-        alt.pricing && alt.pricing.hourlyPriceWindows != null ? (alt.pricing.hourlyPriceWindows * discount).toFixed(4) : 'N/A',
-        alt.pricing && alt.pricing.monthlyPriceWindows != null ? (alt.pricing.monthlyPriceWindows * discount).toFixed(2) : 'N/A',
-        alt.pricing ? alt.pricing.currency : 'N/A',
-        alt.zones || 'N/A'
-    ]);
+
+    const targetSku = currentResults.targetSku || {};
+    const targetCaps = targetSku.capabilities || {};
+    const exportLocation = currentResults.searchParameters?.location || currentResults.location || document.getElementById('location')?.value || 'N/A';
+
+    const capabilityColumns = [
+        { key: 'vCPUs', label: 'vCPUs', type: 'number', precision: 0, includeDelta: true },
+        { key: 'memoryGB', label: 'Memory (GB)', type: 'number', precision: 2, includeDelta: true },
+        { key: 'gpuCount', label: 'GPU Count', type: 'number', precision: 0, includeDelta: true },
+        { key: 'gpuType', label: 'GPU Type', type: 'string', includeDelta: false },
+        { key: 'maxDataDiskCount', label: 'Max Data Disks', type: 'number', precision: 0, includeDelta: true },
+        { key: 'maxNics', label: 'Max NICs', type: 'number', precision: 0, includeDelta: true },
+        { key: 'uncachedDiskIOPS', label: 'Uncached Disk IOPS', type: 'number', precision: 0, includeDelta: true },
+        { key: 'uncachedDiskBytesPerSecond', label: 'Uncached Disk Throughput (Bytes/s)', type: 'number', precision: 0, includeDelta: true },
+        { key: 'maxWriteAcceleratorDisks', label: 'Max Write Accelerator Disks', type: 'number', precision: 0, includeDelta: true },
+        { key: 'osVhdSizeMB', label: 'OS VHD Size (MB)', type: 'number', precision: 0, includeDelta: true },
+        { key: 'hyperVGenerations', label: 'Hyper-V Generations', type: 'string', includeDelta: false },
+        { key: 'premiumIO', label: 'Premium IO', type: 'boolean', includeDelta: false },
+        { key: 'ephemeralOSDisk', label: 'Ephemeral OS Disk', type: 'boolean', includeDelta: false },
+        { key: 'acceleratedNetworking', label: 'Accelerated Networking', type: 'boolean', includeDelta: false },
+        { key: 'encryptionAtHost', label: 'Encryption at Host', type: 'boolean', includeDelta: false },
+        { key: 'nvme', label: 'NVMe', type: 'boolean', includeDelta: false }
+    ];
+
+    const summaryHeaders = [
+        'Rank',
+        'Location',
+        'Target SKU',
+        'Alternative SKU',
+        'Similarity Score (%)',
+        'CPU Vendor',
+        'Architecture',
+        `Hourly Cost Linux${discountNote}`,
+        `Monthly Cost Linux${discountNote}`,
+        `Hourly Cost Windows${discountNote}`,
+        `Monthly Cost Windows${discountNote}`,
+        'Currency',
+        'Availability Zones'
+    ];
+
+    const capabilityHeaders = capabilityColumns.flatMap(col => {
+        const headers = [`Target ${col.label}`, `Alternative ${col.label}`];
+        if (col.includeDelta) {
+            headers.push(`Delta ${col.label}`);
+        }
+        return headers;
+    });
+
+    const headers = [...summaryHeaders, ...capabilityHeaders];
+
+    const rows = currentResults.alternatives.map((alt, index) => {
+        const altCaps = alt.capabilities || {};
+        const summaryRow = [
+            index + 1,
+            exportLocation,
+            targetSku.name || 'N/A',
+            alt.name || 'N/A',
+            alt.similarityScore != null ? alt.similarityScore.toFixed(1) : 'N/A',
+            alt.cpuVendor || 'N/A',
+            alt.architecture || 'N/A',
+            alt.pricing ? (alt.pricing.hourlyPrice * discount).toFixed(4) : 'N/A',
+            alt.pricing ? (alt.pricing.monthlyPrice * discount).toFixed(2) : 'N/A',
+            alt.pricing && alt.pricing.hourlyPriceWindows != null ? (alt.pricing.hourlyPriceWindows * discount).toFixed(4) : 'N/A',
+            alt.pricing && alt.pricing.monthlyPriceWindows != null ? (alt.pricing.monthlyPriceWindows * discount).toFixed(2) : 'N/A',
+            alt.pricing?.currency || 'N/A',
+            alt.zones || 'N/A'
+        ];
+
+        const capabilityRow = capabilityColumns.flatMap(col => {
+            const targetValue = targetCaps[col.key];
+            const altValue = altCaps[col.key];
+            const values = [
+                formatCapabilityValue(targetValue, col.type, col.precision ?? 0),
+                formatCapabilityValue(altValue, col.type, col.precision ?? 0)
+            ];
+
+            if (col.includeDelta) {
+                values.push(formatDeltaValue(targetValue, altValue, col.precision ?? 0));
+            }
+
+            return values;
+        });
+
+        return [...summaryRow, ...capabilityRow];
+    });
 
     const csvContent = [
-        headers.join(','),
-        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+        headers.map(escapeCsvCell).join(','),
+        ...rows.map(row => row.map(escapeCsvCell).join(','))
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
 
+    const targetName = targetSku.name || 'target-sku';
     link.setAttribute('href', url);
-    link.setAttribute('download', `azure-vm-comparison-${currentResults.targetSku.name}-${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `azure-vm-comparison-${targetName}-${new Date().toISOString().split('T')[0]}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
