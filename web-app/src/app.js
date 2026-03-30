@@ -891,33 +891,32 @@ function exportToCSV() {
     const discountNote = discount < 1.0 ? ` (${((1 - discount) * 100).toFixed(1)}% discount applied)` : '';
 
     const targetSku = currentResults.targetSku || {};
-    const targetCaps = targetSku.capabilities || {};
     const exportLocation = currentResults.searchParameters?.location || currentResults.location || document.getElementById('location')?.value || 'N/A';
 
     const capabilityColumns = [
-        { key: 'vCPUs', label: 'vCPUs', type: 'number', precision: 0, includeDelta: true },
-        { key: 'memoryGB', label: 'Memory (GB)', type: 'number', precision: 2, includeDelta: true },
-        { key: 'gpuCount', label: 'GPU Count', type: 'number', precision: 0, includeDelta: true },
-        { key: 'gpuType', label: 'GPU Type', type: 'string', includeDelta: false },
-        { key: 'maxDataDiskCount', label: 'Max Data Disks', type: 'number', precision: 0, includeDelta: true },
-        { key: 'maxNics', label: 'Max NICs', type: 'number', precision: 0, includeDelta: true },
-        { key: 'uncachedDiskIOPS', label: 'Uncached Disk IOPS', type: 'number', precision: 0, includeDelta: true },
-        { key: 'uncachedDiskBytesPerSecond', label: 'Uncached Disk Throughput (Bytes/s)', type: 'number', precision: 0, includeDelta: true },
-        { key: 'maxWriteAcceleratorDisks', label: 'Max Write Accelerator Disks', type: 'number', precision: 0, includeDelta: true },
-        { key: 'osVhdSizeMB', label: 'OS VHD Size (MB)', type: 'number', precision: 0, includeDelta: true },
-        { key: 'hyperVGenerations', label: 'Hyper-V Generations', type: 'string', includeDelta: false },
-        { key: 'premiumIO', label: 'Premium IO', type: 'boolean', includeDelta: false },
-        { key: 'ephemeralOSDisk', label: 'Ephemeral OS Disk', type: 'boolean', includeDelta: false },
-        { key: 'acceleratedNetworking', label: 'Accelerated Networking', type: 'boolean', includeDelta: false },
-        { key: 'encryptionAtHost', label: 'Encryption at Host', type: 'boolean', includeDelta: false },
-        { key: 'nvme', label: 'NVMe', type: 'boolean', includeDelta: false }
+        { key: 'vCPUs', label: 'vCPUs', type: 'number', precision: 0 },
+        { key: 'memoryGB', label: 'Memory (GB)', type: 'number', precision: 2 },
+        { key: 'gpuCount', label: 'GPU Count', type: 'number', precision: 0 },
+        { key: 'gpuType', label: 'GPU Type', type: 'string' },
+        { key: 'maxDataDiskCount', label: 'Max Data Disks', type: 'number', precision: 0 },
+        { key: 'maxNics', label: 'Max NICs', type: 'number', precision: 0 },
+        { key: 'uncachedDiskIOPS', label: 'Uncached Disk IOPS', type: 'number', precision: 0 },
+        { key: 'uncachedDiskBytesPerSecond', label: 'Uncached Disk Throughput (Bytes/s)', type: 'number', precision: 0 },
+        { key: 'maxWriteAcceleratorDisks', label: 'Max Write Accelerator Disks', type: 'number', precision: 0 },
+        { key: 'osVhdSizeMB', label: 'OS VHD Size (MB)', type: 'number', precision: 0 },
+        { key: 'hyperVGenerations', label: 'Hyper-V Generations', type: 'string' },
+        { key: 'premiumIO', label: 'Premium IO', type: 'boolean' },
+        { key: 'ephemeralOSDisk', label: 'Ephemeral OS Disk', type: 'boolean' },
+        { key: 'acceleratedNetworking', label: 'Accelerated Networking', type: 'boolean' },
+        { key: 'encryptionAtHost', label: 'Encryption at Host', type: 'boolean' },
+        { key: 'nvme', label: 'NVMe', type: 'boolean' }
     ];
 
     const summaryHeaders = [
         'Rank',
         'Location',
         'Target SKU',
-        'Alternative SKU',
+        'SKU Name',
         'Similarity Score (%)',
         'CPU Vendor',
         'Architecture',
@@ -929,13 +928,7 @@ function exportToCSV() {
         'Availability Zones'
     ];
 
-    const capabilityHeaders = capabilityColumns.flatMap(col => {
-        const headers = [`Target ${col.label}`, `Alternative ${col.label}`];
-        if (col.includeDelta) {
-            headers.push(`Delta ${col.label}`);
-        }
-        return headers;
-    });
+    const capabilityHeaders = capabilityColumns.map(col => col.label);
 
     const headers = [...summaryHeaders, ...capabilityHeaders];
 
@@ -958,18 +951,8 @@ function exportToCSV() {
         ];
 
         const capabilityRow = capabilityColumns.flatMap(col => {
-            const targetValue = targetCaps[col.key];
             const altValue = altCaps[col.key];
-            const values = [
-                formatCapabilityValue(targetValue, col.type, col.precision ?? 0),
-                formatCapabilityValue(altValue, col.type, col.precision ?? 0)
-            ];
-
-            if (col.includeDelta) {
-                values.push(formatDeltaValue(targetValue, altValue, col.precision ?? 0));
-            }
-
-            return values;
+            return formatCapabilityValue(altValue, col.type, col.precision ?? 0);
         });
 
         return [...summaryRow, ...capabilityRow];
