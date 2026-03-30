@@ -244,6 +244,35 @@ Monitor your application performance:
    - Performance metrics
    - Usage analytics
 
+Frontend usage telemetry events emitted by the site:
+- `page_loaded`
+- `compare_submitted`
+- `compare_completed`
+- `compare_failed`
+- `compare_validation_failed`
+- `export_csv_clicked`
+- `export_csv_failed`
+- `report_issue_clicked`
+- `pricing_os_toggled`
+- `result_vendor_filter_changed`
+
+Example KQL for unique users (last 30 days):
+```kql
+customEvents
+| where timestamp > ago(30d)
+| summarize DailyUniqueUsers = dcount(tostring(customDimensions.anonymousUserId)) by Day = bin(timestamp, 1d)
+| order by Day asc
+```
+
+Example KQL for key funnel volumes:
+```kql
+customEvents
+| where timestamp > ago(30d)
+| where name in ("page_loaded", "compare_submitted", "compare_completed", "export_csv_clicked")
+| summarize Events = count(), UniqueUsers = dcount(tostring(customDimensions.anonymousUserId)) by name
+| order by Events desc
+```
+
 ### Log Analytics
 
 Query logs using Kusto Query Language (KQL):

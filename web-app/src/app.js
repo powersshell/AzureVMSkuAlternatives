@@ -1,9 +1,140 @@
 // API Configuration
 // Direct connection to Flex Consumption Function App (Static Web App rewrite doesn't support POST)
 const API_BASE_URL = 'https://vmsku-api-functions-flex.azurewebsites.net/api';
+const TELEMETRY_CONFIG_ENDPOINT = `${API_BASE_URL}/telemetry_config`;
+const ANALYTICS_USER_KEY = 'vmsku_anonymous_user_id';
+const ANALYTICS_USER_KEY_CREATED_AT = 'vmsku_anonymous_user_id_created_at';
+const ANALYTICS_USER_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 
 // Maps priority dropdown values to numeric weights used by the comparison algorithm
 const PRIORITY_VALUES = { low: 0.5, normal: 1.5, high: 3.0 };
+
+let appInsights = null;
+let analyticsUserId = null;
+let telemetryReady = false;
+const pendingTelemetryEvents = [];
+
+function generateAnonymousId(prefix = 'anon') {
+    if (window.crypto && window.crypto.randomUUID) {
+        return `${prefix}-${window.crypto.randomUUID()}`;
+    }
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function getOrCreateAnonymousUserId() {
+    const now = Date.now();
+    const existing = localStorage.getItem(ANALYTICS_USER_KEY);
+    const createdAtRaw = localStorage.getItem(ANALYTICS_USER_KEY_CREATED_AT);
+    const createdAt = createdAtRaw ? Number(createdAtRaw) : null;
+    const isExpired = !createdAt || Number.isNaN(createdAt) || (now - createdAt) > ANALYTICS_USER_TTL_MS;
+
+    if (existing && !isExpired) {
+        return existing;
+    }
+
+    const nextId = generateAnonymousId('vmsku');
+    localStorage.setItem(ANALYTICS_USER_KEY, nextId);
+    localStorage.setItem(ANALYTICS_USER_KEY_CREATED_AT, String(now));
+    return nextId;
+}
+
+function sanitizeTelemetryProperties(properties = {}) {
+    const safe = {};
+    for (const [key, value] of Object.entries(properties)) {
+        if (value === null || value === undefined) continue;
+        if (typeof value === 'string') {
+            safe[key] = value.slice(0, 120);
+            continue;
+        }
+        if (typeof value === 'number' || typeof value === 'boolean') {
+            safe[key] = value;
+        }
+    }
+    return safe;
+}
+
+function sanitizeTelemetryMeasurements(measurements = {}) {
+    const safe = {};
+    for (const [key, value] of Object.entries(measurements)) {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            safe[key] = value;
+        }
+    }
+    return safe;
+}
+
+function sendTelemetryEvent(name, properties = {}, measurements = {}) {
+    if (!appInsights || !telemetryReady) return;
+    appInsights.trackEvent(
+        { name },
+        sanitizeTelemetryProperties({
+            anonymousUserId: analyticsUserId || 'unknown',
+            ...properties
+        }),
+        sanitizeTelemetryMeasurements(measurements)
+    );
+}
+
+function flushPendingTelemetryEvents() {
+    while (pendingTelemetryEvents.length > 0) {
+        const event = pendingTelemetryEvents.shift();
+        sendTelemetryEvent(event.name, event.properties, event.measurements);
+    }
+}
+
+async function initializeTelemetry() {
+    const aiGlobal = window.Microsoft && window.Microsoft.ApplicationInsights;
+    if (!aiGlobal || !aiGlobal.ApplicationInsights) {
+        console.warn('Application Insights SDK unavailable; telemetry disabled.');
+        return;
+    }
+
+    let telemetryConfig = null;
+    try {
+        const response = await fetch(TELEMETRY_CONFIG_ENDPOINT, { cache: 'no-store' });
+        if (response.ok) {
+            telemetryConfig = await response.json();
+        }
+    } catch (error) {
+        console.warn('Unable to load telemetry config; telemetry disabled.', error);
+        return;
+    }
+
+    const connectionString = telemetryConfig?.connectionString;
+    if (!telemetryConfig?.enabled || !connectionString || !connectionString.includes('InstrumentationKey=')) {
+        console.warn('Telemetry config not enabled; telemetry disabled.');
+        return;
+    }
+
+    analyticsUserId = getOrCreateAnonymousUserId();
+
+    appInsights = new aiGlobal.ApplicationInsights({
+        config: {
+            connectionString,
+            disableAjaxTracking: true,
+            disableFetchTracking: true,
+            autoTrackPageVisitTime: true,
+            enableAutoRouteTracking: false
+        }
+    });
+
+    appInsights.loadAppInsights();
+    appInsights.context.user.id = analyticsUserId;
+    appInsights.context.user.accountId = 'public-site';
+    telemetryReady = true;
+    appInsights.trackPageView({ name: 'home' });
+    flushPendingTelemetryEvents();
+}
+
+function trackEvent(name, properties = {}, measurements = {}) {
+    if (!telemetryReady || !appInsights) {
+        if (pendingTelemetryEvents.length < 100) {
+            pendingTelemetryEvents.push({ name, properties, measurements });
+        }
+        return;
+    }
+    sendTelemetryEvent(name, properties, measurements);
+}
 
 function getPriorityWeight(id) {
     return PRIORITY_VALUES[document.getElementById(id).value] ?? 1.5;
@@ -42,6 +173,20 @@ exportBtn.addEventListener('click', exportToCSV);
 
 // Initialize dropdown functionality on page load
 document.addEventListener('DOMContentLoaded', () => {
+    initializeTelemetry();
+    trackEvent('page_loaded', {
+        page: 'home'
+    });
+
+    const reportIssueLink = document.getElementById('reportIssueLink');
+    if (reportIssueLink) {
+        reportIssueLink.addEventListener('click', () => {
+            trackEvent('report_issue_clicked', {
+                source: 'footer'
+            });
+        });
+    }
+
     const locationSelect = document.getElementById('location');
     const skuSelect = document.getElementById('skuName');
     
@@ -149,6 +294,11 @@ function updateDiscountHint() {
 // Update comparison results based on CPU vendor filters
 function updateResultsFilters() {
     if (!currentResults || !currentResults.alternatives) return;
+    trackEvent('result_vendor_filter_changed', {
+        intel: document.getElementById('resultFilterIntel').checked,
+        amd: document.getElementById('resultFilterAMD').checked,
+        arm: document.getElementById('resultFilterARM').checked
+    });
     
     // Re-display results with current filters
     displayResults(currentResults);
@@ -243,14 +393,22 @@ function populateSkuChoices(skus) {
 async function handleCompare() {
     const skuName = document.getElementById('skuName').value.trim();
     const location = document.getElementById('location').value;
+    const minSimilarityScore = parseInt(document.getElementById('minSimilarityScore').value);
+    const currencyCode = document.getElementById('currencyCode').value;
 
     if (!skuName || !location) {
+        trackEvent('compare_validation_failed', {
+            reason: 'missing_required_fields'
+        });
         showError('Please provide both SKU name and location');
         return;
     }
     
     // Validate that entered SKU exists in the list (optional but recommended)
     if (window.validSkuNames && !window.validSkuNames.includes(skuName)) {
+        trackEvent('compare_validation_failed', {
+            reason: 'invalid_sku_selected'
+        });
         showError(`Invalid SKU: "${skuName}". Please select a valid SKU from the dropdown.`);
         return;
     }
@@ -258,8 +416,8 @@ async function handleCompare() {
     const params = {
         skuName,
         location,
-        minSimilarityScore: parseInt(document.getElementById('minSimilarityScore').value),
-        currencyCode: document.getElementById('currencyCode').value,
+        minSimilarityScore,
+        currencyCode,
         weightCPU: getPriorityWeight('weightCPU'),
         weightMemory: getPriorityWeight('weightMemory'),
         weightGPU: getPriorityWeight('weightGPU'),
@@ -273,6 +431,13 @@ async function handleCompare() {
     showLoading();
     hideError();
     hideResults();
+
+    trackEvent('compare_submitted', {
+        location,
+        currencyCode
+    }, {
+        minSimilarityScore
+    });
 
     try {
         const response = await fetch(`${API_BASE_URL}/compare_vms`, {
@@ -301,8 +466,21 @@ async function handleCompare() {
 
         currentResults = data;
         displayResults(data);
+
+        trackEvent('compare_completed', {
+            location,
+            currencyCode,
+            resultStatus: data.alternatives && data.alternatives.length > 0 ? 'results' : 'no_results'
+        }, {
+            alternativesCount: data.alternatives ? data.alternatives.length : 0
+        });
     } catch (error) {
         console.error('Error comparing VMs:', error);
+        trackEvent('compare_failed', {
+            location,
+            currencyCode,
+            errorType: 'request_or_server_error'
+        });
         showError(error.message || 'Failed to compare VMs. Please check your input and try again.');
     } finally {
         hideLoading();
@@ -312,6 +490,7 @@ async function handleCompare() {
 // OS Pricing toggle
 function setPricingOS(os) {
     currentPricingOS = os;
+    trackEvent('pricing_os_toggled', { os });
     document.getElementById('btn-linux-pricing')?.classList.toggle('active', os === 'linux');
     document.getElementById('btn-windows-pricing')?.classList.toggle('active', os === 'windows');
     document.getElementById('th-hourly').textContent = os === 'windows' ? 'Hourly Cost (Win)' : 'Hourly Cost (Linux)';
@@ -883,6 +1062,9 @@ function formatDeltaValue(targetValue, altValue, precision = 0) {
 // Export to CSV
 function exportToCSV() {
     if (!currentResults || !currentResults.alternatives || currentResults.alternatives.length === 0) {
+        trackEvent('export_csv_failed', {
+            reason: 'no_data'
+        });
         showError('No data to export');
         return;
     }
@@ -974,6 +1156,13 @@ function exportToCSV() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+
+    trackEvent('export_csv_clicked', {
+        location: exportLocation,
+        targetSku: targetName
+    }, {
+        exportedRows: rows.length
+    });
 }
 
 // UI Helper Functions

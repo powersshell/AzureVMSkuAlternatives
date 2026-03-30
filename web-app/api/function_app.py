@@ -268,6 +268,29 @@ def health(req: func.HttpRequest) -> func.HttpResponse:
 
 
 # ============================================================================
+# HTTP Route: /telemetry_config - Frontend telemetry bootstrap (anonymous only)
+# ============================================================================
+@app.route(route="telemetry_config", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def telemetry_config(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Returns minimal frontend telemetry configuration.
+    No PII is included; only connection string and enable flag.
+    """
+    connection_string = os.environ.get('APPLICATIONINSIGHTS_CONNECTION_STRING')
+    response_data = {
+        'enabled': bool(connection_string),
+        'connectionString': connection_string or '',
+        'provider': 'application_insights'
+    }
+
+    return func.HttpResponse(
+        json.dumps(response_data),
+        mimetype='application/json',
+        status_code=200
+    )
+
+
+# ============================================================================
 # HTTP Route: /compare_details - Get detailed comparison between two SKUs
 # ============================================================================
 @app.route(route="compare_details", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
