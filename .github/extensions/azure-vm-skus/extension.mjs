@@ -77,9 +77,7 @@ const session = await joinSession({
                 const body = {
                     skuName: args.sku_name,
                     location: args.location,
-                    topN: args.top_n ?? 10,
-                    ...(args.cpu_vendor && { cpuVendor: args.cpu_vendor }),
-                    ...(args.max_price_per_hour != null && { maxPricePerHour: args.max_price_per_hour }),
+                    topN: 200,
                 };
                 const data = await apiFetch("/compare_vms", {
                     method: "POST",
@@ -89,7 +87,17 @@ const session = await joinSession({
                 if (data.error) return `Error: ${data.error}`;
 
                 const target = data.targetSku ?? {};
-                const alts = data.alternatives ?? [];
+                let alts = data.alternatives ?? [];
+
+                // Apply client-side filters (API doesn't filter these server-side)
+                if (args.cpu_vendor) {
+                    alts = alts.filter(a => a.cpuVendor === args.cpu_vendor);
+                }
+                if (args.max_price_per_hour != null) {
+                    alts = alts.filter(a => a.pricing?.hourlyPrice != null && a.pricing.hourlyPrice <= args.max_price_per_hour);
+                }
+                alts = alts.slice(0, args.top_n ?? 10);
+
                 if (alts.length === 0) return "No alternatives found for the given criteria.";
 
                 const lines = [
@@ -127,7 +135,7 @@ const session = await joinSession({
             },
             handler: async (args) => {
                 const data = await apiFetch(
-                    `/compare_details?sku1=${encodeURIComponent(args.sku1)}&sku2=${encodeURIComponent(args.sku2)}&location=${encodeURIComponent(args.location)}`
+                    `/compare_details?target=${encodeURIComponent(args.sku1)}&alternative=${encodeURIComponent(args.sku2)}&location=${encodeURIComponent(args.location)}`
                 );
                 if (data.error) return `Error: ${data.error}`;
                 return JSON.stringify(data, null, 2);
@@ -153,27 +161,30 @@ const session = await joinSession({
             },
             handler: async (args) => {
                 const params = new URLSearchParams({ location: args.location });
-                if (args.cpu_vendor) params.set("cpuVendor", args.cpu_vendor);
-                if (args.min_vcpus != null) params.set("minVCpus", args.min_vcpus);
-                if (args.max_vcpus != null) params.set("maxVCpus", args.max_vcpus);
 
                 const data = await apiFetch(`/skus?${params}`);
                 if (data.error) return `Error: ${data.error}`;
 
-                const skus = Array.isArray(data) ? data : data.skus ?? [];
+                let skus = Array.isArray(data) ? data : data.skus ?? [];
+                if (skus.length === 0) return "No SKUs found for the given criteria.";
+
+                // Apply client-side filters (vCPUs and memoryGB are top-level; cpuVendor too)
+                if (args.cpu_vendor) skus = skus.filter(s => s.cpuVendor === args.cpu_vendor);
+                if (args.min_vcpus != null) skus = skus.filter(s => s.vCPUs >= args.min_vcpus);
+                if (args.max_vcpus != null) skus = skus.filter(s => s.vCPUs <= args.max_vcpus);
+
                 if (skus.length === 0) return "No SKUs found for the given criteria.";
 
                 const lines = [
-                    `**${skus.length} SKUs available in ${args.location}**`,
+                    `**${skus.length} SKUs available in ${args.location}**${args.cpu_vendor ? ` (${args.cpu_vendor})` : ""}`,
                     "",
-                    "| SKU | vCPUs | RAM (GB) | Vendor | Arch | Linux $/hr |",
-                    "|-----|-------|----------|--------|------|-----------|",
+                    "| SKU | vCPUs | RAM (GB) | Vendor | Arch |",
+                    "|-----|-------|----------|--------|------|",
                 ];
 
                 for (const sku of skus.slice(0, 100)) {
-                    const caps = sku.capabilities ?? {};
                     lines.push(
-                        `| ${sku.name} | ${caps.vCPUs ?? "?"} | ${caps.memoryGB ?? "?"} | ${sku.cpuVendor ?? "?"} | ${sku.architecture ?? "?"} | $${sku.pricing?.hourlyPrice?.toFixed(4) ?? "N/A"} |`
+                        `| ${sku.name} | ${sku.vCPUs ?? "?"} | ${sku.memoryGB ?? "?"} | ${sku.cpuVendor ?? "?"} | ${sku.architecture ?? "?"} |`
                     );
                 }
 
