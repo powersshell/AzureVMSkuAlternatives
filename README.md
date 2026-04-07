@@ -64,10 +64,31 @@ cd powershell-script
 
 📖 **Full documentation:** [powershell-script/README.md](powershell-script/README.md)
 
-### 🤖 MCP Server (AI Agent Integration)
+### 🤖 AI Agent Integration (MCP Server + Copilot CLI)
 
-Use the included MCP server to let AI agents (GitHub Copilot, Claude Desktop, M365 Copilot, etc.)
-find and compare Azure VM SKUs in natural language.
+Use the included tools to let AI agents find and compare Azure VM SKUs in natural language.
+
+**GitHub Copilot CLI** — zero-dependency extension, works out of the box when you clone this repo:
+
+```
+ghcs  # open Copilot CLI in this repo directory — tools load automatically
+```
+
+To use from *any* directory (global install), copy one file:
+
+```powershell
+# Windows
+$dest = "$env:USERPROFILE\.copilot\extensions\azure-vm-skus"
+New-Item -ItemType Directory -Force $dest | Out-Null
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/powersshell/AzureVMSkuAlternatives/main/.github/extensions/azure-vm-skus/extension.mjs" -OutFile "$dest\extension.mjs"
+```
+
+```bash
+# macOS / Linux
+mkdir -p ~/.copilot/extensions/azure-vm-skus
+curl -sSL https://raw.githubusercontent.com/powersshell/AzureVMSkuAlternatives/main/.github/extensions/azure-vm-skus/extension.mjs \
+  -o ~/.copilot/extensions/azure-vm-skus/extension.mjs
+```
 
 **VS Code / Claude Desktop** — install [`uv`](https://docs.astral.sh/uv/) (handles Python + packages automatically):
 
@@ -78,7 +99,7 @@ winget install astral-sh.uv
 brew install uv
 ```
 
-Then open the repo in VS Code — the server starts automatically. No `pip install` needed.
+Then open the repo in VS Code — the MCP server starts automatically. No `pip install` needed.
 
 **Microsoft M365 Copilot** — deploy to Azure Container Apps and register in Copilot Studio:
 

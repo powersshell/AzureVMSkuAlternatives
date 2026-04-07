@@ -14,6 +14,40 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 
 ---
 
+## GitHub Copilot CLI Setup
+
+The extension at `.github/extensions/azure-vm-skus/extension.mjs` registers all four tools natively in the Copilot CLI — no Python, no `uv`, no MCP config required.
+
+### Option 1: Already in this repo (zero setup)
+
+If you open GitHub Copilot CLI from inside this cloned repo, the extension loads automatically. You can immediately ask:
+
+> *"Find alternatives to Standard_D8s_v5 in eastus"*
+
+### Option 2: Use from any directory (global install)
+
+Copy the extension file to your personal Copilot CLI extensions directory to make it available in **every session**, regardless of which directory you're in.
+
+**Windows (PowerShell):**
+```powershell
+$dest = "$env:USERPROFILE\.copilot\extensions\azure-vm-skus"
+New-Item -ItemType Directory -Force $dest | Out-Null
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/powersshell/AzureVMSkuAlternatives/main/.github/extensions/azure-vm-skus/extension.mjs" -OutFile "$dest\extension.mjs"
+```
+
+**macOS / Linux:**
+```bash
+mkdir -p ~/.copilot/extensions/azure-vm-skus
+curl -sSL https://raw.githubusercontent.com/powersshell/AzureVMSkuAlternatives/main/.github/extensions/azure-vm-skus/extension.mjs \
+  -o ~/.copilot/extensions/azure-vm-skus/extension.mjs
+```
+
+After installing, the tools appear automatically in new Copilot CLI sessions. To activate without restarting, run `/reload` in an active session.
+
+> **No dependencies** — the extension calls the live Azure Functions API directly over HTTPS. Nothing to install beyond the file itself.
+
+---
+
 ## VS Code / GitHub Copilot Setup
 
 **Prerequisite:** Install [`uv`](https://docs.astral.sh/uv/) — a single binary that manages Python and packages automatically. No separate Python or `pip install` needed.
@@ -90,6 +124,11 @@ Once the server is active, try prompts like:
 ## Architecture
 
 ```
+AI Agent (GitHub Copilot CLI)
+        │  Copilot CLI extension (JS, stdio)
+        ▼
+.github/extensions/azure-vm-skus/extension.mjs
+
 AI Agent (VS Code Copilot / Claude Desktop / M365 Copilot)
         │  MCP (stdio for local, streamable-HTTP for M365)
         ▼
