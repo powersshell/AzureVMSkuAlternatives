@@ -599,5 +599,19 @@ module monitoring 'modules/monitoring.bicep' = if (!empty(alertEmailAddress) && 
   }
 }
 
+// ============================================================================
+// USAGE ANALYTICS WORKBOOK
+// ============================================================================
+
+module usageWorkbook 'modules/usage-workbook.bicep' = if (!empty(logAnalyticsWorkspaceName)) {
+  name: 'usage-workbook-deployment'
+  params: {
+    appInsightsResourceId: appInsights.id
+    location: location
+    tags: tags
+  }
+}
+
 output monitoringDeployed bool = !empty(alertEmailAddress) && !empty(logAnalyticsWorkspaceName)
 output actionGroupId string = (!empty(alertEmailAddress) && !empty(logAnalyticsWorkspaceName)) ? monitoring!.outputs.actionGroupId : 'not-deployed'
+output usageWorkbookId string = !empty(logAnalyticsWorkspaceName) ? usageWorkbook!.outputs.workbookId : 'not-deployed'

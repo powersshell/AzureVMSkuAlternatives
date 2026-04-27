@@ -258,20 +258,24 @@ Frontend usage telemetry events emitted by the site:
 
 Example KQL for unique users (last 30 days):
 ```kql
-customEvents
-| where timestamp > ago(30d)
-| summarize DailyUniqueUsers = dcount(tostring(customDimensions.anonymousUserId)) by Day = bin(timestamp, 1d)
+AppEvents
+| where TimeGenerated > ago(30d)
+| summarize DailyUniqueUsers = dcount(tostring(Properties.analyticsUserId)) by Day = bin(TimeGenerated, 1d)
 | order by Day asc
 ```
 
 Example KQL for key funnel volumes:
 ```kql
-customEvents
-| where timestamp > ago(30d)
-| where name in ("page_loaded", "compare_submitted", "compare_completed", "export_csv_clicked")
-| summarize Events = count(), UniqueUsers = dcount(tostring(customDimensions.anonymousUserId)) by name
+AppEvents
+| where TimeGenerated > ago(30d)
+| where Name in ("page_loaded", "compare_submitted", "compare_completed", "export_csv_clicked")
+| summarize Events = count(), UniqueUsers = dcount(tostring(Properties.analyticsUserId)) by Name
 | order by Events desc
 ```
+
+> **Note:** These queries use workspace-based table names (`AppEvents`, `AppExceptions`,
+> `AppRequests`). If querying from the App Insights resource directly (not Log Analytics),
+> use the classic names (`customEvents`, `requests`, `exceptions`) with lowercase column names.
 
 ### Log Analytics
 
