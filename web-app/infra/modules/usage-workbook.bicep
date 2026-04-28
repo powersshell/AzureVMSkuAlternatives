@@ -3,8 +3,8 @@
 
 targetScope = 'resourceGroup'
 
-@description('Application Insights resource ID (workbook data source)')
-param appInsightsResourceId string
+@description('Log Analytics Workspace resource ID (workbook data source)')
+param logAnalyticsWorkspaceResourceId string
 
 @description('Azure region for the workbook resource')
 param location string
@@ -74,7 +74,7 @@ var serializedData = '''
         "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| summarize EventCount = count() by bin(TimeGenerated, 1d), Name\n| order by TimeGenerated asc",
         "size": 0,
         "queryType": 0,
-        "resourceType": "microsoft.insights/components",
+        "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "timechart",
         "title": "Daily Event Volume by Type"
       },
@@ -94,7 +94,7 @@ var serializedData = '''
         "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| summarize DAU = dcount(tostring(Properties.analyticsUserId)) by bin(TimeGenerated, 1d)\n| order by TimeGenerated asc",
         "size": 0,
         "queryType": 0,
-        "resourceType": "microsoft.insights/components",
+        "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "timechart",
         "title": "Daily Active Users (Anonymous)"
       },
@@ -114,7 +114,7 @@ var serializedData = '''
         "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name in ('page_loaded', 'compare_submitted', 'compare_completed', 'export_csv_clicked')\n| summarize Events = count(), UniqueUsers = dcount(tostring(Properties.analyticsUserId)) by Name\n| extend SortOrder = case(\n    Name == 'page_loaded', 1,\n    Name == 'compare_submitted', 2,\n    Name == 'compare_completed', 3,\n    Name == 'export_csv_clicked', 4,\n    5)\n| order by SortOrder asc\n| project Name, Events, UniqueUsers",
         "size": 0,
         "queryType": 0,
-        "resourceType": "microsoft.insights/components",
+        "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "categoricalbar",
         "title": "Funnel: Page Load -> Compare -> Export"
       },
@@ -134,7 +134,7 @@ var serializedData = '''
         "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'compare_submitted'\n| extend SKU = tostring(Properties.skuName)\n| where isnotempty(SKU)\n| summarize CompareCount = count(), UniqueUsers = dcount(tostring(Properties.analyticsUserId)) by SKU\n| order by CompareCount desc\n| take 20",
         "size": 0,
         "queryType": 0,
-        "resourceType": "microsoft.insights/components",
+        "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "table",
         "title": "Most Compared SKUs (Top 20)"
       },
@@ -154,7 +154,7 @@ var serializedData = '''
         "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'compare_submitted'\n| extend Region = tostring(Properties.location)\n| where isnotempty(Region)\n| summarize CompareCount = count(), UniqueUsers = dcount(tostring(Properties.analyticsUserId)) by Region\n| order by CompareCount desc\n| take 20",
         "size": 0,
         "queryType": 0,
-        "resourceType": "microsoft.insights/components",
+        "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "table",
         "title": "Most Used Azure Regions (Top 20)"
       },
@@ -174,7 +174,7 @@ var serializedData = '''
         "query": "AppExceptions\n| where TimeGenerated {TimeRange}\n| summarize ExceptionCount = count() by bin(TimeGenerated, 1d)\n| order by TimeGenerated asc",
         "size": 0,
         "queryType": 0,
-        "resourceType": "microsoft.insights/components",
+        "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "timechart",
         "title": "Exceptions Over Time"
       },
@@ -187,7 +187,7 @@ var serializedData = '''
         "query": "AppExceptions\n| where TimeGenerated {TimeRange}\n| summarize Count = count(), LastSeen = max(TimeGenerated) by ExceptionType, OuterMessage\n| order by Count desc\n| take 25\n| project ExceptionType, OuterMessage, Count, LastSeen",
         "size": 0,
         "queryType": 0,
-        "resourceType": "microsoft.insights/components",
+        "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "table",
         "title": "Top Exceptions (Last 25)"
       },
@@ -200,7 +200,7 @@ var serializedData = '''
         "query": "AppRequests\n| where TimeGenerated {TimeRange}\n| where Success == false\n| summarize FailedCount = count(), LastSeen = max(TimeGenerated) by Name, ResultCode\n| order by FailedCount desc\n| take 25\n| project Name, ResultCode, FailedCount, LastSeen",
         "size": 0,
         "queryType": 0,
-        "resourceType": "microsoft.insights/components",
+        "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "table",
         "title": "Failed HTTP Requests"
       },
@@ -213,7 +213,7 @@ var serializedData = '''
         "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name in ('compare_failed', 'compare_validation_failed', 'export_csv_failed')\n| summarize Count = count(), UniqueUsers = dcount(tostring(Properties.analyticsUserId)) by Name\n| order by Count desc",
         "size": 0,
         "queryType": 0,
-        "resourceType": "microsoft.insights/components",
+        "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "table",
         "title": "Frontend Error Events"
       },
@@ -233,7 +233,7 @@ resource usageWorkbook 'Microsoft.Insights/workbooks@2023-06-01' = {
   properties: {
     displayName: 'VM SKU Comparison - Site Usage Analytics'
     category: 'workbook'
-    sourceId: appInsightsResourceId
+    sourceId: logAnalyticsWorkspaceResourceId
     serializedData: serializedData
     version: 'Notebook/1.0'
   }

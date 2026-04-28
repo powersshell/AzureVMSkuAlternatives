@@ -606,7 +606,7 @@ module monitoring 'modules/monitoring.bicep' = if (!empty(alertEmailAddress) && 
 module usageWorkbook 'modules/usage-workbook.bicep' = if (!empty(logAnalyticsWorkspaceName)) {
   name: 'usage-workbook-deployment'
   params: {
-    appInsightsResourceId: appInsights.id
+    logAnalyticsWorkspaceResourceId: !empty(logAnalyticsWorkspaceName) ? existingLogAnalyticsWorkspace.id : ''
     location: location
     tags: tags
   }
