@@ -8,6 +8,7 @@ on:
       - 'web-app/api/**'
       - 'web-app/infra/functions-app-flex.bicep'
       - 'web-app/infra/modules/monitoring.bicep'
+      - 'web-app/infra/modules/usage-workbook.bicep'
       - '.github/workflows/deploy-functions.yml'
   workflow_dispatch:
     inputs:
