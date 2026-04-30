@@ -755,14 +755,17 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
         filter_str = f"serviceName eq 'Virtual Machines' and armSkuName eq '{sku_name}' and armRegionName eq '{location}' and (type eq 'Consumption' or type eq 'Reservation')"
         url = f"{api_url}?currencyCode={currency_code}&$filter={filter_str}"
 
-        response = requests.get(url, headers={'Accept': 'application/json'}, timeout=10)
+        items = []
+        while url:
+            response = requests.get(url, headers={'Accept': 'application/json'}, timeout=10)
 
-        if not response.ok:
-            logging.warning(f'Failed to fetch pricing for {sku_name}: {response.status_code}')
-            return None
+            if not response.ok:
+                logging.warning(f'Failed to fetch pricing for {sku_name}: {response.status_code}')
+                return None
 
-        data = response.json()
-        items = data.get('Items', [])
+            data = response.json()
+            items.extend(data.get('Items', []))
+            url = data.get('NextPageLink')
         if not items:
             return None
 
