@@ -382,11 +382,6 @@ input[list]::-webkit-calendar-picker-indicator:hover {
 }
 
 /* Disabled OS toggle when RI is selected */
-.os-pricing-toggle.disabled {
-    opacity: 0.4;
-    pointer-events: none;
-}
-
 /* RI savings percentage badge */
 .ri-savings {
     color: #4caf50;

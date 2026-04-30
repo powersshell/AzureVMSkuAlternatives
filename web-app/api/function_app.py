@@ -247,6 +247,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                             total_3yr = ri_3yr['unitPrice']
                             pricing_dict['ri3YearMonthly'] = round(total_3yr / 36, 2)
                             pricing_dict['ri3YearHourly'] = round(total_3yr / (36 * 730), 4)
+                        _compute_windows_ri(pricing_dict)
 
                 logging.info(f'RI supplement complete: {len(ri_index)} SKUs with RI data found')
             except Exception as ri_error:
@@ -437,6 +438,9 @@ def compare_details(req: func.HttpRequest) -> func.HttpResponse:
                                     total = item['unitPrice']
                                     pricing_dict['ri3YearMonthly'] = round(total / 36, 2)
                                     pricing_dict['ri3YearHourly'] = round(total / (36 * 730), 4)
+                # Compute Windows RI for supplemented pricing
+                for pricing_dict, _ in need_ri:
+                    _compute_windows_ri(pricing_dict)
             except Exception as ri_err:
                 logging.warning(f'Failed to supplement RI in compare_details: {ri_err}')
         
@@ -511,6 +515,10 @@ def get_sku_from_cache(sku_name: str, location: str) -> dict:
                 'ri1YearMonthly': entity.get('ri1YearMonthlyUSD'),
                 'ri3YearHourly': entity.get('ri3YearHourlyUSD'),
                 'ri3YearMonthly': entity.get('ri3YearMonthlyUSD'),
+                'ri1YearHourlyWindows': entity.get('ri1YearHourlyUSDWindows'),
+                'ri1YearMonthlyWindows': entity.get('ri1YearMonthlyUSDWindows'),
+                'ri3YearHourlyWindows': entity.get('ri3YearHourlyUSDWindows'),
+                'ri3YearMonthlyWindows': entity.get('ri3YearMonthlyUSDWindows'),
                 'currency': entity.get('pricingCurrency', 'USD')
             }
         
@@ -845,6 +853,28 @@ def _pricing_has_ri(pricing: Optional[Dict]) -> bool:
     return pricing.get('ri1YearMonthly') is not None or pricing.get('ri3YearMonthly') is not None
 
 
+def _compute_windows_ri(pricing: Dict) -> None:
+    """Compute Windows RI pricing in-place: RI compute + Windows license surcharge.
+    Windows license surcharge = Windows PAYG hourly - Linux PAYG hourly."""
+    linux_hourly = pricing.get('hourlyPrice')
+    windows_hourly = pricing.get('hourlyPriceWindows')
+    if linux_hourly is None or windows_hourly is None:
+        return
+    license_surcharge = windows_hourly - linux_hourly
+    if license_surcharge <= 0:
+        return
+
+    ri1_hourly = pricing.get('ri1YearHourly')
+    if ri1_hourly is not None:
+        pricing['ri1YearHourlyWindows'] = round(ri1_hourly + license_surcharge, 4)
+        pricing['ri1YearMonthlyWindows'] = round((ri1_hourly + license_surcharge) * 730, 2)
+
+    ri3_hourly = pricing.get('ri3YearHourly')
+    if ri3_hourly is not None:
+        pricing['ri3YearHourlyWindows'] = round(ri3_hourly + license_surcharge, 4)
+        pricing['ri3YearMonthlyWindows'] = round((ri3_hourly + license_surcharge) * 730, 2)
+
+
 def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional[Dict]:
     """Get VM pricing from Azure Retail Prices API"""
     try:
@@ -933,6 +963,8 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
             total_3yr = ri_3yr['unitPrice']
             pricing['ri3YearMonthly'] = round(total_3yr / 36, 2)
             pricing['ri3YearHourly'] = round(total_3yr / (36 * 730), 4)
+
+        _compute_windows_ri(pricing)
 
         return pricing
 
@@ -1032,6 +1064,10 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         'ri1YearMonthly': entity.get('ri1YearMonthlyUSD'),
                         'ri3YearHourly': entity.get('ri3YearHourlyUSD'),
                         'ri3YearMonthly': entity.get('ri3YearMonthlyUSD'),
+                        'ri1YearHourlyWindows': entity.get('ri1YearHourlyUSDWindows'),
+                        'ri1YearMonthlyWindows': entity.get('ri1YearMonthlyUSDWindows'),
+                        'ri3YearHourlyWindows': entity.get('ri3YearHourlyUSDWindows'),
+                        'ri3YearMonthlyWindows': entity.get('ri3YearMonthlyUSDWindows'),
                         'currency': entity.get('pricingCurrency', 'USD')
                     } if entity.get('hourlyPriceUSD') is not None else None,
                     'networkBandwidthMbps': entity.get('networkBandwidthMbps')
@@ -1204,6 +1240,8 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
             pricing['ri3YearMonthly'] = round(total_3yr / 36, 2)
             pricing['ri3YearHourly'] = round(total_3yr / (36 * 730), 4)
 
+        _compute_windows_ri(pricing)
+
         result[sku_name] = pricing
 
     logging.info(f"Bulk pricing fetch for {location}: {len(result)} SKUs from {len(all_items)} price items ({page} pages)")
@@ -1353,6 +1391,10 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'ri1YearMonthlyUSD': pricing.get('ri1YearMonthly') if pricing else None,
                 'ri3YearHourlyUSD': pricing.get('ri3YearHourly') if pricing else None,
                 'ri3YearMonthlyUSD': pricing.get('ri3YearMonthly') if pricing else None,
+                'ri1YearHourlyUSDWindows': pricing.get('ri1YearHourlyWindows') if pricing else None,
+                'ri1YearMonthlyUSDWindows': pricing.get('ri1YearMonthlyWindows') if pricing else None,
+                'ri3YearHourlyUSDWindows': pricing.get('ri3YearHourlyWindows') if pricing else None,
+                'ri3YearMonthlyUSDWindows': pricing.get('ri3YearMonthlyWindows') if pricing else None,
                 'pricingCurrency': pricing['currency'] if pricing else 'USD',
                 'pricingLastUpdated': timestamp,
                 'availabilityZones': ','.join(zones) if zones else '',
@@ -1636,7 +1678,7 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
         )
     }
     
-    # Price differences (PAYG + RI variants for frontend toggle support)
+    # Price differences (PAYG + RI variants, Linux + Windows, for frontend toggle support)
     if target_pricing and alt_pricing:
         currency = target_pricing.get('currency', 'USD')
         differences['pricing'] = {
@@ -1650,6 +1692,16 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
                 alt_pricing.get('monthlyPrice'),
                 currency
             ),
+            'hourlyWindows': calculate_price_diff(
+                target_pricing.get('hourlyPriceWindows'),
+                alt_pricing.get('hourlyPriceWindows'),
+                currency
+            ) if target_pricing.get('hourlyPriceWindows') is not None else None,
+            'monthlyWindows': calculate_price_diff(
+                target_pricing.get('monthlyPriceWindows'),
+                alt_pricing.get('monthlyPriceWindows'),
+                currency
+            ) if target_pricing.get('monthlyPriceWindows') is not None else None,
             'efficiency': calculate_cost_efficiency(
                 target_sku, alternative_sku,
                 target_pricing, alt_pricing
@@ -1666,6 +1718,18 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
                     currency
                 )
             } if target_pricing.get('ri1YearMonthly') is not None else None,
+            'ri1YearWindows': {
+                'hourly': calculate_price_diff(
+                    target_pricing.get('ri1YearHourlyWindows'),
+                    alt_pricing.get('ri1YearHourlyWindows'),
+                    currency
+                ),
+                'monthly': calculate_price_diff(
+                    target_pricing.get('ri1YearMonthlyWindows'),
+                    alt_pricing.get('ri1YearMonthlyWindows'),
+                    currency
+                )
+            } if target_pricing.get('ri1YearMonthlyWindows') is not None else None,
             'ri3Year': {
                 'hourly': calculate_price_diff(
                     target_pricing.get('ri3YearHourly'),
@@ -1677,7 +1741,19 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
                     alt_pricing.get('ri3YearMonthly'),
                     currency
                 )
-            } if target_pricing.get('ri3YearMonthly') is not None else None
+            } if target_pricing.get('ri3YearMonthly') is not None else None,
+            'ri3YearWindows': {
+                'hourly': calculate_price_diff(
+                    target_pricing.get('ri3YearHourlyWindows'),
+                    alt_pricing.get('ri3YearHourlyWindows'),
+                    currency
+                ),
+                'monthly': calculate_price_diff(
+                    target_pricing.get('ri3YearMonthlyWindows'),
+                    alt_pricing.get('ri3YearMonthlyWindows'),
+                    currency
+                )
+            } if target_pricing.get('ri3YearMonthlyWindows') is not None else None
         }
     
     # Storage differences

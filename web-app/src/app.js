@@ -510,17 +510,7 @@ function setPricingModel(model) {
     document.getElementById('btn-ri1year')?.classList.toggle('active', model === 'ri1year');
     document.getElementById('btn-ri3year')?.classList.toggle('active', model === 'ri3year');
 
-    // Disable OS toggle when RI is selected (RI = compute only)
-    const osToggle = document.getElementById('osPricingToggle');
-    if (osToggle) {
-        if (model !== 'payg') {
-            osToggle.classList.add('disabled');
-            osToggle.title = 'Reserved Instance pricing covers compute only (no OS license)';
-        } else {
-            osToggle.classList.remove('disabled');
-            osToggle.title = '';
-        }
-    }
+    // OS toggle stays enabled for all pricing models (RI Windows = RI compute + Windows license)
 
     updatePricingHeaders();
     if (currentResults) {
@@ -532,14 +522,14 @@ function setPricingModel(model) {
 function updatePricingHeaders() {
     const thHourly = document.getElementById('th-hourly');
     const thMonthly = document.getElementById('th-monthly');
+    const osLabel = currentPricingOS === 'windows' ? 'Win' : 'Linux';
     if (currentPricingModel === 'ri1year') {
-        thHourly.textContent = 'Hourly Cost (1yr RI)';
-        thMonthly.textContent = 'Monthly Cost (1yr RI)';
+        thHourly.textContent = `Hourly Cost (1yr RI, ${osLabel})`;
+        thMonthly.textContent = `Monthly Cost (1yr RI, ${osLabel})`;
     } else if (currentPricingModel === 'ri3year') {
-        thHourly.textContent = 'Hourly Cost (3yr RI)';
-        thMonthly.textContent = 'Monthly Cost (3yr RI)';
+        thHourly.textContent = `Hourly Cost (3yr RI, ${osLabel})`;
+        thMonthly.textContent = `Monthly Cost (3yr RI, ${osLabel})`;
     } else {
-        const osLabel = currentPricingOS === 'windows' ? 'Win' : 'Linux';
         thHourly.textContent = `Hourly Cost (${osLabel})`;
         thMonthly.textContent = `Monthly Cost (${osLabel})`;
     }
@@ -547,8 +537,16 @@ function updatePricingHeaders() {
 
 function getHourlyPrice(pricing) {
     if (!pricing) return null;
-    if (currentPricingModel === 'ri1year') return pricing.ri1YearHourly ?? null;
-    if (currentPricingModel === 'ri3year') return pricing.ri3YearHourly ?? null;
+    if (currentPricingModel === 'ri1year') {
+        return currentPricingOS === 'windows'
+            ? (pricing.ri1YearHourlyWindows ?? pricing.ri1YearHourly ?? null)
+            : (pricing.ri1YearHourly ?? null);
+    }
+    if (currentPricingModel === 'ri3year') {
+        return currentPricingOS === 'windows'
+            ? (pricing.ri3YearHourlyWindows ?? pricing.ri3YearHourly ?? null)
+            : (pricing.ri3YearHourly ?? null);
+    }
     return currentPricingOS === 'windows'
         ? (pricing.hourlyPriceWindows ?? pricing.hourlyPrice)
         : pricing.hourlyPrice;
@@ -556,23 +554,33 @@ function getHourlyPrice(pricing) {
 
 function getMonthlyPrice(pricing) {
     if (!pricing) return null;
-    if (currentPricingModel === 'ri1year') return pricing.ri1YearMonthly ?? null;
-    if (currentPricingModel === 'ri3year') return pricing.ri3YearMonthly ?? null;
+    if (currentPricingModel === 'ri1year') {
+        return currentPricingOS === 'windows'
+            ? (pricing.ri1YearMonthlyWindows ?? pricing.ri1YearMonthly ?? null)
+            : (pricing.ri1YearMonthly ?? null);
+    }
+    if (currentPricingModel === 'ri3year') {
+        return currentPricingOS === 'windows'
+            ? (pricing.ri3YearMonthlyWindows ?? pricing.ri3YearMonthly ?? null)
+            : (pricing.ri3YearMonthly ?? null);
+    }
     return currentPricingOS === 'windows'
         ? (pricing.monthlyPriceWindows ?? pricing.monthlyPrice)
         : pricing.monthlyPrice;
 }
 
-// Get PAYG monthly price for savings calculation
+// Get PAYG monthly price for savings calculation (OS-aware)
 function getPaygMonthlyPrice(pricing) {
     if (!pricing) return null;
-    return pricing.monthlyPrice;
+    return currentPricingOS === 'windows'
+        ? (pricing.monthlyPriceWindows ?? pricing.monthlyPrice)
+        : pricing.monthlyPrice;
 }
 
 // Render RI savings badge for monthly column
 function renderRiSavings(pricing) {
     if (currentPricingModel === 'payg' || !pricing) return '';
-    const payg = pricing.monthlyPrice;
+    const payg = getPaygMonthlyPrice(pricing);
     const ri = getMonthlyPrice(pricing);
     if (!payg || payg <= 0 || ri == null) return '';
     const pct = ((payg - ri) / payg * 100).toFixed(0);
@@ -1024,18 +1032,25 @@ function renderPricingSection(pricing) {
     if (!pricing) return '<div class="diff-item same">● Pricing data unavailable</div>';
 
     let hourly, monthly, modelLabel;
+    const isWindows = currentPricingOS === 'windows';
+    const osLabel = isWindows ? 'Windows' : 'Linux';
+
     if (currentPricingModel === 'ri1year' && pricing.ri1Year) {
-        hourly = pricing.ri1Year.hourly;
-        monthly = pricing.ri1Year.monthly;
-        modelLabel = '1-Year RI';
+        hourly = isWindows ? (pricing.ri1YearWindows?.hourly ?? pricing.ri1Year.hourly) : pricing.ri1Year.hourly;
+        monthly = isWindows ? (pricing.ri1YearWindows?.monthly ?? pricing.ri1Year.monthly) : pricing.ri1Year.monthly;
+        modelLabel = `1-Year RI (${osLabel})`;
     } else if (currentPricingModel === 'ri3year' && pricing.ri3Year) {
-        hourly = pricing.ri3Year.hourly;
-        monthly = pricing.ri3Year.monthly;
-        modelLabel = '3-Year RI';
+        hourly = isWindows ? (pricing.ri3YearWindows?.hourly ?? pricing.ri3Year.hourly) : pricing.ri3Year.hourly;
+        monthly = isWindows ? (pricing.ri3YearWindows?.monthly ?? pricing.ri3Year.monthly) : pricing.ri3Year.monthly;
+        modelLabel = `3-Year RI (${osLabel})`;
+    } else if (isWindows && pricing.hourlyWindows) {
+        hourly = pricing.hourlyWindows;
+        monthly = pricing.monthlyWindows;
+        modelLabel = `Pay as you go (${osLabel})`;
     } else {
         hourly = pricing.hourly;
         monthly = pricing.monthly;
-        modelLabel = 'Pay as you go';
+        modelLabel = `Pay as you go (${osLabel})`;
     }
 
     let html = `<div class="diff-item same" style="font-size:0.85em;opacity:0.7">Pricing model: ${modelLabel}</div>`;
@@ -1212,10 +1227,14 @@ function exportToCSV() {
         `Monthly Cost Linux${discountNote}`,
         `Hourly Cost Windows${discountNote}`,
         `Monthly Cost Windows${discountNote}`,
-        `1yr RI Hourly${discountNote}`,
-        `1yr RI Monthly${discountNote}`,
-        `3yr RI Hourly${discountNote}`,
-        `3yr RI Monthly${discountNote}`,
+        `1yr RI Hourly (Linux)${discountNote}`,
+        `1yr RI Monthly (Linux)${discountNote}`,
+        `1yr RI Hourly (Windows)${discountNote}`,
+        `1yr RI Monthly (Windows)${discountNote}`,
+        `3yr RI Hourly (Linux)${discountNote}`,
+        `3yr RI Monthly (Linux)${discountNote}`,
+        `3yr RI Hourly (Windows)${discountNote}`,
+        `3yr RI Monthly (Windows)${discountNote}`,
         'Currency',
         'Availability Zones'
     ];
@@ -1240,8 +1259,12 @@ function exportToCSV() {
             alt.pricing && alt.pricing.monthlyPriceWindows != null ? (alt.pricing.monthlyPriceWindows * discount).toFixed(2) : 'N/A',
             alt.pricing && alt.pricing.ri1YearHourly != null ? (alt.pricing.ri1YearHourly * discount).toFixed(4) : 'N/A',
             alt.pricing && alt.pricing.ri1YearMonthly != null ? (alt.pricing.ri1YearMonthly * discount).toFixed(2) : 'N/A',
+            alt.pricing && alt.pricing.ri1YearHourlyWindows != null ? (alt.pricing.ri1YearHourlyWindows * discount).toFixed(4) : 'N/A',
+            alt.pricing && alt.pricing.ri1YearMonthlyWindows != null ? (alt.pricing.ri1YearMonthlyWindows * discount).toFixed(2) : 'N/A',
             alt.pricing && alt.pricing.ri3YearHourly != null ? (alt.pricing.ri3YearHourly * discount).toFixed(4) : 'N/A',
             alt.pricing && alt.pricing.ri3YearMonthly != null ? (alt.pricing.ri3YearMonthly * discount).toFixed(2) : 'N/A',
+            alt.pricing && alt.pricing.ri3YearHourlyWindows != null ? (alt.pricing.ri3YearHourlyWindows * discount).toFixed(4) : 'N/A',
+            alt.pricing && alt.pricing.ri3YearMonthlyWindows != null ? (alt.pricing.ri3YearMonthlyWindows * discount).toFixed(2) : 'N/A',
             alt.pricing?.currency || 'N/A',
             alt.zones || 'N/A'
         ];
