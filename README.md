@@ -16,6 +16,7 @@
 - **feature:** CSV export includes 4 new RI pricing columns (1yr/3yr hourly and monthly)
 - **improvement:** Bulk RI pricing supplement ensures RI data is available even with stale cache
 - **improvement:** OS toggle disabled when RI selected (RI covers compute only)
+- **feature:** Windows RI pricing — OS toggle now active for RI modes, showing RI compute + Windows license surcharge
 - **feature:** In-app GitHub issue reporting — "Report an issue" link in footer
 - **feature:** Anonymous usage telemetry via Azure App Insights (no PII collected)
 - **feature:** Azure Monitor Workbook for site analytics (usage, errors, performance)
