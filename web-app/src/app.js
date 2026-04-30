@@ -973,9 +973,7 @@ function renderDetailedComparison(data, targetSku, altSku) {
                 <!-- Cost Section -->
                 <div class="details-section">
                     <h5>Cost Analysis</h5>
-                    ${renderPriceDiff('Hourly Price', diff.pricing.hourly)}
-                    ${renderPriceDiff('Monthly Price', diff.pricing.monthly)}
-                    ${renderEfficiency(diff.pricing.efficiency)}
+                    ${renderPricingSection(diff.pricing)}
                 </div>
             </div>
             
@@ -1004,6 +1002,7 @@ function renderNumericDiff(label, diff) {
 }
 
 function renderPriceDiff(label, diff) {
+    if (!diff) return `<div class="diff-item same">● ${label}: N/A</div>`;
     if (!diff.changed) {
         return `<div class="diff-item same">● ${label}: ${diff.currency} ${diff.alternative} (same)</div>`;
     }
@@ -1019,6 +1018,31 @@ function renderPriceDiff(label, diff) {
             <span class="delta">${sign}${diff.currency} ${Math.abs(diff.delta).toFixed(2)}${percent}</span>
         </div>
     `;
+}
+
+function renderPricingSection(pricing) {
+    if (!pricing) return '<div class="diff-item same">● Pricing data unavailable</div>';
+
+    let hourly, monthly, modelLabel;
+    if (currentPricingModel === 'ri1year' && pricing.ri1Year) {
+        hourly = pricing.ri1Year.hourly;
+        monthly = pricing.ri1Year.monthly;
+        modelLabel = '1-Year RI';
+    } else if (currentPricingModel === 'ri3year' && pricing.ri3Year) {
+        hourly = pricing.ri3Year.hourly;
+        monthly = pricing.ri3Year.monthly;
+        modelLabel = '3-Year RI';
+    } else {
+        hourly = pricing.hourly;
+        monthly = pricing.monthly;
+        modelLabel = 'Pay as you go';
+    }
+
+    let html = `<div class="diff-item same" style="font-size:0.85em;opacity:0.7">Pricing model: ${modelLabel}</div>`;
+    html += renderPriceDiff('Hourly Price', hourly);
+    html += renderPriceDiff('Monthly Price', monthly);
+    html += renderEfficiency(pricing.efficiency);
+    return html;
 }
 
 function renderBooleanDiff(diff) {

@@ -9,6 +9,19 @@
 
 ## 📋 Changelog
 
+### 2026-04-30
+- **feature:** Reserved Instance (RI) pricing support — compare 1-Year and 3-Year RI costs alongside Pay-As-You-Go
+- **feature:** Pricing model toggle (PAYG / 1-Year RI / 3-Year RI) with savings percentage shown in green
+- **feature:** Expanded detail view reflects selected pricing model (PAYG/RI)
+- **feature:** CSV export includes 4 new RI pricing columns (1yr/3yr hourly and monthly)
+- **improvement:** Bulk RI pricing supplement ensures RI data is available even with stale cache
+- **improvement:** OS toggle disabled when RI selected (RI covers compute only)
+- **feature:** In-app GitHub issue reporting — "Report an issue" link in footer
+- **feature:** Anonymous usage telemetry via Azure App Insights (no PII collected)
+- **feature:** Azure Monitor Workbook for site analytics (usage, errors, performance)
+- **feature:** Copilot CLI extension for Azure VM SKU tools
+- **improvement:** CSV export with full capability columns
+
 ### 2026-03-05
 - **fix:** Hourly prices now display with 4 decimal places to match the Azure Pricing Calculator (e.g. `$0.0510` instead of `$0.05`)
 - **fix:** Removed backend rounding on hourly prices — full float precision stored from Azure Retail Prices API

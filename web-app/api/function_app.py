@@ -408,6 +408,38 @@ def compare_details(req: func.HttpRequest) -> func.HttpResponse:
         else:
             alt_pricing = get_vm_pricing(alternative_name, location, currency_code)
         
+        # Supplement RI pricing if missing from cache
+        need_ri = []
+        if target_pricing and not _pricing_has_ri(target_pricing):
+            need_ri.append((target_pricing, target_name))
+        if alt_pricing and not _pricing_has_ri(alt_pricing):
+            need_ri.append((alt_pricing, alternative_name))
+        if need_ri:
+            try:
+                ri_url = 'https://prices.azure.com/api/retail/prices'
+                sku_filters = ' or '.join(f"armSkuName eq '{n}'" for _, n in need_ri)
+                ri_filter = f"serviceName eq 'Virtual Machines' and armRegionName eq '{location}' and type eq 'Reservation' and ({sku_filters})"
+                ri_api_url = f"{ri_url}?currencyCode={currency_code}&$filter={ri_filter}"
+                ri_resp = requests.get(ri_api_url, headers={'Accept': 'application/json'}, timeout=10)
+                if ri_resp.ok:
+                    for item in ri_resp.json().get('Items', []):
+                        arm_sku = item.get('armSkuName', '')
+                        term = item.get('reservationTerm', '')
+                        if 'Spot' in item.get('skuName', '') or 'Low Priority' in item.get('skuName', ''):
+                            continue
+                        for pricing_dict, name in need_ri:
+                            if arm_sku == name:
+                                if term == '1 Year' and pricing_dict.get('ri1YearMonthly') is None:
+                                    total = item['unitPrice']
+                                    pricing_dict['ri1YearMonthly'] = round(total / 12, 2)
+                                    pricing_dict['ri1YearHourly'] = round(total / (12 * 730), 4)
+                                elif term == '3 Years' and pricing_dict.get('ri3YearMonthly') is None:
+                                    total = item['unitPrice']
+                                    pricing_dict['ri3YearMonthly'] = round(total / 36, 2)
+                                    pricing_dict['ri3YearHourly'] = round(total / (36 * 730), 4)
+            except Exception as ri_err:
+                logging.warning(f'Failed to supplement RI in compare_details: {ri_err}')
+        
         # Calculate detailed differences
         differences = calculate_detailed_differences(
             target_sku, alt_sku,
@@ -1604,23 +1636,48 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
         )
     }
     
-    # Price differences
+    # Price differences (PAYG + RI variants for frontend toggle support)
     if target_pricing and alt_pricing:
+        currency = target_pricing.get('currency', 'USD')
         differences['pricing'] = {
             'hourly': calculate_price_diff(
                 target_pricing.get('hourlyPrice'),
                 alt_pricing.get('hourlyPrice'),
-                target_pricing.get('currency', 'USD')
+                currency
             ),
             'monthly': calculate_price_diff(
                 target_pricing.get('monthlyPrice'),
                 alt_pricing.get('monthlyPrice'),
-                target_pricing.get('currency', 'USD')
+                currency
             ),
             'efficiency': calculate_cost_efficiency(
                 target_sku, alternative_sku,
                 target_pricing, alt_pricing
-            )
+            ),
+            'ri1Year': {
+                'hourly': calculate_price_diff(
+                    target_pricing.get('ri1YearHourly'),
+                    alt_pricing.get('ri1YearHourly'),
+                    currency
+                ),
+                'monthly': calculate_price_diff(
+                    target_pricing.get('ri1YearMonthly'),
+                    alt_pricing.get('ri1YearMonthly'),
+                    currency
+                )
+            } if target_pricing.get('ri1YearMonthly') is not None else None,
+            'ri3Year': {
+                'hourly': calculate_price_diff(
+                    target_pricing.get('ri3YearHourly'),
+                    alt_pricing.get('ri3YearHourly'),
+                    currency
+                ),
+                'monthly': calculate_price_diff(
+                    target_pricing.get('ri3YearMonthly'),
+                    alt_pricing.get('ri3YearMonthly'),
+                    currency
+                )
+            } if target_pricing.get('ri3YearMonthly') is not None else None
         }
     
     # Storage differences
