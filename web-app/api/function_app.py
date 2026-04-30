@@ -417,6 +417,10 @@ def get_sku_from_cache(sku_name: str, location: str) -> dict:
                 'monthlyPrice': entity.get('monthlyPriceUSD'),
                 'hourlyPriceWindows': entity.get('hourlyPriceUSDWindows'),
                 'monthlyPriceWindows': entity.get('monthlyPriceUSDWindows'),
+                'ri1YearHourly': entity.get('ri1YearHourlyUSD'),
+                'ri1YearMonthly': entity.get('ri1YearMonthlyUSD'),
+                'ri3YearHourly': entity.get('ri3YearHourlyUSD'),
+                'ri3YearMonthly': entity.get('ri3YearMonthlyUSD'),
                 'currency': entity.get('pricingCurrency', 'USD')
             }
         
@@ -748,7 +752,7 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
     """Get VM pricing from Azure Retail Prices API"""
     try:
         api_url = 'https://prices.azure.com/api/retail/prices'
-        filter_str = f"serviceName eq 'Virtual Machines' and armSkuName eq '{sku_name}' and armRegionName eq '{location}' and type eq 'Consumption'"
+        filter_str = f"serviceName eq 'Virtual Machines' and armSkuName eq '{sku_name}' and armRegionName eq '{location}' and (type eq 'Consumption' or type eq 'Reservation')"
         url = f"{api_url}?currencyCode={currency_code}&$filter={filter_str}"
 
         response = requests.get(url, headers={'Accept': 'application/json'}, timeout=10)
@@ -766,7 +770,8 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
         # and skuName does NOT contain "Spot" or "Low Priority"
         linux_item = next((
             item for item in items
-            if 'productName' in item
+            if item.get('type') == 'Consumption'
+            and 'productName' in item
             and 'virtual machines' in item['productName'].lower()
             and 'windows' not in item['productName'].lower()
             and 'Spot' not in item.get('skuName', '')
@@ -777,18 +782,20 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
         # and skuName does NOT contain "Spot" or "Low Priority"
         windows_item = next((
             item for item in items
-            if 'productName' in item
+            if item.get('type') == 'Consumption'
+            and 'productName' in item
             and 'virtual machines' in item['productName'].lower()
             and 'windows' in item['productName'].lower()
             and 'Spot' not in item.get('skuName', '')
             and 'Low Priority' not in item.get('skuName', '')
         ), None)
 
-        # Fall back to first non-Spot/non-Low Priority item if no Linux item found
+        # Fall back to first non-Spot/non-Low Priority Consumption item if no Linux item found
         if not linux_item:
             linux_item = next((
                 item for item in items
-                if 'Spot' not in item.get('skuName', '')
+                if item.get('type') == 'Consumption'
+                and 'Spot' not in item.get('skuName', '')
                 and 'Low Priority' not in item.get('skuName', '')
             ), None)
 
@@ -796,13 +803,38 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
             return None
 
         currency = linux_item.get('currencyCode', currency_code)
-        return {
+        pricing = {
             'hourlyPrice': linux_item['unitPrice'],
             'monthlyPrice': round(linux_item['unitPrice'] * 730, 2),
             'hourlyPriceWindows': windows_item['unitPrice'] if windows_item else None,
             'monthlyPriceWindows': round(windows_item['unitPrice'] * 730, 2) if windows_item else None,
             'currency': currency
         }
+
+        # Collect reserved instance pricing (unitPrice = total term cost)
+        ri_1yr = next((
+            item for item in items
+            if item.get('type') == 'Reservation'
+            and item.get('reservationTerm') == '1 Year'
+            and 'virtual machines' in item.get('productName', '').lower()
+        ), None)
+        ri_3yr = next((
+            item for item in items
+            if item.get('type') == 'Reservation'
+            and item.get('reservationTerm') == '3 Years'
+            and 'virtual machines' in item.get('productName', '').lower()
+        ), None)
+
+        if ri_1yr:
+            total_1yr = ri_1yr['unitPrice']
+            pricing['ri1YearMonthly'] = round(total_1yr / 12, 2)
+            pricing['ri1YearHourly'] = round(total_1yr / (12 * 730), 4)
+        if ri_3yr:
+            total_3yr = ri_3yr['unitPrice']
+            pricing['ri3YearMonthly'] = round(total_3yr / 36, 2)
+            pricing['ri3YearHourly'] = round(total_3yr / (36 * 730), 4)
+
+        return pricing
 
     except Exception as error:
         logging.warning(f'Error fetching pricing for {sku_name}: {error}')
@@ -896,6 +928,10 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         'monthlyPrice': entity.get('monthlyPriceUSD'),
                         'hourlyPriceWindows': entity.get('hourlyPriceUSDWindows'),
                         'monthlyPriceWindows': entity.get('monthlyPriceUSDWindows'),
+                        'ri1YearHourly': entity.get('ri1YearHourlyUSD'),
+                        'ri1YearMonthly': entity.get('ri1YearMonthlyUSD'),
+                        'ri3YearHourly': entity.get('ri3YearHourlyUSD'),
+                        'ri3YearMonthly': entity.get('ri3YearMonthlyUSD'),
                         'currency': entity.get('pricingCurrency', 'USD')
                     } if entity.get('hourlyPriceUSD') is not None else None,
                     'networkBandwidthMbps': entity.get('networkBandwidthMbps')
@@ -983,7 +1019,7 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
     Returns dict keyed by armSkuName -> pricing dict.
     """
     api_url = 'https://prices.azure.com/api/retail/prices'
-    filter_str = f"serviceName eq 'Virtual Machines' and armRegionName eq '{location}' and type eq 'Consumption'"
+    filter_str = f"serviceName eq 'Virtual Machines' and armRegionName eq '{location}' and (type eq 'Consumption' or type eq 'Reservation')"
     url = f"{api_url}?currencyCode={currency}&$filter={filter_str}"
 
     all_items = []
@@ -1002,6 +1038,8 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
     sku_linux: Dict[str, Dict] = {}
     sku_windows: Dict[str, Dict] = {}
     sku_fallback: Dict[str, Dict] = {}
+    # RI items keyed by (armSkuName, reservationTerm)
+    sku_ri: Dict[str, Dict[str, Dict]] = {}
 
     for item in all_items:
         sku_name = item.get('armSkuName', '')
@@ -1009,10 +1047,21 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
             continue
         product_lower = item.get('productName', '').lower()
         sku_label = item.get('skuName', '')
+        item_type = item.get('type', '')
 
         if 'virtual machines' not in product_lower:
             continue
         if 'Spot' in sku_label or 'Low Priority' in sku_label:
+            continue
+
+        # Reservation items (RI) — compute-only, no Windows distinction
+        if item_type == 'Reservation':
+            term = item.get('reservationTerm', '')
+            if term in ('1 Year', '3 Years'):
+                if sku_name not in sku_ri:
+                    sku_ri[sku_name] = {}
+                if term not in sku_ri[sku_name]:
+                    sku_ri[sku_name][term] = item
             continue
 
         is_windows = 'windows' in product_lower
@@ -1033,13 +1082,29 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
             continue
         linux_price = linux_item['unitPrice']
         windows_price = windows_item['unitPrice'] if windows_item else None
-        result[sku_name] = {
+
+        pricing = {
             'hourlyPrice': linux_price,
             'monthlyPrice': round(linux_price * 730, 2),
             'hourlyPriceWindows': windows_price,
             'monthlyPriceWindows': round(windows_price * 730, 2) if windows_price else None,
             'currency': linux_item.get('currencyCode', currency)
         }
+
+        # Add reserved instance pricing (unitPrice = total term cost)
+        ri_data = sku_ri.get(sku_name, {})
+        ri_1yr = ri_data.get('1 Year')
+        ri_3yr = ri_data.get('3 Years')
+        if ri_1yr:
+            total_1yr = ri_1yr['unitPrice']
+            pricing['ri1YearMonthly'] = round(total_1yr / 12, 2)
+            pricing['ri1YearHourly'] = round(total_1yr / (12 * 730), 4)
+        if ri_3yr:
+            total_3yr = ri_3yr['unitPrice']
+            pricing['ri3YearMonthly'] = round(total_3yr / 36, 2)
+            pricing['ri3YearHourly'] = round(total_3yr / (36 * 730), 4)
+
+        result[sku_name] = pricing
 
     logging.info(f"Bulk pricing fetch for {location}: {len(result)} SKUs from {len(all_items)} price items ({page} pages)")
     return result
@@ -1184,6 +1249,10 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'monthlyPriceUSD': pricing['monthlyPrice'] if pricing else None,
                 'hourlyPriceUSDWindows': pricing.get('hourlyPriceWindows') if pricing else None,
                 'monthlyPriceUSDWindows': pricing.get('monthlyPriceWindows') if pricing else None,
+                'ri1YearHourlyUSD': pricing.get('ri1YearHourly') if pricing else None,
+                'ri1YearMonthlyUSD': pricing.get('ri1YearMonthly') if pricing else None,
+                'ri3YearHourlyUSD': pricing.get('ri3YearHourly') if pricing else None,
+                'ri3YearMonthlyUSD': pricing.get('ri3YearMonthly') if pricing else None,
                 'pricingCurrency': pricing['currency'] if pricing else 'USD',
                 'pricingLastUpdated': timestamp,
                 'availabilityZones': ','.join(zones) if zones else '',

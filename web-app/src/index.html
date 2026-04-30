@@ -243,7 +243,13 @@
                 <div class="results-header">
                     <h2>Comparison Results</h2>
                     <div class="results-actions">
-                        <div class="os-pricing-toggle">
+                        <div class="pricing-model-toggle">
+                            <span>Pricing:</span>
+                            <button id="btn-payg" class="btn-pricing active" onclick="setPricingModel('payg')">Pay-As-You-Go</button>
+                            <button id="btn-ri1year" class="btn-pricing" onclick="setPricingModel('ri1year')">1-Year RI</button>
+                            <button id="btn-ri3year" class="btn-pricing" onclick="setPricingModel('ri3year')">3-Year RI</button>
+                        </div>
+                        <div class="os-pricing-toggle" id="osPricingToggle">
                             <span>OS Pricing:</span>
                             <button id="btn-linux-pricing" class="btn-os active" onclick="setPricingOS('linux')">Linux</button>
                             <button id="btn-windows-pricing" class="btn-os" onclick="setPricingOS('windows')">Windows</button>

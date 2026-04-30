@@ -348,6 +348,53 @@ input[list]::-webkit-calendar-picker-indicator:hover {
     background: var(--bg-hover);
 }
 
+/* Pricing model toggle (PAYG / 1yr RI / 3yr RI) */
+.pricing-model-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.pricing-model-toggle span {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.btn-pricing {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.813rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.btn-pricing.active {
+    background: var(--primary-color);
+    color: #fff;
+    border-color: var(--primary-color);
+}
+
+.btn-pricing:hover:not(.active) {
+    background: var(--bg-hover);
+}
+
+/* Disabled OS toggle when RI is selected */
+.os-pricing-toggle.disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+/* RI savings percentage badge */
+.ri-savings {
+    color: #4caf50;
+    font-weight: 600;
+    font-size: 0.813rem;
+    margin-left: 2px;
+}
+
 .loading-overlay {
     position: fixed;
     top: 0;

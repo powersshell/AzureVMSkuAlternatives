@@ -161,6 +161,7 @@ const exportBtn = document.getElementById('exportBtn');
 
 let currentResults = null;
 let currentPricingOS = 'linux';
+let currentPricingModel = 'payg'; // 'payg', 'ri1year', 'ri3year'
 let locationChoices = null; // Choices.js instance for location
 let skuChoices = null; // Choices.js instance for SKU
 const expandedDetailsCache = new Map(); // Cache for expanded row details (Phase 2)
@@ -493,8 +494,7 @@ function setPricingOS(os) {
     trackEvent('pricing_os_toggled', { os });
     document.getElementById('btn-linux-pricing')?.classList.toggle('active', os === 'linux');
     document.getElementById('btn-windows-pricing')?.classList.toggle('active', os === 'windows');
-    document.getElementById('th-hourly').textContent = os === 'windows' ? 'Hourly Cost (Win)' : 'Hourly Cost (Linux)';
-    document.getElementById('th-monthly').textContent = os === 'windows' ? 'Monthly Cost (Win)' : 'Monthly Cost (Linux)';
+    updatePricingHeaders();
     // Re-render results if available
     if (currentResults) {
         displayAlternatives(filterResultsByVendor(currentResults.alternatives));
@@ -502,8 +502,53 @@ function setPricingOS(os) {
     }
 }
 
+// Pricing model toggle (PAYG / 1-Year RI / 3-Year RI)
+function setPricingModel(model) {
+    currentPricingModel = model;
+    trackEvent('pricing_model_toggled', { model });
+    document.getElementById('btn-payg')?.classList.toggle('active', model === 'payg');
+    document.getElementById('btn-ri1year')?.classList.toggle('active', model === 'ri1year');
+    document.getElementById('btn-ri3year')?.classList.toggle('active', model === 'ri3year');
+
+    // Disable OS toggle when RI is selected (RI = compute only)
+    const osToggle = document.getElementById('osPricingToggle');
+    if (osToggle) {
+        if (model !== 'payg') {
+            osToggle.classList.add('disabled');
+            osToggle.title = 'Reserved Instance pricing covers compute only (no OS license)';
+        } else {
+            osToggle.classList.remove('disabled');
+            osToggle.title = '';
+        }
+    }
+
+    updatePricingHeaders();
+    if (currentResults) {
+        displayAlternatives(filterResultsByVendor(currentResults.alternatives));
+        displayTargetSku(currentResults.targetSku);
+    }
+}
+
+function updatePricingHeaders() {
+    const thHourly = document.getElementById('th-hourly');
+    const thMonthly = document.getElementById('th-monthly');
+    if (currentPricingModel === 'ri1year') {
+        thHourly.textContent = 'Hourly Cost (1yr RI)';
+        thMonthly.textContent = 'Monthly Cost (1yr RI)';
+    } else if (currentPricingModel === 'ri3year') {
+        thHourly.textContent = 'Hourly Cost (3yr RI)';
+        thMonthly.textContent = 'Monthly Cost (3yr RI)';
+    } else {
+        const osLabel = currentPricingOS === 'windows' ? 'Win' : 'Linux';
+        thHourly.textContent = `Hourly Cost (${osLabel})`;
+        thMonthly.textContent = `Monthly Cost (${osLabel})`;
+    }
+}
+
 function getHourlyPrice(pricing) {
     if (!pricing) return null;
+    if (currentPricingModel === 'ri1year') return pricing.ri1YearHourly ?? null;
+    if (currentPricingModel === 'ri3year') return pricing.ri3YearHourly ?? null;
     return currentPricingOS === 'windows'
         ? (pricing.hourlyPriceWindows ?? pricing.hourlyPrice)
         : pricing.hourlyPrice;
@@ -511,9 +556,43 @@ function getHourlyPrice(pricing) {
 
 function getMonthlyPrice(pricing) {
     if (!pricing) return null;
+    if (currentPricingModel === 'ri1year') return pricing.ri1YearMonthly ?? null;
+    if (currentPricingModel === 'ri3year') return pricing.ri3YearMonthly ?? null;
     return currentPricingOS === 'windows'
         ? (pricing.monthlyPriceWindows ?? pricing.monthlyPrice)
         : pricing.monthlyPrice;
+}
+
+// Get PAYG monthly price for savings calculation
+function getPaygMonthlyPrice(pricing) {
+    if (!pricing) return null;
+    return pricing.monthlyPrice;
+}
+
+// Render RI savings badge for monthly column
+function renderRiSavings(pricing) {
+    if (currentPricingModel === 'payg' || !pricing) return '';
+    const payg = pricing.monthlyPrice;
+    const ri = getMonthlyPrice(pricing);
+    if (!payg || payg <= 0 || ri == null) return '';
+    const pct = ((payg - ri) / payg * 100).toFixed(0);
+    if (pct <= 0) return '';
+    return ` <span class="ri-savings">(-${pct}%)</span>`;
+}
+
+// Null-safe price formatters — return 'N/A' when price is unavailable
+function formatHourlyPriceSafe(pricing) {
+    if (!pricing) return 'N/A';
+    const price = getHourlyPrice(pricing);
+    if (price == null) return 'N/A';
+    return formatHourlyCurrency(price * getDiscountMultiplier(), pricing.currency);
+}
+
+function formatMonthlyPriceSafe(pricing) {
+    if (!pricing) return 'N/A';
+    const price = getMonthlyPrice(pricing);
+    if (price == null) return 'N/A';
+    return formatCurrency(price * getDiscountMultiplier(), pricing.currency) + renderRiSavings(pricing);
 }
 
 // Display Results
@@ -550,6 +629,9 @@ function filterResultsByVendor(alternatives) {
 // Display Target SKU Info
 function displayTargetSku(targetSku) {
     const cpuDisplay = targetSku.cpuVendor ? `${targetSku.cpuVendor} (${targetSku.architecture || 'x64'})` : 'N/A';
+    const pricingLabel = currentPricingModel === 'ri1year' ? '1yr RI'
+        : currentPricingModel === 'ri3year' ? '3yr RI'
+        : (currentPricingOS === 'windows' ? 'Windows' : 'Linux');
     const html = `
         <h3>Target SKU: ${targetSku.name}</h3>
         <div class="target-sku-grid">
@@ -572,12 +654,12 @@ function displayTargetSku(targetSku) {
             </div>
             ` : ''}
             <div class="target-sku-item">
-                <strong>Hourly Cost (${currentPricingOS === 'windows' ? 'Windows' : 'Linux'})</strong>
-                <span>${targetSku.pricing ? formatHourlyCurrency(getHourlyPrice(targetSku.pricing) * getDiscountMultiplier(), targetSku.pricing.currency) : 'N/A'}</span>
+                <strong>Hourly Cost (${pricingLabel})</strong>
+                <span>${formatHourlyPriceSafe(targetSku.pricing)}</span>
             </div>
             <div class="target-sku-item">
-                <strong>Monthly Cost (${currentPricingOS === 'windows' ? 'Windows' : 'Linux'})</strong>
-                <span>${targetSku.pricing ? formatCurrency(getMonthlyPrice(targetSku.pricing) * getDiscountMultiplier(), targetSku.pricing.currency) : 'N/A'}</span>
+                <strong>Monthly Cost (${pricingLabel})</strong>
+                <span>${formatMonthlyPriceSafe(targetSku.pricing)}</span>
             </div>
             <div class="target-sku-item">
                 <strong>Availability Zones</strong>
@@ -688,8 +770,8 @@ function displayAlternatives(alternatives) {
                 <td>${cpuDisplay}</td>
                 <td>${alt.vCPUs || 'N/A'}</td>
                 <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'}</td>
-                <td>${alt.pricing ? formatHourlyCurrency(getHourlyPrice(alt.pricing) * getDiscountMultiplier(), alt.pricing.currency) : 'N/A'}</td>
-                <td>${alt.pricing ? formatCurrency(getMonthlyPrice(alt.pricing) * getDiscountMultiplier(), alt.pricing.currency) : 'N/A'}</td>
+                <td>${formatHourlyPriceSafe(alt.pricing)}</td>
+                <td>${formatMonthlyPriceSafe(alt.pricing)}</td>
                 <td>${alt.zones || 'N/A'}</td>
             `;
             resultsTableBody.appendChild(row);
@@ -724,8 +806,8 @@ function displayAlternatives(alternatives) {
             <td>${cpuDisplay}</td>
             <td>${alt.vCPUs || 'N/A'} ${renderIndicator(indicators.vCPUs, 'vCPUs')}</td>
             <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'} ${renderIndicator(indicators.memory, 'Memory')}</td>
-            <td>${alt.pricing ? formatHourlyCurrency(getHourlyPrice(alt.pricing) * getDiscountMultiplier(), alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.hourlyPrice, 'Hourly Price')}</td>
-            <td>${alt.pricing ? formatCurrency(getMonthlyPrice(alt.pricing) * getDiscountMultiplier(), alt.pricing.currency) : 'N/A'} ${renderIndicator(indicators.monthlyPrice, 'Monthly Price')}</td>
+            <td>${formatHourlyPriceSafe(alt.pricing)} ${renderIndicator(indicators.hourlyPrice, 'Hourly Price')}</td>
+            <td>${formatMonthlyPriceSafe(alt.pricing)} ${renderIndicator(indicators.monthlyPrice, 'Monthly Price')}</td>
             <td>${alt.zones || 'N/A'}</td>
         `;
         
@@ -1106,6 +1188,10 @@ function exportToCSV() {
         `Monthly Cost Linux${discountNote}`,
         `Hourly Cost Windows${discountNote}`,
         `Monthly Cost Windows${discountNote}`,
+        `1yr RI Hourly${discountNote}`,
+        `1yr RI Monthly${discountNote}`,
+        `3yr RI Hourly${discountNote}`,
+        `3yr RI Monthly${discountNote}`,
         'Currency',
         'Availability Zones'
     ];
@@ -1128,6 +1214,10 @@ function exportToCSV() {
             alt.pricing ? (alt.pricing.monthlyPrice * discount).toFixed(2) : 'N/A',
             alt.pricing && alt.pricing.hourlyPriceWindows != null ? (alt.pricing.hourlyPriceWindows * discount).toFixed(4) : 'N/A',
             alt.pricing && alt.pricing.monthlyPriceWindows != null ? (alt.pricing.monthlyPriceWindows * discount).toFixed(2) : 'N/A',
+            alt.pricing && alt.pricing.ri1YearHourly != null ? (alt.pricing.ri1YearHourly * discount).toFixed(4) : 'N/A',
+            alt.pricing && alt.pricing.ri1YearMonthly != null ? (alt.pricing.ri1YearMonthly * discount).toFixed(2) : 'N/A',
+            alt.pricing && alt.pricing.ri3YearHourly != null ? (alt.pricing.ri3YearHourly * discount).toFixed(4) : 'N/A',
+            alt.pricing && alt.pricing.ri3YearMonthly != null ? (alt.pricing.ri3YearMonthly * discount).toFixed(2) : 'N/A',
             alt.pricing?.currency || 'N/A',
             alt.zones || 'N/A'
         ];
