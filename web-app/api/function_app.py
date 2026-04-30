@@ -194,6 +194,64 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
 
         logging.info(f'Found {len(alternatives)} alternatives')
 
+        # Supplement RI pricing for target and alternatives if missing from cache
+        # Uses a single bulk API call instead of per-SKU fetches
+        all_need_ri = []
+        if not _pricing_has_ri(target_pricing):
+            all_need_ri.append(('target', target_pricing, sku_name))
+        for alt in alternatives:
+            if alt.get('pricing') and not _pricing_has_ri(alt['pricing']):
+                all_need_ri.append(('alt', alt['pricing'], alt['name']))
+
+        if all_need_ri:
+            logging.info(f'Supplementing RI pricing for {len(all_need_ri)} SKUs')
+            try:
+                ri_url = 'https://prices.azure.com/api/retail/prices'
+                ri_filter = f"serviceName eq 'Virtual Machines' and armRegionName eq '{location}' and type eq 'Reservation'"
+                ri_api_url = f"{ri_url}?currencyCode={currency_code}&$filter={ri_filter}"
+
+                ri_items = []
+                while ri_api_url:
+                    ri_resp = requests.get(ri_api_url, headers={'Accept': 'application/json'}, timeout=15)
+                    if not ri_resp.ok:
+                        break
+                    ri_data = ri_resp.json()
+                    ri_items.extend(ri_data.get('Items', []))
+                    ri_api_url = ri_data.get('NextPageLink')
+
+                # Index RI items by armSkuName and term
+                ri_index: Dict[str, Dict[str, Dict]] = {}
+                for item in ri_items:
+                    arm_sku = item.get('armSkuName', '')
+                    term = item.get('reservationTerm', '')
+                    if not arm_sku or term not in ('1 Year', '3 Years'):
+                        continue
+                    if 'Spot' in item.get('skuName', '') or 'Low Priority' in item.get('skuName', ''):
+                        continue
+                    if arm_sku not in ri_index:
+                        ri_index[arm_sku] = {}
+                    if term not in ri_index[arm_sku]:
+                        ri_index[arm_sku][term] = item
+
+                # Apply RI data to pricing dicts
+                for _, pricing_dict, name in all_need_ri:
+                    if pricing_dict and name in ri_index:
+                        ri_data_sku = ri_index[name]
+                        ri_1yr = ri_data_sku.get('1 Year')
+                        ri_3yr = ri_data_sku.get('3 Years')
+                        if ri_1yr:
+                            total_1yr = ri_1yr['unitPrice']
+                            pricing_dict['ri1YearMonthly'] = round(total_1yr / 12, 2)
+                            pricing_dict['ri1YearHourly'] = round(total_1yr / (12 * 730), 4)
+                        if ri_3yr:
+                            total_3yr = ri_3yr['unitPrice']
+                            pricing_dict['ri3YearMonthly'] = round(total_3yr / 36, 2)
+                            pricing_dict['ri3YearHourly'] = round(total_3yr / (36 * 730), 4)
+
+                logging.info(f'RI supplement complete: {len(ri_index)} SKUs with RI data found')
+            except Exception as ri_error:
+                logging.warning(f'Failed to supplement RI pricing: {ri_error}')
+
         # Return results
         response_data = {
             'targetSku': {
@@ -746,6 +804,13 @@ def calculate_similarity(target: Dict, candidate: Dict, weights: Dict) -> float:
     total_weight += weights['weightFeatures']
 
     return total_score / total_weight if total_weight > 0 else 0
+
+
+def _pricing_has_ri(pricing: Optional[Dict]) -> bool:
+    """Check if pricing dict includes RI data (vs stale cache without RI fields)."""
+    if not pricing:
+        return False
+    return pricing.get('ri1YearMonthly') is not None or pricing.get('ri3YearMonthly') is not None
 
 
 def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional[Dict]:
