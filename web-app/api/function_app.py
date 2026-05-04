@@ -682,27 +682,34 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
     
     total_updated = 0
     total_errors = 0
+    all_region_coverage = []
 
     # Fetch network bandwidth data once before parallel region processing
     network_bw = fetch_network_bandwidth()
 
     def process_region(region):
         logging.info(f"Processing region: {region}")
-        count = refresh_region(region, subscription_id, token, table_client, network_bw)
+        count, coverage = refresh_region(region, subscription_id, token, table_client, network_bw)
         logging.info(f"Updated {count} SKUs for region {region}")
-        return count
+        return count, region, coverage
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         future_to_region = {executor.submit(process_region, r): r for r in regions}
         for future in as_completed(future_to_region):
             region = future_to_region[future]
             try:
-                total_updated += future.result()
+                count, reg, coverage = future.result()
+                total_updated += count
+                if coverage:
+                    all_region_coverage.append(coverage)
             except Exception as e:
                 logging.error(f"Error processing region {region}: {e}")
                 total_errors += 1
 
     logging.info(f"SKU cache refresh completed. Updated: {total_updated}, Errors: {total_errors}")
+
+    # Emit coverage telemetry for workbook visualization
+    _emit_coverage_telemetry(all_region_coverage)
 
 
 # ============================================================================
@@ -747,10 +754,10 @@ def admin_refresh_region(req: func.HttpRequest) -> func.HttpResponse:
         table_client = table_service.get_table_client("vmskus")
         
         token = get_access_token()
-        count = refresh_region(region, subscription_id, token, table_client)
+        count, coverage = refresh_region(region, subscription_id, token, table_client)
         
         return func.HttpResponse(
-            json.dumps({'region': region, 'skusUpdated': count, 'status': 'success'}),
+            json.dumps({'region': region, 'skusUpdated': count, 'status': 'success', 'coverage': coverage}),
             mimetype='application/json',
             status_code=200
         )
@@ -1327,11 +1334,11 @@ def fetch_network_bandwidth() -> Dict[str, int]:
         return {}
 
 
-def refresh_region(region: str, subscription_id: str, token: str, table_client, network_bw: Dict[str, int] = None) -> int:
+def refresh_region(region: str, subscription_id: str, token: str, table_client, network_bw: Dict[str, int] = None) -> tuple:
     """
     Refresh SKU data for a specific region
     Fetches SKU data and pricing concurrently for performance
-    Returns number of SKUs updated
+    Returns (number of SKUs updated, coverage stats dict)
     """
     if network_bw is None:
         network_bw = {}
@@ -1450,7 +1457,124 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
     except Exception as e:
         logging.warning(f"Failed to prune stale SKUs for {region}: {e}")
     
-    return count
+    # Compute coverage stats for this region
+    coverage = _compute_region_coverage(region, entities)
+    
+    return count, coverage
+
+
+def _compute_region_coverage(region: str, entities: List[Dict]) -> Dict:
+    """Compute data coverage stats for a set of cache entities in a region."""
+    total = len(entities)
+    if total == 0:
+        return {'region': region, 'totalSkus': 0}
+
+    # Pricing coverage
+    has_payg_linux = sum(1 for e in entities if e.get('hourlyPriceUSD') is not None)
+    has_payg_windows = sum(1 for e in entities if e.get('hourlyPriceUSDWindows') is not None)
+    has_ri1year = sum(1 for e in entities if e.get('ri1YearHourlyUSD') is not None)
+    has_ri3year = sum(1 for e in entities if e.get('ri3YearHourlyUSD') is not None)
+    has_ri1year_win = sum(1 for e in entities if e.get('ri1YearHourlyUSDWindows') is not None)
+    has_ri3year_win = sum(1 for e in entities if e.get('ri3YearHourlyUSDWindows') is not None)
+
+    # Capability coverage
+    has_vcpus = sum(1 for e in entities if e.get('vCPUs', 0) > 0)
+    has_memory = sum(1 for e in entities if e.get('memoryGB', 0) > 0)
+    has_disk_iops = sum(1 for e in entities if e.get('uncachedDiskIOPS', 0) > 0)
+    has_disk_throughput = sum(1 for e in entities if e.get('uncachedDiskBytesPerSecond', 0) > 0)
+    has_network_bw = sum(1 for e in entities if e.get('networkBandwidthMbps') is not None)
+    has_zones = sum(1 for e in entities if e.get('availabilityZones', ''))
+    has_hyperv_gen = sum(1 for e in entities if e.get('hyperVGenerations', ''))
+
+    # Collect SKU names missing key data
+    missing_pricing = [e['name'] for e in entities if e.get('hourlyPriceUSD') is None]
+    missing_ri = [e['name'] for e in entities if e.get('hourlyPriceUSD') is not None and e.get('ri1YearHourlyUSD') is None]
+    missing_network = [e['name'] for e in entities if e.get('networkBandwidthMbps') is None]
+
+    return {
+        'region': region,
+        'totalSkus': total,
+        'paygLinux': has_payg_linux,
+        'paygWindows': has_payg_windows,
+        'ri1Year': has_ri1year,
+        'ri3Year': has_ri3year,
+        'ri1YearWindows': has_ri1year_win,
+        'ri3YearWindows': has_ri3year_win,
+        'vCPUs': has_vcpus,
+        'memory': has_memory,
+        'diskIOPS': has_disk_iops,
+        'diskThroughput': has_disk_throughput,
+        'networkBandwidth': has_network_bw,
+        'availabilityZones': has_zones,
+        'hyperVGenerations': has_hyperv_gen,
+        'missingPricingSkus': missing_pricing[:50],
+        'missingRiSkus': missing_ri[:50],
+        'missingNetworkSkus': missing_network[:50],
+    }
+
+
+def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
+    """Emit per-region and aggregate coverage stats as structured log events."""
+    if not all_region_coverage:
+        return
+
+    # Per-region coverage events
+    for cov in all_region_coverage:
+        total = cov.get('totalSkus', 0)
+        if total == 0:
+            continue
+        logging.info('sku_coverage_region', extra={'custom_dimensions': {
+            'event_type': 'sku_coverage_region',
+            'region': cov['region'],
+            'totalSkus': total,
+            'paygLinuxPct': round(cov['paygLinux'] / total * 100, 1),
+            'paygWindowsPct': round(cov['paygWindows'] / total * 100, 1),
+            'ri1YearPct': round(cov['ri1Year'] / total * 100, 1),
+            'ri3YearPct': round(cov['ri3Year'] / total * 100, 1),
+            'ri1YearWindowsPct': round(cov['ri1YearWindows'] / total * 100, 1),
+            'ri3YearWindowsPct': round(cov['ri3YearWindows'] / total * 100, 1),
+            'vCPUsPct': round(cov['vCPUs'] / total * 100, 1),
+            'memoryPct': round(cov['memory'] / total * 100, 1),
+            'diskIOPSPct': round(cov['diskIOPS'] / total * 100, 1),
+            'diskThroughputPct': round(cov['diskThroughput'] / total * 100, 1),
+            'networkBandwidthPct': round(cov['networkBandwidth'] / total * 100, 1),
+            'availabilityZonesPct': round(cov['availabilityZones'] / total * 100, 1),
+            'hyperVGenerationsPct': round(cov['hyperVGenerations'] / total * 100, 1),
+            'paygLinuxCount': cov['paygLinux'],
+            'paygWindowsCount': cov['paygWindows'],
+            'ri1YearCount': cov['ri1Year'],
+            'ri3YearCount': cov['ri3Year'],
+            'networkBandwidthCount': cov['networkBandwidth'],
+            'missingPricingSkus': json.dumps(cov.get('missingPricingSkus', [])),
+            'missingRiSkus': json.dumps(cov.get('missingRiSkus', [])[:20]),
+            'missingNetworkSkus': json.dumps(cov.get('missingNetworkSkus', [])[:20]),
+        }})
+
+    # Aggregate summary across all regions
+    totals = sum(c.get('totalSkus', 0) for c in all_region_coverage)
+    if totals == 0:
+        return
+
+    agg = {
+        'paygLinux': sum(c.get('paygLinux', 0) for c in all_region_coverage),
+        'ri1Year': sum(c.get('ri1Year', 0) for c in all_region_coverage),
+        'ri3Year': sum(c.get('ri3Year', 0) for c in all_region_coverage),
+        'networkBandwidth': sum(c.get('networkBandwidth', 0) for c in all_region_coverage),
+        'vCPUs': sum(c.get('vCPUs', 0) for c in all_region_coverage),
+        'memory': sum(c.get('memory', 0) for c in all_region_coverage),
+    }
+
+    logging.info('sku_coverage_summary', extra={'custom_dimensions': {
+        'event_type': 'sku_coverage_summary',
+        'totalRegions': len(all_region_coverage),
+        'totalSkus': totals,
+        'overallPaygPct': round(agg['paygLinux'] / totals * 100, 1),
+        'overallRi1YearPct': round(agg['ri1Year'] / totals * 100, 1),
+        'overallRi3YearPct': round(agg['ri3Year'] / totals * 100, 1),
+        'overallNetworkBwPct': round(agg['networkBandwidth'] / totals * 100, 1),
+        'overallVCPUsPct': round(agg['vCPUs'] / totals * 100, 1),
+        'overallMemoryPct': round(agg['memory'] / totals * 100, 1),
+    }})
 
 
 def extract_capabilities_for_cache(sku: Dict) -> Dict:

@@ -218,6 +218,86 @@ var serializedData = '''
         "title": "Frontend Error Events"
       },
       "name": "frontend-errors-table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "---\n## SKU Data Coverage\nAnalysis of cached VM SKU data completeness, refreshed daily at 2:00 AM UTC."
+      },
+      "name": "coverage-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where Message == 'sku_coverage_summary'\n| extend cd = parse_json(tostring(customDimensions))\n| where isnotempty(cd.event_type) and cd.event_type == 'sku_coverage_summary'\n| top 1 by TimeGenerated desc\n| project\n    ['Last Refresh'] = format_datetime(TimeGenerated, 'yyyy-MM-dd HH:mm UTC'),\n    ['Total Regions'] = toint(cd.totalRegions),\n    ['Total SKUs'] = toint(cd.totalSkus),\n    ['PAYG Pricing'] = strcat(tostring(cd.overallPaygPct), '%'),\n    ['1yr RI Pricing'] = strcat(tostring(cd.overallRi1YearPct), '%'),\n    ['3yr RI Pricing'] = strcat(tostring(cd.overallRi3YearPct), '%'),\n    ['Network Bandwidth'] = strcat(tostring(cd.overallNetworkBwPct), '%'),\n    ['vCPUs'] = strcat(tostring(cd.overallVCPUsPct), '%'),\n    ['Memory'] = strcat(tostring(cd.overallMemoryPct), '%')",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": { "columnMatch": "Last Refresh", "formatter": 1 },
+          "subtitleContent": { "columnMatch": "Total SKUs" },
+          "showBorder": true
+        },
+        "title": "Overall Coverage Summary (Latest Refresh)"
+      },
+      "name": "coverage-summary-tiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where Message == 'sku_coverage_region'\n| extend cd = parse_json(tostring(customDimensions))\n| where isnotempty(cd.event_type) and cd.event_type == 'sku_coverage_region'\n| summarize arg_max(TimeGenerated, cd) by tostring(cd.region)\n| project\n    Region = tostring(cd.region),\n    ['Total SKUs'] = toint(cd.totalSkus),\n    ['PAYG Linux'] = strcat(tostring(cd.paygLinuxPct), '%'),\n    ['PAYG Windows'] = strcat(tostring(cd.paygWindowsPct), '%'),\n    ['1yr RI'] = strcat(tostring(cd.ri1YearPct), '%'),\n    ['3yr RI'] = strcat(tostring(cd.ri3YearPct), '%'),\n    ['1yr RI Win'] = strcat(tostring(cd.ri1YearWindowsPct), '%'),\n    ['3yr RI Win'] = strcat(tostring(cd.ri3YearWindowsPct), '%'),\n    ['Network BW'] = strcat(tostring(cd.networkBandwidthPct), '%')\n| order by Region asc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Pricing Coverage by Region"
+      },
+      "name": "coverage-region-pricing"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where Message == 'sku_coverage_region'\n| extend cd = parse_json(tostring(customDimensions))\n| where isnotempty(cd.event_type) and cd.event_type == 'sku_coverage_region'\n| summarize arg_max(TimeGenerated, cd) by tostring(cd.region)\n| project\n    Region = tostring(cd.region),\n    ['Total SKUs'] = toint(cd.totalSkus),\n    ['vCPUs'] = strcat(tostring(cd.vCPUsPct), '%'),\n    ['Memory'] = strcat(tostring(cd.memoryPct), '%'),\n    ['Disk IOPS'] = strcat(tostring(cd.diskIOPSPct), '%'),\n    ['Disk Throughput'] = strcat(tostring(cd.diskThroughputPct), '%'),\n    ['Network BW'] = strcat(tostring(cd.networkBandwidthPct), '%'),\n    ['Avail. Zones'] = strcat(tostring(cd.availabilityZonesPct), '%'),\n    ['HyperV Gen'] = strcat(tostring(cd.hyperVGenerationsPct), '%')\n| order by Region asc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Capability Coverage by Region"
+      },
+      "name": "coverage-region-capabilities"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where Message == 'sku_coverage_region'\n| extend cd = parse_json(tostring(customDimensions))\n| where isnotempty(cd.event_type) and cd.event_type == 'sku_coverage_region'\n| summarize arg_max(TimeGenerated, cd) by tostring(cd.region)\n| extend\n    Region = tostring(cd.region),\n    MissingPricing = parse_json(tostring(cd.missingPricingSkus)),\n    MissingRI = parse_json(tostring(cd.missingRiSkus)),\n    MissingNetwork = parse_json(tostring(cd.missingNetworkSkus))\n| mv-apply MissingSku = MissingPricing on (\n    project Region, SKU = tostring(MissingSku), MissingCategory = 'PAYG Pricing'\n)\n| union (\n    AppTraces\n    | where Message == 'sku_coverage_region'\n    | extend cd = parse_json(tostring(customDimensions))\n    | where isnotempty(cd.event_type) and cd.event_type == 'sku_coverage_region'\n    | summarize arg_max(TimeGenerated, cd) by tostring(cd.region)\n    | extend Region = tostring(cd.region), MissingRI = parse_json(tostring(cd.missingRiSkus))\n    | mv-apply MissingSku = MissingRI on (\n        project Region, SKU = tostring(MissingSku), MissingCategory = 'RI Pricing'\n    )\n)\n| summarize MissingCategories = make_set(MissingCategory), Regions = make_set(Region) by SKU\n| extend ['Missing Data'] = strcat_array(MissingCategories, ', '), ['Regions Affected'] = array_length(Regions)\n| project SKU, ['Missing Data'], ['Regions Affected']\n| order by ['Regions Affected'] desc\n| take 50",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "SKUs with Missing Data (Top 50)"
+      },
+      "name": "coverage-missing-skus"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where Message == 'sku_coverage_summary'\n| extend cd = parse_json(tostring(customDimensions))\n| where isnotempty(cd.event_type) and cd.event_type == 'sku_coverage_summary'\n| top 14 by TimeGenerated desc\n| project\n    TimeGenerated,\n    ['PAYG %'] = todouble(cd.overallPaygPct),\n    ['1yr RI %'] = todouble(cd.overallRi1YearPct),\n    ['3yr RI %'] = todouble(cd.overallRi3YearPct),\n    ['Network BW %'] = todouble(cd.overallNetworkBwPct)\n| order by TimeGenerated asc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "linechart",
+        "chartSettings": {
+          "ySettings": { "min": 0, "max": 100 }
+        },
+        "title": "Coverage Trend (Last 14 Refreshes)"
+      },
+      "name": "coverage-trend-chart"
     }
   ],
   "fallbackResourceIds": [],
