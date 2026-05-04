@@ -446,6 +446,12 @@ input[list]::-webkit-calendar-picker-indicator:hover {
     font-size: 1.5rem;
 }
 
+.cache-timestamp {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
 .results-actions {
     display: flex;
     align-items: center;

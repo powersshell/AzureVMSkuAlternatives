@@ -254,6 +254,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 logging.warning(f'Failed to supplement RI pricing: {ri_error}')
 
         # Return results
+        # Determine cache freshness from target SKU's lastUpdated field
+        data_last_updated = target_sku.get('lastUpdated')
         response_data = {
             'targetSku': {
                 'name': target_sku['name'],
@@ -268,6 +270,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 'capabilities': target_capabilities
             },
             'alternatives': alternatives,
+            'dataLastUpdated': data_last_updated,
+            'dataSource': data_source,
             'searchParameters': {
                 'location': location,
                 'minSimilarityScore': min_similarity_score,
@@ -1034,6 +1038,7 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                     'name': entity['name'],
                     'cpuVendor': entity.get('cpuVendor', 'Intel'),
                     'architecture': entity.get('architecture', 'x64'),
+                    'lastUpdated': entity.get('lastUpdated'),
                     'capabilities': [
                         {'name': 'vCPUs', 'value': str(entity['vCPUs'])},
                         {'name': 'MemoryGB', 'value': str(entity['memoryGB'])},

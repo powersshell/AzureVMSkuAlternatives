@@ -617,6 +617,16 @@ function displayResults(data) {
         const filteredAlternatives = filterResultsByVendor(data.alternatives);
         displayAlternatives(filteredAlternatives);
     }
+    // Show cache timestamp if available
+    const timestampEl = document.getElementById('cacheTimestamp');
+    if (data.dataLastUpdated) {
+        const d = new Date(data.dataLastUpdated);
+        const formatted = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+            + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+        timestampEl.textContent = `Data last refreshed: ${formatted}`;
+    } else {
+        timestampEl.textContent = '';
+    }
     resultsSection.classList.remove('hidden');
 }
 
