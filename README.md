@@ -12,6 +12,7 @@
 ### 2026-05-01
 - **feature:** Comprehensive data validation test suite — 48 unit tests, 16 cache validation tests, 11 API contract tests
 - **feature:** Cache last-refreshed timestamp displayed in results header
+- **feature:** SKU data coverage section in Azure Monitor Workbook — per-region pricing/capability coverage, missing data tracking, coverage trend
 
 ### 2026-04-30
 - **feature:** Reserved Instance (RI) pricing support — compare 1-Year and 3-Year RI costs alongside Pay-As-You-Go
