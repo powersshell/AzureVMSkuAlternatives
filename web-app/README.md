@@ -152,6 +152,53 @@ func start
 
 4. The API will be available at `http://localhost:7071/api/compare-vms`
 
+## Testing
+
+The test suite validates data quality, pricing consistency, and API contracts.
+
+### Install test dependencies
+
+```bash
+cd api
+pip install -r requirements-dev.txt
+```
+
+### Run unit tests (no network required)
+
+```bash
+cd api
+python -m pytest tests/test_unit.py -m unit -v
+```
+
+Tests pure functions: pricing math, Windows RI surcharge, CPU vendor detection, capability extraction, similarity scoring, diff calculations.
+
+### Run cache validation tests (requires Azure credentials)
+
+```bash
+cd api
+python -m pytest tests/test_cache_validation.py -m cache -v
+```
+
+Validates all cached SKU data in Azure Table Storage: required fields, value ranges, pricing consistency (monthly ≈ hourly × 730), Windows ≥ Linux, RI < PAYG, Windows RI surcharge math, GPU field integrity, per-region coverage.
+
+Requires either `AZURE_STORAGE_CONNECTION_STRING` env var or `DefaultAzureCredential`.
+
+### Run API contract tests (requires live API)
+
+```bash
+cd api
+python -m pytest tests/test_api_contract.py -m api -v
+```
+
+Calls the deployed API and validates response schemas, required fields, pricing data, and RI pricing variants. Set `API_BASE_URL` env var to test against a different endpoint.
+
+### Run all tests
+
+```bash
+cd api
+python -m pytest -v
+```
+
 ## Configuration
 
 ### Static Web App SKU
