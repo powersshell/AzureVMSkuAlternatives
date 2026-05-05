@@ -9,6 +9,10 @@
 
 ## 📋 Changelog
 
+### 2026-05-05
+- **fix:** Coverage telemetry — `custom_dimensions` not supported on Flex Consumption; embed JSON in Message field instead
+- **fix:** Workbook KQL queries updated to `parse_json(Message)` to match new telemetry format
+
 ### 2026-05-01
 - **feature:** Comprehensive data validation test suite — 48 unit tests, 16 cache validation tests, 11 API contract tests
 - **feature:** Cache last-refreshed timestamp displayed in results header
