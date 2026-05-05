@@ -907,25 +907,27 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
         if not items:
             return None
 
-        # Select Linux PAYG: productName contains "Virtual Machines" but NOT "windows",
+        # Select Linux PAYG: exclude DedicatedHost/Cloud items and Windows,
         # and skuName does NOT contain "Spot" or "Low Priority"
         linux_item = next((
             item for item in items
             if item.get('type') == 'Consumption'
             and 'productName' in item
-            and 'virtual machines' in item['productName'].lower()
+            and 'dedicatedhost' not in item['productName'].lower()
+            and 'cloud' not in item['productName'].lower()
             and 'windows' not in item['productName'].lower()
             and 'Spot' not in item.get('skuName', '')
             and 'Low Priority' not in item.get('skuName', '')
         ), None)
 
-        # Select Windows PAYG: productName contains "Virtual Machines" AND "windows",
+        # Select Windows PAYG: exclude DedicatedHost/Cloud items, require Windows,
         # and skuName does NOT contain "Spot" or "Low Priority"
         windows_item = next((
             item for item in items
             if item.get('type') == 'Consumption'
             and 'productName' in item
-            and 'virtual machines' in item['productName'].lower()
+            and 'dedicatedhost' not in item['productName'].lower()
+            and 'cloud' not in item['productName'].lower()
             and 'windows' in item['productName'].lower()
             and 'Spot' not in item.get('skuName', '')
             and 'Low Priority' not in item.get('skuName', '')
@@ -957,13 +959,15 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
             item for item in items
             if item.get('type') == 'Reservation'
             and item.get('reservationTerm') == '1 Year'
-            and 'virtual machines' in item.get('productName', '').lower()
+            and 'dedicatedhost' not in item.get('productName', '').lower()
+            and 'cloud' not in item.get('productName', '').lower()
         ), None)
         ri_3yr = next((
             item for item in items
             if item.get('type') == 'Reservation'
             and item.get('reservationTerm') == '3 Years'
-            and 'virtual machines' in item.get('productName', '').lower()
+            and 'dedicatedhost' not in item.get('productName', '').lower()
+            and 'cloud' not in item.get('productName', '').lower()
         ), None)
 
         if ri_1yr:
@@ -1197,7 +1201,9 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
         sku_label = item.get('skuName', '')
         item_type = item.get('type', '')
 
-        if 'virtual machines' not in product_lower:
+        # Skip non-VM items (DedicatedHost, Cloud Services) that share the
+        # 'Virtual Machines' serviceName but aren't actual VM SKU pricing
+        if 'dedicatedhost' in product_lower or 'cloud' in product_lower:
             continue
         if 'Spot' in sku_label or 'Low Priority' in sku_label:
             continue
@@ -1415,6 +1421,9 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
             # Only include networkBandwidthMbps when we have actual data —
             # writing None to Table Storage coerces to integer 0
             bw = network_bw.get(sku['name'])
+            # Promo variants have identical hardware — fall back to base SKU bandwidth
+            if bw is None and sku['name'].endswith('_Promo'):
+                bw = network_bw.get(sku['name'].removesuffix('_Promo'))
             if bw is not None:
                 entity['networkBandwidthMbps'] = bw
             entities.append(entity)
@@ -1463,37 +1472,63 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
     return count, coverage
 
 
+def _is_previous_gen_sku(name: str) -> bool:
+    """Check if a SKU is previous-gen/retiring with no official network BW docs."""
+    import re
+    # Original D-series (D1-D14, not Dv2+) — retirement announced
+    if re.match(r'^Standard_D\d+$', name):
+        return True
+    # Original DS-series (DS1-DS14)
+    if re.match(r'^Standard_DS\d+$', name):
+        return True
+    # Original B1ls (only B1ls2 in current docs)
+    if name == 'Standard_B1ls':
+        return True
+    return False
+
+
+def _is_promo_sku(name: str) -> bool:
+    """Check if a SKU is a Promo variant (no RI available)."""
+    return name.endswith('_Promo')
+
+
 def _compute_region_coverage(region: str, entities: List[Dict]) -> Dict:
     """Compute data coverage stats for a set of cache entities in a region."""
     total = len(entities)
     if total == 0:
         return {'region': region, 'totalSkus': 0}
 
+    # Eligible SKU counts for smarter denominators
+    ri_eligible = [e for e in entities if not _is_promo_sku(e['name'])]
+    bw_eligible = [e for e in entities if not _is_previous_gen_sku(e['name'])]
+
     # Pricing coverage
     has_payg_linux = sum(1 for e in entities if e.get('hourlyPriceUSD') is not None)
     has_payg_windows = sum(1 for e in entities if e.get('hourlyPriceUSDWindows') is not None)
-    has_ri1year = sum(1 for e in entities if e.get('ri1YearHourlyUSD') is not None)
-    has_ri3year = sum(1 for e in entities if e.get('ri3YearHourlyUSD') is not None)
-    has_ri1year_win = sum(1 for e in entities if e.get('ri1YearHourlyUSDWindows') is not None)
-    has_ri3year_win = sum(1 for e in entities if e.get('ri3YearHourlyUSDWindows') is not None)
+    has_ri1year = sum(1 for e in ri_eligible if e.get('ri1YearHourlyUSD') is not None)
+    has_ri3year = sum(1 for e in ri_eligible if e.get('ri3YearHourlyUSD') is not None)
+    has_ri1year_win = sum(1 for e in ri_eligible if e.get('ri1YearHourlyUSDWindows') is not None)
+    has_ri3year_win = sum(1 for e in ri_eligible if e.get('ri3YearHourlyUSDWindows') is not None)
 
     # Capability coverage
     has_vcpus = sum(1 for e in entities if e.get('vCPUs', 0) > 0)
     has_memory = sum(1 for e in entities if e.get('memoryGB', 0) > 0)
     has_disk_iops = sum(1 for e in entities if e.get('uncachedDiskIOPS', 0) > 0)
     has_disk_throughput = sum(1 for e in entities if e.get('uncachedDiskBytesPerSecond', 0) > 0)
-    has_network_bw = sum(1 for e in entities if e.get('networkBandwidthMbps') is not None)
+    has_network_bw = sum(1 for e in bw_eligible if e.get('networkBandwidthMbps') is not None)
     has_zones = sum(1 for e in entities if e.get('availabilityZones', ''))
     has_hyperv_gen = sum(1 for e in entities if e.get('hyperVGenerations', ''))
 
     # Collect SKU names missing key data
     missing_pricing = [e['name'] for e in entities if e.get('hourlyPriceUSD') is None]
-    missing_ri = [e['name'] for e in entities if e.get('hourlyPriceUSD') is not None and e.get('ri1YearHourlyUSD') is None]
-    missing_network = [e['name'] for e in entities if e.get('networkBandwidthMbps') is None]
+    missing_ri = [e['name'] for e in ri_eligible if e.get('hourlyPriceUSD') is not None and e.get('ri1YearHourlyUSD') is None]
+    missing_network = [e['name'] for e in bw_eligible if e.get('networkBandwidthMbps') is None]
 
     return {
         'region': region,
         'totalSkus': total,
+        'riEligibleSkus': len(ri_eligible),
+        'bwEligibleSkus': len(bw_eligible),
         'paygLinux': has_payg_linux,
         'paygWindows': has_payg_windows,
         'ri1Year': has_ri1year,
@@ -1525,21 +1560,25 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
         total = cov.get('totalSkus', 0)
         if total == 0:
             continue
+        ri_eligible = cov.get('riEligibleSkus', total)
+        bw_eligible = cov.get('bwEligibleSkus', total)
         logging.info(json.dumps({
             'event_type': 'sku_coverage_region',
             'region': cov['region'],
             'totalSkus': total,
+            'riEligibleSkus': ri_eligible,
+            'bwEligibleSkus': bw_eligible,
             'paygLinuxPct': round(cov['paygLinux'] / total * 100, 1),
             'paygWindowsPct': round(cov['paygWindows'] / total * 100, 1),
-            'ri1YearPct': round(cov['ri1Year'] / total * 100, 1),
-            'ri3YearPct': round(cov['ri3Year'] / total * 100, 1),
-            'ri1YearWindowsPct': round(cov['ri1YearWindows'] / total * 100, 1),
-            'ri3YearWindowsPct': round(cov['ri3YearWindows'] / total * 100, 1),
+            'ri1YearPct': round(cov['ri1Year'] / ri_eligible * 100, 1) if ri_eligible else 0,
+            'ri3YearPct': round(cov['ri3Year'] / ri_eligible * 100, 1) if ri_eligible else 0,
+            'ri1YearWindowsPct': round(cov['ri1YearWindows'] / ri_eligible * 100, 1) if ri_eligible else 0,
+            'ri3YearWindowsPct': round(cov['ri3YearWindows'] / ri_eligible * 100, 1) if ri_eligible else 0,
             'vCPUsPct': round(cov['vCPUs'] / total * 100, 1),
             'memoryPct': round(cov['memory'] / total * 100, 1),
             'diskIOPSPct': round(cov['diskIOPS'] / total * 100, 1),
             'diskThroughputPct': round(cov['diskThroughput'] / total * 100, 1),
-            'networkBandwidthPct': round(cov['networkBandwidth'] / total * 100, 1),
+            'networkBandwidthPct': round(cov['networkBandwidth'] / bw_eligible * 100, 1) if bw_eligible else 0,
             'availabilityZonesPct': round(cov['availabilityZones'] / total * 100, 1),
             'hyperVGenerationsPct': round(cov['hyperVGenerations'] / total * 100, 1),
             'paygLinuxCount': cov['paygLinux'],
@@ -1557,6 +1596,9 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
     if totals == 0:
         return
 
+    ri_totals = sum(c.get('riEligibleSkus', c.get('totalSkus', 0)) for c in all_region_coverage)
+    bw_totals = sum(c.get('bwEligibleSkus', c.get('totalSkus', 0)) for c in all_region_coverage)
+
     agg = {
         'paygLinux': sum(c.get('paygLinux', 0) for c in all_region_coverage),
         'ri1Year': sum(c.get('ri1Year', 0) for c in all_region_coverage),
@@ -1570,10 +1612,12 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
         'event_type': 'sku_coverage_summary',
         'totalRegions': len(all_region_coverage),
         'totalSkus': totals,
+        'riEligibleSkus': ri_totals,
+        'bwEligibleSkus': bw_totals,
         'overallPaygPct': round(agg['paygLinux'] / totals * 100, 1),
-        'overallRi1YearPct': round(agg['ri1Year'] / totals * 100, 1),
-        'overallRi3YearPct': round(agg['ri3Year'] / totals * 100, 1),
-        'overallNetworkBwPct': round(agg['networkBandwidth'] / totals * 100, 1),
+        'overallRi1YearPct': round(agg['ri1Year'] / ri_totals * 100, 1) if ri_totals else 0,
+        'overallRi3YearPct': round(agg['ri3Year'] / ri_totals * 100, 1) if ri_totals else 0,
+        'overallNetworkBwPct': round(agg['networkBandwidth'] / bw_totals * 100, 1) if bw_totals else 0,
         'overallVCPUsPct': round(agg['vCPUs'] / totals * 100, 1),
         'overallMemoryPct': round(agg['memory'] / totals * 100, 1),
     }))
