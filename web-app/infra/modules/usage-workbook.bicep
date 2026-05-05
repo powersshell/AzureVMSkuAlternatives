@@ -13,7 +13,8 @@ param location string
 param tags object = {}
 
 // Deterministic GUID so redeployments update in place
-var workbookId = guid(resourceGroup().id, 'vmsku-usage-workbook')
+// Bump the suffix to force ARM to replace the workbook resource with fresh content
+var workbookId = guid(resourceGroup().id, 'vmsku-usage-workbook-v2')
 
 var serializedData = '''
 {
