@@ -1519,11 +1519,13 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
         return
 
     # Per-region coverage events
+    # NOTE: Flex Consumption ignores extra={'custom_dimensions': ...}.
+    # Embed data as JSON in Message so KQL can parse_json(Message).
     for cov in all_region_coverage:
         total = cov.get('totalSkus', 0)
         if total == 0:
             continue
-        logging.info('sku_coverage_region', extra={'custom_dimensions': {
+        logging.info(json.dumps({
             'event_type': 'sku_coverage_region',
             'region': cov['region'],
             'totalSkus': total,
@@ -1545,10 +1547,10 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
             'ri1YearCount': cov['ri1Year'],
             'ri3YearCount': cov['ri3Year'],
             'networkBandwidthCount': cov['networkBandwidth'],
-            'missingPricingSkus': json.dumps(cov.get('missingPricingSkus', [])),
-            'missingRiSkus': json.dumps(cov.get('missingRiSkus', [])[:20]),
-            'missingNetworkSkus': json.dumps(cov.get('missingNetworkSkus', [])[:20]),
-        }})
+            'missingPricingSkus': cov.get('missingPricingSkus', []),
+            'missingRiSkus': cov.get('missingRiSkus', [])[:20],
+            'missingNetworkSkus': cov.get('missingNetworkSkus', [])[:20],
+        }))
 
     # Aggregate summary across all regions
     totals = sum(c.get('totalSkus', 0) for c in all_region_coverage)
@@ -1564,7 +1566,7 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
         'memory': sum(c.get('memory', 0) for c in all_region_coverage),
     }
 
-    logging.info('sku_coverage_summary', extra={'custom_dimensions': {
+    logging.info(json.dumps({
         'event_type': 'sku_coverage_summary',
         'totalRegions': len(all_region_coverage),
         'totalSkus': totals,
@@ -1574,7 +1576,7 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
         'overallNetworkBwPct': round(agg['networkBandwidth'] / totals * 100, 1),
         'overallVCPUsPct': round(agg['vCPUs'] / totals * 100, 1),
         'overallMemoryPct': round(agg['memory'] / totals * 100, 1),
-    }})
+    }))
 
 
 def extract_capabilities_for_cache(sku: Dict) -> Dict:
