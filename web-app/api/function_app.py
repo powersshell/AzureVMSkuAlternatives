@@ -6,6 +6,8 @@ import logging
 import json
 import os
 import sys
+import time
+import re
 import requests
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
@@ -693,7 +695,7 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
         logging.info(f"Updated {count} SKUs for region {region}")
         return count, region, coverage
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_region = {executor.submit(process_region, r): r for r in regions}
         for future in as_completed(future_to_region):
             region = future_to_region[future]
@@ -1169,6 +1171,7 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
     Fetch ALL VM pricing for a region in one paginated API call.
     ~20x fewer HTTP calls vs fetching per-SKU.
     Returns dict keyed by armSkuName -> pricing dict.
+    Includes retry logic with exponential backoff to handle transient failures.
     """
     api_url = 'https://prices.azure.com/api/retail/prices'
     filter_str = f"serviceName eq 'Virtual Machines' and armRegionName eq '{location}' and (type eq 'Consumption' or type eq 'Reservation')"
@@ -1176,15 +1179,35 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
 
     all_items = []
     page = 0
+    max_retries = 3
     while url:
-        response = requests.get(url, headers={'Accept': 'application/json'}, timeout=30)
-        if not response.ok:
-            logging.warning(f'Bulk pricing fetch failed for {location} on page {page}: {response.status_code}')
+        # Retry loop with exponential backoff for each page
+        success = False
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, headers={'Accept': 'application/json'}, timeout=45)
+                if response.ok:
+                    success = True
+                    break
+                else:
+                    logging.warning(f'Bulk pricing fetch for {location} page {page} returned {response.status_code} (attempt {attempt + 1}/{max_retries})')
+            except requests.exceptions.RequestException as e:
+                logging.warning(f'Bulk pricing fetch for {location} page {page} error: {e} (attempt {attempt + 1}/{max_retries})')
+            if attempt < max_retries - 1:
+                backoff = 2 ** (attempt + 1)  # 2s, 4s
+                time.sleep(backoff)
+
+        if not success:
+            logging.error(f'Bulk pricing fetch FAILED for {location} after {max_retries} attempts on page {page}. Returning partial data.')
             break
+
         data = response.json()
         all_items.extend(data.get('Items', []))
         url = data.get('NextPageLink')
         page += 1
+        # Small delay between pages to avoid rate limiting
+        if url:
+            time.sleep(0.2)
 
     # Index by armSkuName, tracking best Linux, Windows, and fallback items per SKU
     sku_linux: Dict[str, Dict] = {}
@@ -1273,7 +1296,6 @@ def fetch_network_bandwidth() -> Dict[str, int]:
     concurrently via raw.githubusercontent.com (CDN, not subject to the 60 req/hr REST rate limit).
     Returns dict: {"Standard_D2_v5": 12500, ...}
     """
-    import re
 
     def parse_network_table(content: str) -> Dict[str, int]:
         """Extract Size Name -> Max Network Bandwidth (Mb/s) from a series markdown file."""
@@ -1424,6 +1446,11 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
             # Promo variants have identical hardware — fall back to base SKU bandwidth
             if bw is None and sku['name'].endswith('_Promo'):
                 bw = network_bw.get(sku['name'].removesuffix('_Promo'))
+            # Constrained-vCPU variants share the same NIC as the base SKU
+            if bw is None:
+                base_name = _get_constrained_base_sku(sku['name'])
+                if base_name:
+                    bw = network_bw.get(base_name)
             if bw is not None:
                 entity['networkBandwidthMbps'] = bw
             entities.append(entity)
@@ -1472,9 +1499,20 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
     return count, coverage
 
 
+def _get_constrained_base_sku(name: str) -> Optional[str]:
+    """
+    For constrained-vCPU SKUs (e.g., Standard_E96-24ads_v6), return the base SKU name
+    (e.g., Standard_E96ads_v6). Returns None if not a constrained variant.
+    Constrained SKUs have the pattern: Standard_{family}{totalCPU}-{constrainedCPU}{suffix}
+    """
+    match = re.match(r'^(Standard_[A-Z]+\d+)-\d+(.+)$', name)
+    if match:
+        return match.group(1) + match.group(2)
+    return None
+
+
 def _is_previous_gen_sku(name: str) -> bool:
     """Check if a SKU is previous-gen/retiring with no official network BW docs."""
-    import re
     # Original D-series (D1-D14, not Dv2+) — retirement announced
     if re.match(r'^Standard_D\d+$', name):
         return True
@@ -1483,6 +1521,26 @@ def _is_previous_gen_sku(name: str) -> bool:
         return True
     # Original B1ls (only B1ls2 in current docs)
     if name == 'Standard_B1ls':
+        return True
+    return False
+
+
+def _is_retired_no_pricing_sku(name: str) -> bool:
+    """Check if a SKU is retired/restricted with no pricing in any API source."""
+    # G-series (Standard_G1-G5, GS1-GS5) — limited regional availability
+    if re.match(r'^Standard_G\d+$', name) or re.match(r'^Standard_GS\d+$', name):
+        return True
+    # G-series constrained variants (GS4-4, GS4-8, GS5-8, GS5-16)
+    if re.match(r'^Standard_GS\d+-\d+$', name):
+        return True
+    # NV v2 series (NV6s_v2, NV12s_v2, NV24s_v2)
+    if re.match(r'^Standard_NV\d+s_v2$', name):
+        return True
+    # Old L-series (L4s-L32s, not Lsv2/Lsv3+)
+    if re.match(r'^Standard_L\d+s$', name):
+        return True
+    # E96ias_v4 — isolated/dedicated, no public pricing
+    if name == 'Standard_E96ias_v4':
         return True
     return False
 
@@ -1501,10 +1559,11 @@ def _compute_region_coverage(region: str, entities: List[Dict]) -> Dict:
     # Eligible SKU counts for smarter denominators
     ri_eligible = [e for e in entities if not _is_promo_sku(e['name'])]
     bw_eligible = [e for e in entities if not _is_previous_gen_sku(e['name'])]
+    payg_eligible = [e for e in entities if not _is_retired_no_pricing_sku(e['name'])]
 
-    # Pricing coverage
-    has_payg_linux = sum(1 for e in entities if e.get('hourlyPriceUSD') is not None)
-    has_payg_windows = sum(1 for e in entities if e.get('hourlyPriceUSDWindows') is not None)
+    # Pricing coverage (use payg_eligible denominator)
+    has_payg_linux = sum(1 for e in payg_eligible if e.get('hourlyPriceUSD') is not None)
+    has_payg_windows = sum(1 for e in payg_eligible if e.get('hourlyPriceUSDWindows') is not None)
     has_ri1year = sum(1 for e in ri_eligible if e.get('ri1YearHourlyUSD') is not None)
     has_ri3year = sum(1 for e in ri_eligible if e.get('ri3YearHourlyUSD') is not None)
     has_ri1year_win = sum(1 for e in ri_eligible if e.get('ri1YearHourlyUSDWindows') is not None)
@@ -1519,14 +1578,15 @@ def _compute_region_coverage(region: str, entities: List[Dict]) -> Dict:
     has_zones = sum(1 for e in entities if e.get('availabilityZones', ''))
     has_hyperv_gen = sum(1 for e in entities if e.get('hyperVGenerations', ''))
 
-    # Collect SKU names missing key data
-    missing_pricing = [e['name'] for e in entities if e.get('hourlyPriceUSD') is None]
+    # Collect SKU names missing key data (from eligible pools)
+    missing_pricing = [e['name'] for e in payg_eligible if e.get('hourlyPriceUSD') is None]
     missing_ri = [e['name'] for e in ri_eligible if e.get('hourlyPriceUSD') is not None and e.get('ri1YearHourlyUSD') is None]
     missing_network = [e['name'] for e in bw_eligible if e.get('networkBandwidthMbps') is None]
 
     return {
         'region': region,
         'totalSkus': total,
+        'paygEligibleSkus': len(payg_eligible),
         'riEligibleSkus': len(ri_eligible),
         'bwEligibleSkus': len(bw_eligible),
         'paygLinux': has_payg_linux,
@@ -1560,16 +1620,18 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
         total = cov.get('totalSkus', 0)
         if total == 0:
             continue
+        payg_eligible = cov.get('paygEligibleSkus', total)
         ri_eligible = cov.get('riEligibleSkus', total)
         bw_eligible = cov.get('bwEligibleSkus', total)
         logging.info(json.dumps({
             'event_type': 'sku_coverage_region',
             'region': cov['region'],
             'totalSkus': total,
+            'paygEligibleSkus': payg_eligible,
             'riEligibleSkus': ri_eligible,
             'bwEligibleSkus': bw_eligible,
-            'paygLinuxPct': round(cov['paygLinux'] / total * 100, 1),
-            'paygWindowsPct': round(cov['paygWindows'] / total * 100, 1),
+            'paygLinuxPct': round(cov['paygLinux'] / payg_eligible * 100, 1) if payg_eligible else 0,
+            'paygWindowsPct': round(cov['paygWindows'] / payg_eligible * 100, 1) if payg_eligible else 0,
             'ri1YearPct': round(cov['ri1Year'] / ri_eligible * 100, 1) if ri_eligible else 0,
             'ri3YearPct': round(cov['ri3Year'] / ri_eligible * 100, 1) if ri_eligible else 0,
             'ri1YearWindowsPct': round(cov['ri1YearWindows'] / ri_eligible * 100, 1) if ri_eligible else 0,
@@ -1596,6 +1658,7 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
     if totals == 0:
         return
 
+    payg_totals = sum(c.get('paygEligibleSkus', c.get('totalSkus', 0)) for c in all_region_coverage)
     ri_totals = sum(c.get('riEligibleSkus', c.get('totalSkus', 0)) for c in all_region_coverage)
     bw_totals = sum(c.get('bwEligibleSkus', c.get('totalSkus', 0)) for c in all_region_coverage)
 
@@ -1612,9 +1675,10 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
         'event_type': 'sku_coverage_summary',
         'totalRegions': len(all_region_coverage),
         'totalSkus': totals,
+        'paygEligibleSkus': payg_totals,
         'riEligibleSkus': ri_totals,
         'bwEligibleSkus': bw_totals,
-        'overallPaygPct': round(agg['paygLinux'] / totals * 100, 1),
+        'overallPaygPct': round(agg['paygLinux'] / payg_totals * 100, 1) if payg_totals else 0,
         'overallRi1YearPct': round(agg['ri1Year'] / ri_totals * 100, 1) if ri_totals else 0,
         'overallRi3YearPct': round(agg['ri3Year'] / ri_totals * 100, 1) if ri_totals else 0,
         'overallNetworkBwPct': round(agg['networkBandwidth'] / bw_totals * 100, 1) if bw_totals else 0,
@@ -1652,7 +1716,6 @@ def detect_cpu_vendor(sku_name: str, architecture: str) -> str:
     Detect CPU vendor from SKU name and architecture
     Returns: 'Intel', 'AMD', or 'ARM'
     """
-    import re
     
     sku_lower = sku_name.lower()
     
