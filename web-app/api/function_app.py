@@ -708,6 +708,31 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
                 logging.error(f"Error processing region {region}: {e}")
                 total_errors += 1
 
+    # Delayed retry: re-process regions that got 0 pricing (likely transient API failure)
+    failed_regions = [
+        c['region'] for c in all_region_coverage
+        if c.get('paygLinux', 0) == 0 and c.get('totalSkus', 0) > 0
+    ]
+    if failed_regions:
+        logging.warning(f"Retrying {len(failed_regions)} regions with 0 pricing after 30s delay: {failed_regions}")
+        time.sleep(30)
+        for cov in list(all_region_coverage):
+            if cov['region'] in failed_regions:
+                all_region_coverage.remove(cov)
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_region = {executor.submit(process_region, r): r for r in failed_regions}
+            for future in as_completed(future_to_region):
+                region = future_to_region[future]
+                try:
+                    count, reg, coverage = future.result()
+                    total_updated += count
+                    if coverage:
+                        all_region_coverage.append(coverage)
+                    logging.info(f"Retry succeeded for {region}: {coverage.get('paygLinux', 0)} SKUs with pricing")
+                except Exception as e:
+                    logging.error(f"Retry failed for region {region}: {e}")
+                    total_errors += 1
+
     logging.info(f"SKU cache refresh completed. Updated: {total_updated}, Errors: {total_errors}")
 
     # Emit coverage telemetry for workbook visualization
@@ -1303,7 +1328,9 @@ def fetch_network_bandwidth() -> Dict[str, int]:
         # Find the Network tab section
         network_match = re.search(r'###\s+\[Network\].*?(?=###|\Z)', content, re.DOTALL | re.IGNORECASE)
         if not network_match:
-            return bw
+            # Fallback: parse inline bandwidth from combined tables (e.g., dv2-dsv2-series-memory.md)
+            # Format: | Standard_D11_v2 | ... | 2|1500 | or | ... | Expected network bandwidth (Mbps) |
+            return _parse_inline_bandwidth(content)
         section = network_match.group(0)
         # Parse markdown table rows: | Size Name | ... | <number> |
         for line in section.splitlines():
@@ -1322,6 +1349,35 @@ def fetch_network_bandwidth() -> Dict[str, int]:
                     break
         return bw
 
+    def _parse_inline_bandwidth(content: str) -> Dict[str, int]:
+        """
+        Fallback parser for docs that embed bandwidth inline in combined tables.
+        Handles format: | Standard_D11_v2 | 2 | 14 | ... | 2|1500 |
+        where the last column contains NICs|Bandwidth or just the bandwidth number.
+        Also handles: | Standard_DS11_v2 <sup>3</sup> | ... | 2|1500 |
+        """
+        bw: Dict[str, int] = {}
+        # Only parse if the file mentions "network bandwidth" in a header
+        if 'network bandwidth' not in content.lower():
+            return bw
+        for line in content.splitlines():
+            cols = [c.strip() for c in line.split('|') if c.strip()]
+            if len(cols) < 3:
+                continue
+            # Extract SKU name (may have <sup> tags)
+            size_raw = re.sub(r'<sup>.*?</sup>', '', cols[0]).strip()
+            if not size_raw.startswith('Standard_') and not size_raw.startswith('Basic_'):
+                continue
+            # Look for the last column that matches the NIC|BW pattern or a plain number
+            last_col = re.sub(r'<sup>.*?</sup>', '', cols[-1]).replace(',', '').replace(' ', '')
+            # Pattern: "2|1500" or "8|12000" or "8|25000"
+            nics_bw_match = re.match(r'^\d+\|(\d+)', last_col)
+            if nics_bw_match:
+                bw[size_raw] = int(nics_bw_match.group(1))
+            elif last_col.isdigit():
+                bw[size_raw] = int(last_col)
+        return bw
+
     try:
         # Step 1: Get full file tree in one API call
         tree_url = "https://api.github.com/repos/MicrosoftDocs/azure-compute-docs/git/trees/main?recursive=1"
@@ -1333,7 +1389,7 @@ def fetch_network_bandwidth() -> Dict[str, int]:
         series_paths = [
             item['path'] for item in tree_resp.json().get('tree', [])
             if item['path'].startswith('articles/virtual-machines/sizes/')
-            and item['path'].endswith('-series.md')
+            and (item['path'].endswith('-series.md') or item['path'].endswith('-series-memory.md'))
         ]
         logging.info(f"Found {len(series_paths)} series markdown files to parse for network bandwidth")
 
@@ -1386,6 +1442,9 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
     
     data = response.json()
     skus = [s for s in data.get('value', []) if s.get('resourceType') == 'virtualMachines']
+    
+    # Filter out Promo SKUs — identical hardware to base SKU, adds noise without value
+    skus = [s for s in skus if not s.get('name', '').endswith('_Promo')]
     
     logging.info(f"Fetching pricing for {len(skus)} SKUs in {region} via bulk API call...")
 
@@ -1443,9 +1502,6 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
             # Only include networkBandwidthMbps when we have actual data —
             # writing None to Table Storage coerces to integer 0
             bw = network_bw.get(sku['name'])
-            # Promo variants have identical hardware — fall back to base SKU bandwidth
-            if bw is None and sku['name'].endswith('_Promo'):
-                bw = network_bw.get(sku['name'].removesuffix('_Promo'))
             # Constrained-vCPU variants share the same NIC as the base SKU
             if bw is None:
                 base_name = _get_constrained_base_sku(sku['name'])
@@ -1550,6 +1606,11 @@ def _is_promo_sku(name: str) -> bool:
     return name.endswith('_Promo')
 
 
+def _is_cc_sku(name: str) -> bool:
+    """Check if a SKU is a Confidential Computing (CC) variant — no RI available."""
+    return '_cc_' in name.lower()
+
+
 def _compute_region_coverage(region: str, entities: List[Dict]) -> Dict:
     """Compute data coverage stats for a set of cache entities in a region."""
     total = len(entities)
@@ -1557,7 +1618,7 @@ def _compute_region_coverage(region: str, entities: List[Dict]) -> Dict:
         return {'region': region, 'totalSkus': 0}
 
     # Eligible SKU counts for smarter denominators
-    ri_eligible = [e for e in entities if not _is_promo_sku(e['name'])]
+    ri_eligible = [e for e in entities if not _is_promo_sku(e['name']) and not _is_cc_sku(e['name'])]
     bw_eligible = [e for e in entities if not _is_previous_gen_sku(e['name'])]
     payg_eligible = [e for e in entities if not _is_retired_no_pricing_sku(e['name'])]
 
