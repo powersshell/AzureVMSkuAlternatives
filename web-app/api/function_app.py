@@ -1368,10 +1368,10 @@ def fetch_network_bandwidth() -> Dict[str, int]:
             size_raw = re.sub(r'<sup>.*?</sup>', '', cols[0]).strip()
             if not size_raw.startswith('Standard_') and not size_raw.startswith('Basic_'):
                 continue
-            # Look for the last column that matches the NIC|BW pattern or a plain number
+            # Look for the last column that matches the NIC|BW or NIC/BW pattern or a plain number
             last_col = re.sub(r'<sup>.*?</sup>', '', cols[-1]).replace(',', '').replace(' ', '')
-            # Pattern: "2|1500" or "8|12000" or "8|25000"
-            nics_bw_match = re.match(r'^\d+\|(\d+)', last_col)
+            # Pattern: "2|1500" or "8|12000" or "2/1000" or "8/25000"
+            nics_bw_match = re.match(r'^\d+[|/](\d+)', last_col)
             if nics_bw_match:
                 bw[size_raw] = int(nics_bw_match.group(1))
             elif last_col.isdigit():
@@ -1388,7 +1388,10 @@ def fetch_network_bandwidth() -> Dict[str, int]:
 
         series_paths = [
             item['path'] for item in tree_resp.json().get('tree', [])
-            if item['path'].startswith('articles/virtual-machines/sizes/')
+            if (item['path'].startswith('articles/virtual-machines/sizes/') or
+                (item['path'].startswith('articles/virtual-machines/') and
+                 not item['path'].startswith('articles/virtual-machines/sizes/') and
+                 '/includes/' not in item['path']))
             and (item['path'].endswith('-series.md') or item['path'].endswith('-series-memory.md'))
         ]
         logging.info(f"Found {len(series_paths)} series markdown files to parse for network bandwidth")
@@ -1619,6 +1622,10 @@ def _compute_region_coverage(region: str, entities: List[Dict]) -> Dict:
 
     # Eligible SKU counts for smarter denominators
     ri_eligible = [e for e in entities if not _is_promo_sku(e['name']) and not _is_cc_sku(e['name'])]
+    # Exclude completely unpriced SKUs from RI denominator (too new, no pricing anywhere)
+    ri_eligible = [e for e in ri_eligible if e.get('hourlyPriceUSD') is not None]
+    # For 3yr RI: exclude SKUs that have 1yr RI but not 3yr (Azure doesn't offer 3yr for them)
+    ri3_eligible = [e for e in ri_eligible if not (e.get('ri1YearHourlyUSD') is not None and e.get('ri3YearHourlyUSD') is None)]
     bw_eligible = [e for e in entities if not _is_previous_gen_sku(e['name'])]
     payg_eligible = [e for e in entities if not _is_retired_no_pricing_sku(e['name'])]
 
@@ -1626,9 +1633,9 @@ def _compute_region_coverage(region: str, entities: List[Dict]) -> Dict:
     has_payg_linux = sum(1 for e in payg_eligible if e.get('hourlyPriceUSD') is not None)
     has_payg_windows = sum(1 for e in payg_eligible if e.get('hourlyPriceUSDWindows') is not None)
     has_ri1year = sum(1 for e in ri_eligible if e.get('ri1YearHourlyUSD') is not None)
-    has_ri3year = sum(1 for e in ri_eligible if e.get('ri3YearHourlyUSD') is not None)
+    has_ri3year = sum(1 for e in ri3_eligible if e.get('ri3YearHourlyUSD') is not None)
     has_ri1year_win = sum(1 for e in ri_eligible if e.get('ri1YearHourlyUSDWindows') is not None)
-    has_ri3year_win = sum(1 for e in ri_eligible if e.get('ri3YearHourlyUSDWindows') is not None)
+    has_ri3year_win = sum(1 for e in ri3_eligible if e.get('ri3YearHourlyUSDWindows') is not None)
 
     # Capability coverage
     has_vcpus = sum(1 for e in entities if e.get('vCPUs', 0) > 0)
@@ -1649,6 +1656,7 @@ def _compute_region_coverage(region: str, entities: List[Dict]) -> Dict:
         'totalSkus': total,
         'paygEligibleSkus': len(payg_eligible),
         'riEligibleSkus': len(ri_eligible),
+        'ri3EligibleSkus': len(ri3_eligible),
         'bwEligibleSkus': len(bw_eligible),
         'paygLinux': has_payg_linux,
         'paygWindows': has_payg_windows,
@@ -1683,6 +1691,7 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
             continue
         payg_eligible = cov.get('paygEligibleSkus', total)
         ri_eligible = cov.get('riEligibleSkus', total)
+        ri3_eligible = cov.get('ri3EligibleSkus', ri_eligible)
         bw_eligible = cov.get('bwEligibleSkus', total)
         logging.info(json.dumps({
             'event_type': 'sku_coverage_region',
@@ -1690,13 +1699,14 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
             'totalSkus': total,
             'paygEligibleSkus': payg_eligible,
             'riEligibleSkus': ri_eligible,
+            'ri3EligibleSkus': ri3_eligible,
             'bwEligibleSkus': bw_eligible,
             'paygLinuxPct': round(cov['paygLinux'] / payg_eligible * 100, 1) if payg_eligible else 0,
             'paygWindowsPct': round(cov['paygWindows'] / payg_eligible * 100, 1) if payg_eligible else 0,
             'ri1YearPct': round(cov['ri1Year'] / ri_eligible * 100, 1) if ri_eligible else 0,
-            'ri3YearPct': round(cov['ri3Year'] / ri_eligible * 100, 1) if ri_eligible else 0,
+            'ri3YearPct': round(cov['ri3Year'] / ri3_eligible * 100, 1) if ri3_eligible else 0,
             'ri1YearWindowsPct': round(cov['ri1YearWindows'] / ri_eligible * 100, 1) if ri_eligible else 0,
-            'ri3YearWindowsPct': round(cov['ri3YearWindows'] / ri_eligible * 100, 1) if ri_eligible else 0,
+            'ri3YearWindowsPct': round(cov['ri3YearWindows'] / ri3_eligible * 100, 1) if ri3_eligible else 0,
             'vCPUsPct': round(cov['vCPUs'] / total * 100, 1),
             'memoryPct': round(cov['memory'] / total * 100, 1),
             'diskIOPSPct': round(cov['diskIOPS'] / total * 100, 1),
@@ -1721,6 +1731,7 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
 
     payg_totals = sum(c.get('paygEligibleSkus', c.get('totalSkus', 0)) for c in all_region_coverage)
     ri_totals = sum(c.get('riEligibleSkus', c.get('totalSkus', 0)) for c in all_region_coverage)
+    ri3_totals = sum(c.get('ri3EligibleSkus', c.get('riEligibleSkus', c.get('totalSkus', 0))) for c in all_region_coverage)
     bw_totals = sum(c.get('bwEligibleSkus', c.get('totalSkus', 0)) for c in all_region_coverage)
 
     agg = {
@@ -1738,10 +1749,11 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
         'totalSkus': totals,
         'paygEligibleSkus': payg_totals,
         'riEligibleSkus': ri_totals,
+        'ri3EligibleSkus': ri3_totals,
         'bwEligibleSkus': bw_totals,
         'overallPaygPct': round(agg['paygLinux'] / payg_totals * 100, 1) if payg_totals else 0,
         'overallRi1YearPct': round(agg['ri1Year'] / ri_totals * 100, 1) if ri_totals else 0,
-        'overallRi3YearPct': round(agg['ri3Year'] / ri_totals * 100, 1) if ri_totals else 0,
+        'overallRi3YearPct': round(agg['ri3Year'] / ri3_totals * 100, 1) if ri3_totals else 0,
         'overallNetworkBwPct': round(agg['networkBandwidth'] / bw_totals * 100, 1) if bw_totals else 0,
         'overallVCPUsPct': round(agg['vCPUs'] / totals * 100, 1),
         'overallMemoryPct': round(agg['memory'] / totals * 100, 1),
