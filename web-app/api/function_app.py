@@ -182,6 +182,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                     'similarityScore': round(similarity_score, 2),
                     'cpuVendor': sku.get('cpuVendor', 'Intel'),
                     'architecture': sku.get('architecture', 'x64'),
+                    'cpuPerfScore': sku.get('cpuPerfScore'),
+                    'cpuGeneration': sku.get('cpuGeneration'),
                     'vCPUs': sku_capabilities['vCPUs'],
                     'memoryGB': sku_capabilities['memoryGB'],
                     'gpuCount': sku_capabilities['gpuCount'],
@@ -263,6 +265,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 'name': target_sku['name'],
                 'cpuVendor': target_sku.get('cpuVendor', 'Intel'),
                 'architecture': target_sku.get('architecture', 'x64'),
+                'cpuPerfScore': target_sku.get('cpuPerfScore'),
+                'cpuGeneration': target_sku.get('cpuGeneration'),
                 'vCPUs': target_capabilities['vCPUs'],
                 'memoryGB': target_capabilities['memoryGB'],
                 'gpuCount': target_capabilities['gpuCount'],
@@ -587,8 +591,10 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
                 'name': entity['name'],
                 'vCPUs': entity['vCPUs'],
                 'memoryGB': entity['memoryGB'],
-                'cpuVendor': entity.get('cpuVendor', 'Intel'),  # Default to Intel if missing
-                'architecture': entity.get('architecture', 'x64')  # Default to x64 if missing
+                'cpuVendor': entity.get('cpuVendor', 'Intel'),
+                'architecture': entity.get('architecture', 'x64'),
+                'cpuPerfScore': entity.get('cpuPerfScore'),
+                'cpuGeneration': entity.get('cpuGeneration'),
             })
         
         # Sort by vCPUs then memory
@@ -688,6 +694,9 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
 
     # Fetch network bandwidth data once before parallel region processing
     network_bw = fetch_network_bandwidth()
+
+    # Seed CPU performance reference table
+    seed_cpu_performance_table(table_service)
 
     def process_region(region):
         logging.info(f"Processing region: {region}")
@@ -1076,6 +1085,8 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                     'name': entity['name'],
                     'cpuVendor': entity.get('cpuVendor', 'Intel'),
                     'architecture': entity.get('architecture', 'x64'),
+                    'cpuPerfScore': entity.get('cpuPerfScore'),
+                    'cpuGeneration': entity.get('cpuGeneration'),
                     'lastUpdated': entity.get('lastUpdated'),
                     'capabilities': [
                         {'name': 'vCPUs', 'value': str(entity['vCPUs'])},
@@ -1421,6 +1432,292 @@ def fetch_network_bandwidth() -> Dict[str, int]:
         return {}
 
 
+# ============================================================================
+# CPU Performance Reference Table
+# ============================================================================
+
+# Per-vCPU relative performance scores normalized to Ice Lake (8370C) = 100.
+# Calibrated from Azure CoreMark benchmark data (articles/virtual-machines/linux/compute-benchmark-scores.md)
+# and extended using public benchmark ratios (Geekbench 6, SPEC CPU 2017) for newer CPUs.
+CPU_PERFORMANCE_TABLE = {
+    # Intel - older generations (CoreMark-calibrated)
+    'E5-2673 v3': {'score': 96, 'generation': 'Haswell', 'year': 2014},
+    'E5-2673 v4': {'score': 89, 'generation': 'Broadwell', 'year': 2016},
+    '8171M': {'score': 85, 'generation': 'Skylake', 'year': 2017},
+    '8168': {'score': 97, 'generation': 'Skylake', 'year': 2017},
+    'E-2288G': {'score': 187, 'generation': 'Coffee Lake', 'year': 2019},
+    'E-2176G': {'score': 176, 'generation': 'Coffee Lake', 'year': 2018},
+    '8272CL': {'score': 96, 'generation': 'Cascade Lake', 'year': 2019},
+    '8280M': {'score': 73, 'generation': 'Cascade Lake', 'year': 2019},
+    '6246R': {'score': 108, 'generation': 'Cascade Lake', 'year': 2020},
+    '8370C': {'score': 100, 'generation': 'Ice Lake', 'year': 2021},
+    # Intel - newer generations (public benchmark ratios applied to Ice Lake baseline)
+    '8473C': {'score': 115, 'generation': 'Sapphire Rapids', 'year': 2023},
+    '8488C': {'score': 115, 'generation': 'Sapphire Rapids', 'year': 2023},
+    '8573C': {'score': 120, 'generation': 'Emerald Rapids', 'year': 2024},
+    '8592+': {'score': 120, 'generation': 'Emerald Rapids', 'year': 2024},
+    # AMD - older generations (CoreMark-calibrated)
+    '7551': {'score': 72, 'generation': 'Naples (Zen 1)', 'year': 2017},
+    '7452': {'score': 101, 'generation': 'Rome (Zen 2)', 'year': 2019},
+    '7V12': {'score': 121, 'generation': 'Rome (Zen 2)', 'year': 2020},
+    '7763': {'score': 106, 'generation': 'Milan (Zen 3)', 'year': 2021},
+    '7V13': {'score': 136, 'generation': 'Milan (Zen 3)', 'year': 2021},
+    '7V73X': {'score': 141, 'generation': 'Milan-X (Zen 3)', 'year': 2022},
+    # AMD - newer generations (public benchmark ratios)
+    '9004': {'score': 122, 'generation': 'Genoa (Zen 4)', 'year': 2023},
+    '9V004': {'score': 122, 'generation': 'Genoa (Zen 4)', 'year': 2023},
+    '9005': {'score': 135, 'generation': 'Turin (Zen 5)', 'year': 2024},
+    '9754': {'score': 95, 'generation': 'Bergamo (Zen 4c)', 'year': 2023},
+    # ARM
+    'Cobalt 100': {'score': 100, 'generation': 'Cobalt 100 (Neoverse N2)', 'year': 2023},
+    'Ampere Altra': {'score': 95, 'generation': 'Ampere Altra (Neoverse N1)', 'year': 2022},
+}
+
+# Maps VM series prefixes to their CPU model identifiers (from azure-compute-docs specs files).
+# Each series may land on multiple CPU models; we list them for averaging.
+SERIES_CPU_MAP = {
+    # General Purpose - Intel
+    'Dv3': ['8272CL', '8171M', 'E5-2673 v4'],
+    'Dsv3': ['8272CL', '8171M', 'E5-2673 v4'],
+    'Dv4': ['8272CL'],
+    'Dsv4': ['8272CL'],
+    'Ddv4': ['8272CL'],
+    'Ddsv4': ['8272CL'],
+    'Dv5': ['8370C'],
+    'Dsv5': ['8473C', '8370C', '8573C'],
+    'Ddv5': ['8370C'],
+    'Ddsv5': ['8370C'],
+    'Dlsv5': ['8370C'],
+    'Dldsv5': ['8370C'],
+    'Dsv6': ['8473C', '8573C'],
+    'Ddsv6': ['8473C', '8573C'],
+    'Dlsv6': ['8473C', '8573C'],
+    'Dldsv6': ['8473C', '8573C'],
+    'Dsv7': ['8573C'],
+    'Ddsv7': ['8573C'],
+    'Dlsv7': ['8573C'],
+    'Dldsv7': ['8573C'],
+    # General Purpose - AMD
+    'Dav4': ['7452'],
+    'Dasv4': ['7452'],
+    'Dasv5': ['7763'],
+    'Dadsv5': ['7763'],
+    'Dasv6': ['9004'],
+    'Dadsv6': ['9004'],
+    'Dalsv6': ['9004'],
+    'Daldsv6': ['9004'],
+    'Dasv7': ['9005'],
+    'Dadsv7': ['9005'],
+    'Dalsv7': ['9005'],
+    'Daldsv7': ['9005'],
+    # General Purpose - ARM
+    'Dpsv5': ['Cobalt 100'],
+    'Dpdsv5': ['Cobalt 100'],
+    'Dplsv5': ['Cobalt 100'],
+    'Dpldsv5': ['Cobalt 100'],
+    'Dpsv6': ['Cobalt 100'],
+    'Dpdsv6': ['Cobalt 100'],
+    'Dplsv6': ['Cobalt 100'],
+    'Dpldsv6': ['Cobalt 100'],
+    # Memory Optimized - Intel
+    'Ev3': ['8272CL', '8171M', 'E5-2673 v4'],
+    'Esv3': ['8272CL', '8171M', 'E5-2673 v4'],
+    'Ev4': ['8272CL'],
+    'Esv4': ['8272CL'],
+    'Edv4': ['8272CL'],
+    'Edsv4': ['8272CL'],
+    'Ev5': ['8370C'],
+    'Esv5': ['8473C', '8370C', '8573C'],
+    'Edv5': ['8370C'],
+    'Edsv5': ['8370C'],
+    'Esv6': ['8473C', '8573C'],
+    'Edsv6': ['8473C', '8573C'],
+    'Ensv6': ['8473C', '8573C'],
+    'Endsv6': ['8473C', '8573C'],
+    'Esv7': ['8573C'],
+    'Edsv7': ['8573C'],
+    # Memory Optimized - AMD
+    'Eav4': ['7452'],
+    'Easv4': ['7452'],
+    'Easv5': ['7763'],
+    'Eadsv5': ['7763'],
+    'Easv6': ['9004'],
+    'Eadsv6': ['9004'],
+    'Easv7': ['9005'],
+    'Eadsv7': ['9005'],
+    # Memory Optimized - ARM
+    'Epsv5': ['Cobalt 100'],
+    'Epdsv5': ['Cobalt 100'],
+    'Epsv6': ['Cobalt 100'],
+    'Epdsv6': ['Cobalt 100'],
+    # Memory Optimized - Specialty
+    'Ebsv5': ['8370C'],
+    'Ebdsv5': ['8370C', '8573C'],
+    'Ebsv6': ['8573C'],
+    'Ebdsv6': ['8573C'],
+    'Msv2': ['8280M'],
+    'Mdsv2': ['8280M'],
+    'Msv3': ['8473C'],
+    'Mdsv3': ['8473C'],
+    'Mbsv3': ['8473C'],
+    'Mbdsv3': ['8473C'],
+    'Mv2': ['8280M'],
+    # Compute Optimized - Intel
+    'Fsv2': ['8272CL', '8370C', '8168'],
+    'FXsv2': ['8370C'],
+    'FXmdsv2': ['8370C'],
+    # Compute Optimized - AMD
+    'Fasv6': ['9004'],
+    'Famsv6': ['9004'],
+    'Falsv6': ['9004'],
+    'Fasv7': ['9005'],
+    'Fadsv7': ['9005'],
+    'Falsv7': ['9005'],
+    'Faldsv7': ['9005'],
+    'Famsv7': ['9005'],
+    'Famdsv7': ['9005'],
+    # Storage Optimized
+    'Lsv2': ['7551'],
+    'Lasv3': ['7763'],
+    'Lsv3': ['8370C'],
+    'Lasv4': ['9004'],
+    'Lsv4': ['8473C'],
+    # Confidential - Intel
+    'DCsv2': ['E-2288G'],
+    'DCsv3': ['8370C'],
+    'DCdsv3': ['8370C'],
+    'DCesv6': ['8573C'],
+    'DCedsv6': ['8573C'],
+    # Confidential - AMD
+    'DCasv5': ['7763'],
+    'DCadsv5': ['7763'],
+    'DCasv6': ['9004'],
+    'DCadsv6': ['9004'],
+    # B-series (burstable)
+    'Bsv2': ['8370C'],
+    'Basv2': ['7763'],
+    'Bpsv2': ['Cobalt 100'],
+    # HPC
+    'HBv3': ['7V13'],
+    'HBv4': ['9V004'],
+    'HBv2': ['7V12'],
+    'HC': ['8168'],
+    'HX': ['7V13'],
+    # Previous gen (for reference)
+    'Dv2': ['8272CL', '8171M', 'E5-2673 v4', 'E5-2673 v3'],
+    'DSv2': ['8272CL', '8171M', 'E5-2673 v4', 'E5-2673 v3'],
+    'Av2': ['8272CL', '8171M', 'E5-2673 v4', 'E5-2673 v3'],
+}
+
+# Special CPU model identifiers for matching specs file content
+_CPU_SPEC_PATTERNS = {
+    'E-2288G': ['E-2288G'],
+    'E-2176G': ['E-2176G'],
+}
+
+
+def _get_series_prefix(sku_name: str) -> Optional[str]:
+    """
+    Extract the series prefix from a SKU name for CPU mapping.
+    E.g., 'Standard_D2s_v5' -> 'Dsv5', 'Standard_E96-24ads_v6' -> 'Eadsv6'
+    """
+    name = sku_name.replace('Standard_', '').replace('Basic_', '')
+    # Remove constrained vCPU prefix (e.g., E96-24ads_v6 -> Eads_v6, HB120-16rs_v3 -> HBrs_v3)
+    name = re.sub(r'^([A-Z]+)\d+-\d+', lambda m: m.group(1), name)
+    # Match pattern: letter(s) + optional digits + letter modifiers + _v + version
+    match = re.match(r'^([A-Z]+)[0-9]*([a-z]*)_v(\d+)', name, re.IGNORECASE)
+    if match:
+        family = match.group(1)
+        modifiers = match.group(2)
+        version = match.group(3)
+        return f"{family}{modifiers}v{version}"
+    # Handle non-versioned series (HC, HB, M, etc.)
+    match = re.match(r'^([A-Z]+)[0-9]*([a-z]*)', name, re.IGNORECASE)
+    if match:
+        family = match.group(1)
+        modifiers = match.group(2)
+        prefix = f"{family}{modifiers}"
+        if prefix in SERIES_CPU_MAP:
+            return prefix
+        # Try without modifiers (HC44rs -> HC)
+        if family in SERIES_CPU_MAP:
+            return family
+    return None
+
+
+def get_cpu_performance(sku_name: str) -> Optional[Dict]:
+    """
+    Get CPU performance data for a SKU.
+    Returns dict with 'score', 'generation', 'year', 'cpuModels' or None if unknown.
+    """
+    series = _get_series_prefix(sku_name)
+    if not series or series not in SERIES_CPU_MAP:
+        return None
+
+    cpu_ids = SERIES_CPU_MAP[series]
+    scores = []
+    generations = []
+    for cpu_id in cpu_ids:
+        if cpu_id in CPU_PERFORMANCE_TABLE:
+            entry = CPU_PERFORMANCE_TABLE[cpu_id]
+            scores.append(entry['score'])
+            generations.append(entry['generation'])
+
+    if not scores:
+        return None
+
+    avg_score = round(sum(scores) / len(scores))
+    # Use the most common/newest generation name
+    primary_gen = generations[0] if len(set(generations)) > 1 else generations[0]
+
+    return {
+        'score': avg_score,
+        'generation': primary_gen,
+        'year': CPU_PERFORMANCE_TABLE[cpu_ids[0]]['year'],
+        'cpuModels': cpu_ids,
+    }
+
+
+def seed_cpu_performance_table(table_service: TableServiceClient) -> None:
+    """Seed the cpuperf table in Azure Table Storage with the reference data."""
+    table_name = "cpuperf"
+    try:
+        table_service.create_table_if_not_exists(table_name)
+    except Exception as e:
+        logging.warning(f"Failed to create cpuperf table: {e}")
+        return
+
+    table_client = table_service.get_table_client(table_name)
+
+    # Upsert all CPU model entries
+    for cpu_id, data in CPU_PERFORMANCE_TABLE.items():
+        entity = {
+            'PartitionKey': 'cpumodel',
+            'RowKey': cpu_id,
+            'score': data['score'],
+            'generation': data['generation'],
+            'year': data['year'],
+        }
+        try:
+            table_client.upsert_entity(entity)
+        except Exception as e:
+            logging.warning(f"Failed to upsert CPU perf entry {cpu_id}: {e}")
+
+    # Upsert series mapping entries
+    for series, cpu_ids in SERIES_CPU_MAP.items():
+        entity = {
+            'PartitionKey': 'series',
+            'RowKey': series,
+            'cpuModels': json.dumps(cpu_ids),
+        }
+        try:
+            table_client.upsert_entity(entity)
+        except Exception as e:
+            logging.warning(f"Failed to upsert series mapping {series}: {e}")
+
+    logging.info(f"Seeded cpuperf table: {len(CPU_PERFORMANCE_TABLE)} CPU models, {len(SERIES_CPU_MAP)} series mappings")
+
+
 def refresh_region(region: str, subscription_id: str, token: str, table_client, network_bw: Dict[str, int] = None) -> tuple:
     """
     Refresh SKU data for a specific region
@@ -1512,6 +1809,11 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                     bw = network_bw.get(base_name)
             if bw is not None:
                 entity['networkBandwidthMbps'] = bw
+            # Add CPU performance data
+            cpu_perf = get_cpu_performance(sku['name'])
+            if cpu_perf:
+                entity['cpuPerfScore'] = cpu_perf['score']
+                entity['cpuGeneration'] = cpu_perf['generation']
             entities.append(entity)
 
         except Exception as e:
