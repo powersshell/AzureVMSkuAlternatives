@@ -1660,9 +1660,13 @@ SERIES_CPU_MAP = {
     'Bls': ['E5-2673 v4', '8171M'],
     'DC': ['E-2176G'],
     'DCs': ['E-2176G'],
+    'DCv2': ['E-2288G'],
     'EC': ['7763'],
     'FX': ['8370C'],
     'FXmds': ['8370C'],
+    # Previous gen additional
+    'Amv2': ['8272CL', '8171M', 'E5-2673 v4', 'E5-2673 v3'],
+    'HCrs': ['8168'],
 }
 
 # Special CPU model identifiers for matching specs file content
