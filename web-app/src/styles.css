@@ -743,6 +743,30 @@ footer {
     color: #d13438; /* Red - higher price is bad */
 }
 
+/* CPU Performance Display */
+.cpu-gen {
+    display: block;
+    font-weight: 500;
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
+.cpu-score {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #fff;
+    background: #0078D4;
+    border-radius: 8px;
+    padding: 1px 6px;
+    margin-top: 2px;
+}
+
+.diff-pct {
+    font-weight: 600;
+    font-size: 0.85em;
+}
+
 /* Expandable Row Styling (Phase 2) */
 .result-row.clickable {
     cursor: pointer;

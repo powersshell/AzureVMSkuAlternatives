@@ -647,6 +647,9 @@ function filterResultsByVendor(alternatives) {
 // Display Target SKU Info
 function displayTargetSku(targetSku) {
     const cpuDisplay = targetSku.cpuVendor ? `${targetSku.cpuVendor} (${targetSku.architecture || 'x64'})` : 'N/A';
+    const cpuPerfDisplay = targetSku.cpuGeneration && targetSku.cpuPerfScore
+        ? `${targetSku.cpuGeneration} — score ${targetSku.cpuPerfScore}`
+        : null;
     const pricingLabel = currentPricingModel === 'ri1year' ? '1yr RI'
         : currentPricingModel === 'ri3year' ? '3yr RI'
         : (currentPricingOS === 'windows' ? 'Windows' : 'Linux');
@@ -657,6 +660,12 @@ function displayTargetSku(targetSku) {
                 <strong>CPU Vendor</strong>
                 <span>${cpuDisplay}</span>
             </div>
+            ${cpuPerfDisplay ? `
+            <div class="target-sku-item">
+                <strong>CPU Performance</strong>
+                <span>${cpuPerfDisplay}</span>
+            </div>
+            ` : ''}
             <div class="target-sku-item">
                 <strong>vCPUs</strong>
                 <span>${targetSku.vCPUs || 'N/A'}</span>
@@ -694,9 +703,48 @@ function displayTargetSku(targetSku) {
     targetSkuInfo.innerHTML = html;
 }
 
+// Format CPU performance display for table cells
+function formatCpuPerf(sku) {
+    const gen = sku.cpuGeneration;
+    const score = sku.cpuPerfScore;
+    const vendor = sku.cpuVendor || 'Intel';
+    const arch = sku.architecture || 'x64';
+    
+    if (gen && score) {
+        return `<span class="cpu-gen" title="${vendor} ${arch}">${gen}</span><span class="cpu-score">${score}</span>`;
+    }
+    // Fallback for GPU/specialty SKUs without CPU perf data
+    return `<span class="cpu-gen">${vendor} (${arch})</span>`;
+}
+
+// Get CPU performance direction indicator
+function getCpuPerfIndicator(targetScore, altScore) {
+    if (targetScore == null || altScore == null) {
+        return { direction: 'unknown', icon: '', changed: false };
+    }
+    if (altScore > targetScore) {
+        return { direction: 'faster', icon: '▲', changed: true };
+    } else if (altScore < targetScore) {
+        return { direction: 'slower', icon: '▼', changed: true };
+    }
+    return { direction: 'same', icon: '●', changed: false };
+}
+
+function renderCpuPerfIndicator(indicator) {
+    if (!indicator.changed) {
+        if (indicator.direction === 'unknown') return '';
+        return `<span class="diff-indicator diff-same" title="CPU Perf: Same as target">●</span>`;
+    }
+    if (indicator.direction === 'faster') {
+        return `<span class="diff-indicator diff-upgrade" title="CPU Perf: Faster than target">▲</span>`;
+    }
+    return `<span class="diff-indicator diff-downgrade" title="CPU Perf: Slower than target">▼</span>`;
+}
+
 // Calculate difference indicators from existing data
 function calculateIndicators(targetSku, alternativeSku) {
     return {
+        cpuPerf: getCpuPerfIndicator(targetSku.cpuPerfScore, alternativeSku.cpuPerfScore),
         vCPUs: getDirectionIndicator(targetSku.vCPUs, alternativeSku.vCPUs),
         memory: getDirectionIndicator(targetSku.memoryGB, alternativeSku.memoryGB),
         hourlyPrice: getPriceIndicator(
@@ -779,13 +827,12 @@ function displayAlternatives(alternatives) {
             const row = document.createElement('tr');
             const scoreClass = alt.similarityScore >= 80 ? 'score-high' :
                               alt.similarityScore >= 60 ? 'score-medium' : 'score-low';
-            const cpuDisplay = `${alt.cpuVendor || 'Intel'} (${alt.architecture || 'x64'})`;
 
             row.innerHTML = `
                 <td><span class="rank-badge">${index + 1}</span></td>
                 <td><span class="sku-name">${alt.name}</span></td>
                 <td><div class="similarity-score"><span class="score-badge ${scoreClass}">${alt.similarityScore.toFixed(1)}%</span></div></td>
-                <td>${cpuDisplay}</td>
+                <td>${formatCpuPerf(alt)}</td>
                 <td>${alt.vCPUs || 'N/A'}</td>
                 <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'}</td>
                 <td>${formatHourlyPriceSafe(alt.pricing)}</td>
@@ -807,9 +854,6 @@ function displayAlternatives(alternatives) {
         const scoreClass = alt.similarityScore >= 80 ? 'score-high' :
                           alt.similarityScore >= 60 ? 'score-medium' : 'score-low';
 
-        // Format CPU vendor with architecture
-        const cpuDisplay = `${alt.cpuVendor || 'Intel'} (${alt.architecture || 'x64'})`;
-        
         // Calculate indicators from existing data
         const indicators = calculateIndicators(targetSku, alt);
 
@@ -821,7 +865,7 @@ function displayAlternatives(alternatives) {
                     <span class="score-badge ${scoreClass}">${alt.similarityScore.toFixed(1)}%</span>
                 </div>
             </td>
-            <td>${cpuDisplay}</td>
+            <td>${formatCpuPerf(alt)} ${renderCpuPerfIndicator(indicators.cpuPerf)}</td>
             <td>${alt.vCPUs || 'N/A'} ${renderIndicator(indicators.vCPUs, 'vCPUs')}</td>
             <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'} ${renderIndicator(indicators.memory, 'Memory')}</td>
             <td>${formatHourlyPriceSafe(alt.pricing)} ${renderIndicator(indicators.hourlyPrice, 'Hourly Price')}</td>
@@ -955,6 +999,9 @@ function prefetchTopDetails(alternatives, targetSku, location) {
 function renderDetailedComparison(data, targetSku, altSku) {
     const diff = data.differences;
     
+    // Derive CPU performance comparison from the SKU objects (not from backend diff)
+    const cpuPerfHtml = renderCpuPerfComparison(targetSku, altSku);
+
     return `
         <div class="comparison-details">
             <h4>📊 Detailed Comparison: ${altSku.name} vs ${targetSku.name}</h4>
@@ -963,6 +1010,7 @@ function renderDetailedComparison(data, targetSku, altSku) {
                 <!-- Compute Section -->
                 <div class="details-section">
                     <h5>Compute</h5>
+                    ${cpuPerfHtml}
                     ${renderNumericDiff('vCPUs', diff.compute.vCPUs)}
                     ${renderNumericDiff('Memory', diff.compute.memory)}
                     ${renderBooleanDiff(diff.compute.hyperVGen2)}
@@ -999,6 +1047,43 @@ function renderDetailedComparison(data, targetSku, altSku) {
             ${renderFeatures(diff.features)}
         </div>
     `;
+}
+
+// Render CPU performance comparison for the detailed expand view
+function renderCpuPerfComparison(targetSku, altSku) {
+    const tScore = targetSku.cpuPerfScore;
+    const aScore = altSku.cpuPerfScore;
+    const tGen = targetSku.cpuGeneration;
+    const aGen = altSku.cpuGeneration;
+
+    if (!tScore && !aScore) return '';
+
+    if (tScore && aScore) {
+        const delta = aScore - tScore;
+        const pct = tScore > 0 ? ((delta / tScore) * 100).toFixed(1) : '0.0';
+        const sign = delta > 0 ? '+' : '';
+        let className, icon, label;
+        if (delta > 0) {
+            className = 'diff-item upgrade';
+            icon = '▲';
+            label = 'faster';
+        } else if (delta < 0) {
+            className = 'diff-item downgrade';
+            icon = '▼';
+            label = 'slower';
+        } else {
+            className = 'diff-item same';
+            icon = '●';
+            label = 'same';
+        }
+        return `<div class="${className}">${icon} CPU Perf: ${tGen || 'Unknown'} (${tScore}) → ${aGen || 'Unknown'} (${aScore}) <span class="diff-pct">${sign}${pct}% ${label}</span></div>`;
+    }
+
+    // Only one side has data
+    if (aScore) {
+        return `<div class="diff-item same">● CPU Perf: ${aGen || 'Unknown'} (score: ${aScore})</div>`;
+    }
+    return `<div class="diff-item same">● CPU Perf: Target ${tGen || 'Unknown'} (score: ${tScore}) — alternative: N/A</div>`;
 }
 
 function renderNumericDiff(label, diff) {
@@ -1233,6 +1318,10 @@ function exportToCSV() {
         'Similarity Score (%)',
         'CPU Vendor',
         'Architecture',
+        'CPU Generation',
+        'CPU Perf Score',
+        'Target CPU Perf Score',
+        'CPU Perf Delta (%)',
         `Hourly Cost Linux${discountNote}`,
         `Monthly Cost Linux${discountNote}`,
         `Hourly Cost Windows${discountNote}`,
@@ -1263,6 +1352,12 @@ function exportToCSV() {
             alt.similarityScore != null ? alt.similarityScore.toFixed(1) : 'N/A',
             alt.cpuVendor || 'N/A',
             alt.architecture || 'N/A',
+            alt.cpuGeneration || 'N/A',
+            alt.cpuPerfScore != null ? alt.cpuPerfScore : 'N/A',
+            targetSku.cpuPerfScore != null ? targetSku.cpuPerfScore : 'N/A',
+            (alt.cpuPerfScore != null && targetSku.cpuPerfScore > 0)
+                ? (((alt.cpuPerfScore - targetSku.cpuPerfScore) / targetSku.cpuPerfScore) * 100).toFixed(1)
+                : 'N/A',
             alt.pricing ? (alt.pricing.hourlyPrice * discount).toFixed(4) : 'N/A',
             alt.pricing ? (alt.pricing.monthlyPrice * discount).toFixed(2) : 'N/A',
             alt.pricing && alt.pricing.hourlyPriceWindows != null ? (alt.pricing.hourlyPriceWindows * discount).toFixed(4) : 'N/A',
