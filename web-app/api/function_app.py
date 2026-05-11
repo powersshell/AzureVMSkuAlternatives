@@ -1475,8 +1475,10 @@ CPU_PERFORMANCE_TABLE = {
     '9V004': {'score': 122, 'generation': 'Genoa (Zen 4)', 'year': 2023},
     '9005': {'score': 135, 'generation': 'Turin (Zen 5)', 'year': 2024},
     '9754': {'score': 95, 'generation': 'Bergamo (Zen 4c)', 'year': 2023},
-    # ARM
-    'Cobalt 100': {'score': 100, 'generation': 'Cobalt 100 (Neoverse N2)', 'year': 2023},
+    # ARM — Cobalt 100 score estimated at ~1.25× Ampere Altra based on Microsoft GA blog
+    # ("up to 1.4× CPU performance" vs Altra; customer testimonials show 37-40% gains).
+    # Conservative 1.26× applied: 95 × 1.26 ≈ 120.
+    'Cobalt 100': {'score': 120, 'generation': 'Cobalt 100 (Neoverse N2)', 'year': 2023},
     'Ampere Altra': {'score': 95, 'generation': 'Ampere Altra (Neoverse N1)', 'year': 2022},
 }
 
@@ -1518,10 +1520,10 @@ SERIES_CPU_MAP = {
     'Dalsv7': ['9005'],
     'Daldsv7': ['9005'],
     # General Purpose - ARM
-    'Dpsv5': ['Cobalt 100'],
-    'Dpdsv5': ['Cobalt 100'],
-    'Dplsv5': ['Cobalt 100'],
-    'Dpldsv5': ['Cobalt 100'],
+    'Dpsv5': ['Ampere Altra'],
+    'Dpdsv5': ['Ampere Altra'],
+    'Dplsv5': ['Ampere Altra'],
+    'Dpldsv5': ['Ampere Altra'],
     'Dpsv6': ['Cobalt 100'],
     'Dpdsv6': ['Cobalt 100'],
     'Dplsv6': ['Cobalt 100'],
@@ -1553,8 +1555,8 @@ SERIES_CPU_MAP = {
     'Easv7': ['9005'],
     'Eadsv7': ['9005'],
     # Memory Optimized - ARM
-    'Epsv5': ['Cobalt 100'],
-    'Epdsv5': ['Cobalt 100'],
+    'Epsv5': ['Ampere Altra'],
+    'Epdsv5': ['Ampere Altra'],
     'Epsv6': ['Cobalt 100'],
     'Epdsv6': ['Cobalt 100'],
     # Memory Optimized - Specialty
@@ -1608,13 +1610,13 @@ SERIES_CPU_MAP = {
     # B-series (burstable)
     'Bsv2': ['8370C'],
     'Basv2': ['7763'],
-    'Bpsv2': ['Cobalt 100'],
+    'Bpsv2': ['Ampere Altra'],
     'Balsv2': ['8370C'],
     'Blsv2': ['8370C'],
     'Batsv2': ['8370C'],
     'Btsv2': ['8370C'],
-    'Bplsv2': ['Cobalt 100'],
-    'Bptsv2': ['Cobalt 100'],
+    'Bplsv2': ['Ampere Altra'],
+    'Bptsv2': ['Ampere Altra'],
     # HPC (including constrained-vCPU 'rs' variants)
     'HBv3': ['7V13'],
     'HBv4': ['9V004'],
