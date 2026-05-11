@@ -177,7 +177,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 
                 zones = get_availability_zones(sku, location)
 
-                alternatives.append({
+                alt = {
                     'name': sku['name'],
                     'similarityScore': round(similarity_score, 2),
                     'cpuVendor': sku.get('cpuVendor', 'Intel'),
@@ -191,7 +191,9 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                     'pricing': pricing,
                     'zones': ', '.join(zones) if zones else 'N/A',
                     'capabilities': sku_capabilities
-                })
+                }
+                _enrich_cpu_perf(alt, sku['name'])
+                alternatives.append(alt)
 
         # Sort by similarity score
         alternatives.sort(key=lambda x: x['similarityScore'], reverse=True)
@@ -260,8 +262,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         # Return results
         # Determine cache freshness from target SKU's lastUpdated field
         data_last_updated = target_sku.get('lastUpdated')
-        response_data = {
-            'targetSku': {
+        target_sku_data = {
                 'name': target_sku['name'],
                 'cpuVendor': target_sku.get('cpuVendor', 'Intel'),
                 'architecture': target_sku.get('architecture', 'x64'),
@@ -274,7 +275,10 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 'pricing': target_pricing,
                 'zones': ', '.join(target_zones) if target_zones else 'N/A',
                 'capabilities': target_capabilities
-            },
+        }
+        _enrich_cpu_perf(target_sku_data, target_sku['name'])
+        response_data = {
+            'targetSku': target_sku_data,
             'alternatives': alternatives,
             'dataLastUpdated': data_last_updated,
             'dataSource': data_source,
@@ -587,7 +591,7 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
         # Format for frontend dropdown - minimal payload for performance
         skus = []
         for entity in entities:
-            skus.append({
+            sku_data = {
                 'name': entity['name'],
                 'vCPUs': entity['vCPUs'],
                 'memoryGB': entity['memoryGB'],
@@ -595,7 +599,9 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
                 'architecture': entity.get('architecture', 'x64'),
                 'cpuPerfScore': entity.get('cpuPerfScore'),
                 'cpuGeneration': entity.get('cpuGeneration'),
-            })
+            }
+            _enrich_cpu_perf(sku_data, entity['name'])
+            skus.append(sku_data)
         
         # Sort by vCPUs then memory
         skus.sort(key=lambda x: (x['vCPUs'], x['memoryGB']))
@@ -1126,6 +1132,7 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                     } if entity.get('hourlyPriceUSD') is not None else None,
                     'networkBandwidthMbps': entity.get('networkBandwidthMbps')
                 }
+                _enrich_cpu_perf(sku, entity['name'])
                 skus.append(sku)
             
             if skus:
@@ -1593,20 +1600,69 @@ SERIES_CPU_MAP = {
     'DCadsv5': ['7763'],
     'DCasv6': ['9004'],
     'DCadsv6': ['9004'],
+    # Confidential - EC (AMD SEV-SNP)
+    'ECasv5': ['7763'],
+    'ECadsv5': ['7763'],
+    'ECasv6': ['9004'],
+    'ECadsv6': ['9004'],
     # B-series (burstable)
     'Bsv2': ['8370C'],
     'Basv2': ['7763'],
     'Bpsv2': ['Cobalt 100'],
-    # HPC
+    'Balsv2': ['8370C'],
+    'Blsv2': ['8370C'],
+    'Batsv2': ['8370C'],
+    'Btsv2': ['8370C'],
+    'Bplsv2': ['Cobalt 100'],
+    'Bptsv2': ['Cobalt 100'],
+    # HPC (including constrained-vCPU 'rs' variants)
     'HBv3': ['7V13'],
     'HBv4': ['9V004'],
     'HBv2': ['7V12'],
+    'HBrsv3': ['7V13'],
+    'HBrsv4': ['9V004'],
+    'HBrsv2': ['7V12'],
     'HC': ['8168'],
     'HX': ['7V13'],
+    'HXrs': ['7V13'],
+    # Compute Optimized - FX additional
+    'FXmsv2': ['8370C'],
+    # Storage Optimized - additional
+    'Laosv4': ['9004'],
+    # Memory Optimized - M additional (including M-medium-memory variants)
+    'Mmsv2': ['8280M'],
+    'Mmsv3': ['8473C'],
+    # Memory Optimized - v7
+    'Ensv7': ['8573C'],
+    'Endsv7': ['8573C'],
+    'Epsv7': ['Cobalt 100'],
+    'Epdsv7': ['Cobalt 100'],
     # Previous gen (for reference)
     'Dv2': ['8272CL', '8171M', 'E5-2673 v4', 'E5-2673 v3'],
     'DSv2': ['8272CL', '8171M', 'E5-2673 v4', 'E5-2673 v3'],
     'Av2': ['8272CL', '8171M', 'E5-2673 v4', 'E5-2673 v3'],
+    # Old non-versioned series
+    'D': ['E5-2673 v3'],
+    'DS': ['E5-2673 v3'],
+    'F': ['E5-2673 v3', 'E5-2673 v4'],
+    'Fs': ['E5-2673 v3', 'E5-2673 v4'],
+    'M': ['E5-2673 v4'],
+    'Mms': ['E5-2673 v4'],
+    'Ms': ['E5-2673 v4'],
+    'G': ['E5-2673 v3'],
+    'GS': ['E5-2673 v3'],
+    'Gs': ['E5-2673 v3'],
+    'L': ['E5-2673 v3'],
+    'Ls': ['E5-2673 v3'],
+    'B': ['E5-2673 v4', '8171M'],
+    'Bms': ['E5-2673 v4', '8171M'],
+    'Bs': ['E5-2673 v4', '8171M'],
+    'Bls': ['E5-2673 v4', '8171M'],
+    'DC': ['E-2176G'],
+    'DCs': ['E-2176G'],
+    'EC': ['7763'],
+    'FX': ['8370C'],
+    'FXmds': ['8370C'],
 }
 
 # Special CPU model identifiers for matching specs file content
@@ -1676,6 +1732,15 @@ def get_cpu_performance(sku_name: str) -> Optional[Dict]:
         'year': CPU_PERFORMANCE_TABLE[cpu_ids[0]]['year'],
         'cpuModels': cpu_ids,
     }
+
+
+def _enrich_cpu_perf(data: Dict, sku_name: str) -> None:
+    """Fill in cpuPerfScore/cpuGeneration on a response dict if missing, using on-the-fly lookup."""
+    if not data.get('cpuPerfScore'):
+        cpu_perf = get_cpu_performance(sku_name)
+        if cpu_perf:
+            data['cpuPerfScore'] = cpu_perf['score']
+            data['cpuGeneration'] = cpu_perf['generation']
 
 
 def seed_cpu_performance_table(table_service: TableServiceClient) -> None:
