@@ -193,6 +193,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                     'capabilities': sku_capabilities
                 }
                 _enrich_cpu_perf(alt, sku['name'])
+                _enrich_network_bw(alt, sku['name'])
                 alternatives.append(alt)
 
         # Sort by similarity score
@@ -277,6 +278,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 'capabilities': target_capabilities
         }
         _enrich_cpu_perf(target_sku_data, target_sku['name'])
+        _enrich_network_bw(target_sku_data, target_sku['name'])
         response_data = {
             'targetSku': target_sku_data,
             'alternatives': alternatives,
@@ -700,6 +702,9 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
 
     # Fetch network bandwidth data once before parallel region processing
     network_bw = fetch_network_bandwidth()
+    # Merge static fallback values for previous-gen SKUs not in azure-compute-docs
+    for sku_name, bw in PREVIOUS_GEN_BANDWIDTH.items():
+        network_bw.setdefault(sku_name, bw)
 
     # Seed CPU performance reference table
     seed_cpu_performance_table(table_service)
@@ -1133,6 +1138,7 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                     'networkBandwidthMbps': entity.get('networkBandwidthMbps')
                 }
                 _enrich_cpu_perf(sku, entity['name'])
+                _enrich_network_bw(sku, entity['name'])
                 skus.append(sku)
             
             if skus:
@@ -1437,6 +1443,41 @@ def fetch_network_bandwidth() -> Dict[str, int]:
     except Exception as e:
         logging.warning(f"fetch_network_bandwidth failed: {e}")
         return {}
+
+
+# Static fallback bandwidth table for previous-gen SKUs whose docs pages no longer
+# exist in azure-compute-docs.  Values sourced from archived Microsoft docs (Wayback
+# Machine snapshots of learn.microsoft.com/azure/virtual-machines/sizes-previous-gen,
+# captured 2023-06-01 and 2023-12-01).
+PREVIOUS_GEN_BANDWIDTH: Dict[str, int] = {
+    # F-series
+    'Standard_F1': 750, 'Standard_F2': 1500, 'Standard_F4': 3000,
+    'Standard_F8': 6000, 'Standard_F16': 12000,
+    # Fs-series
+    'Standard_F1s': 750, 'Standard_F2s': 1500, 'Standard_F4s': 3000,
+    'Standard_F8s': 6000, 'Standard_F16s': 12000,
+    # D-series (compute)
+    'Standard_D1': 500, 'Standard_D2': 1000, 'Standard_D3': 2000, 'Standard_D4': 4000,
+    # D-series (memory-optimized)
+    'Standard_D11': 1000, 'Standard_D12': 2000, 'Standard_D13': 4000, 'Standard_D14': 8000,
+    # DS-series (compute)
+    'Standard_DS1': 500, 'Standard_DS2': 1000, 'Standard_DS3': 2000, 'Standard_DS4': 4000,
+    # DS-series (memory-optimized)
+    'Standard_DS11': 1000, 'Standard_DS12': 2000, 'Standard_DS13': 4000, 'Standard_DS14': 8000,
+    # G-series
+    'Standard_G1': 2000, 'Standard_G2': 4000, 'Standard_G3': 8000,
+    'Standard_G4': 16000, 'Standard_G5': 20000,
+    # GS-series
+    'Standard_GS1': 2000, 'Standard_GS2': 4000, 'Standard_GS3': 8000,
+    'Standard_GS4': 16000, 'Standard_GS5': 20000,
+    # Ls-series (storage-optimized v1)
+    'Standard_L4s': 4000, 'Standard_L8s': 8000,
+    'Standard_L16s': 16000, 'Standard_L32s': 20000,
+    # Av2-series
+    'Standard_A1_v2': 250, 'Standard_A2_v2': 500, 'Standard_A4_v2': 1000,
+    'Standard_A8_v2': 2000, 'Standard_A2m_v2': 500, 'Standard_A4m_v2': 1000,
+    'Standard_A8m_v2': 2000,
+}
 
 
 # ============================================================================
@@ -1747,6 +1788,18 @@ def _enrich_cpu_perf(data: Dict, sku_name: str) -> None:
         if cpu_perf:
             data['cpuPerfScore'] = cpu_perf['score']
             data['cpuGeneration'] = cpu_perf['generation']
+
+
+def _enrich_network_bw(data: Dict, sku_name: str) -> None:
+    """Fill in networkBandwidthMbps from the static fallback table if missing from cache."""
+    if data.get('networkBandwidthMbps') is None:
+        bw = PREVIOUS_GEN_BANDWIDTH.get(sku_name)
+        if bw is not None:
+            data['networkBandwidthMbps'] = bw
+            # Also enrich capabilities dict if present
+            caps = data.get('capabilities')
+            if isinstance(caps, dict) and caps.get('networkBandwidthMbps') is None:
+                caps['networkBandwidthMbps'] = bw
 
 
 def seed_cpu_performance_table(table_service: TableServiceClient) -> None:
