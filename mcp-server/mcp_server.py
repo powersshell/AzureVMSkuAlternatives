@@ -40,7 +40,9 @@ mcp = FastMCP(
         "Use this server to find and compare Azure Virtual Machine SKUs. "
         "Start with find_alternative_skus to get ranked alternatives, then use "
         "compare_sku_details to drill into specific pairs. Use list_vm_skus to "
-        "explore what's available in a region. Azure region slugs look like: "
+        "explore what's available in a region. Each SKU includes a CPU performance "
+        "score (normalized to Ice Lake = 100) for cross-architecture comparison "
+        "(Intel vs AMD vs ARM). Azure region slugs look like: "
         "eastus, westus2, westeurope, eastasia, australiaeast."
     ),
 )
@@ -64,8 +66,10 @@ async def list_vm_skus(location: str) -> dict:
     List all Azure VM SKUs available in a given region.
 
     Returns each SKU's name, vCPU count, memory (GB), CPU vendor (Intel/AMD/ARM),
-    and architecture (x64/Arm64). Use this to discover what SKUs exist before
-    comparing, or to see which vendors/families are available.
+    architecture (x64/Arm64), CPU generation (e.g. "Ice Lake", "Genoa (Zen 4)",
+    "Cobalt 100 (Neoverse N2)"), and a normalized CPU performance score (Ice Lake = 100).
+    Use this to discover what SKUs exist before comparing, or to see which
+    vendors/families are available.
 
     Args:
         location: Azure region slug, e.g. "eastus", "westeurope", "southeastasia"
@@ -94,7 +98,12 @@ async def find_alternative_skus(
     Returns the target SKU details and a list of alternatives sorted by how closely
     they match — considering vCPUs, memory, storage, networking, and features.
     Each alternative includes its similarity score, vCPUs, memory, CPU vendor,
-    pricing (hourly/monthly USD), and availability zones.
+    CPU generation, CPU performance score (normalized to Ice Lake = 100, comparable
+    across Intel/AMD/ARM), pricing (hourly/monthly USD), and availability zones.
+
+    Use the cpuPerfScore field to compare relative CPU performance across architectures.
+    Higher scores mean faster per-vCPU performance. Examples: Ice Lake = 100,
+    Sapphire Rapids = 115, Genoa (Zen 4) = 122, Cobalt 100 (ARM) = 120.
 
     Args:
         target_sku:           Target VM SKU name, e.g. "Standard_D4s_v5"
@@ -138,10 +147,12 @@ async def compare_sku_details(
     """
     Get a detailed side-by-side comparison between two specific Azure VM SKUs.
 
-    Shows field-by-field differences across compute (vCPUs, memory), storage
-    (IOPS, throughput, disks, NVMe), networking (NICs, accelerated networking),
-    features (Premium IO, encryption, ephemeral OS disk, Hyper-V Gen 2), and
-    pricing (hourly/monthly with percentage change and cost-per-vCPU metrics).
+    Shows field-by-field differences across compute (vCPUs, memory, CPU generation,
+    CPU performance score), storage (IOPS, throughput, disks, NVMe), networking
+    (NICs, accelerated networking), features (Premium IO, encryption, ephemeral OS
+    disk, Hyper-V Gen 2), and pricing (hourly/monthly with percentage change and
+    cost-per-vCPU metrics). CPU performance scores are normalized to Ice Lake = 100,
+    enabling cross-architecture comparison (Intel vs AMD vs ARM).
 
     Use this after find_alternative_skus to drill into a specific candidate.
 
