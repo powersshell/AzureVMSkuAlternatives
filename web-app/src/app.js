@@ -250,6 +250,10 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('resultFilterAMD').addEventListener('change', updateResultsFilters);
     document.getElementById('resultFilterARM').addEventListener('change', updateResultsFilters);
 
+    // CPU generation filter buttons
+    document.getElementById('genSelectAll').addEventListener('click', genSelectAll);
+    document.getElementById('genDeselectAll').addEventListener('click', genDeselectAll);
+
     // Update discount hint text as user types
     document.getElementById('discountPct').addEventListener('input', updateDiscountHint);
 });
@@ -301,8 +305,10 @@ function updateResultsFilters() {
         arm: document.getElementById('resultFilterARM').checked
     });
     
-    // Re-display results with current filters
-    displayResults(currentResults);
+    // Repopulate generation filter (vendor change affects available generations)
+    populateGenFilter(currentResults.alternatives);
+    // Re-display with both filters
+    displayAlternatives(filterResults(currentResults.alternatives));
 }
 
 // Filter SKUs based on checked CPU vendor checkboxes
@@ -497,7 +503,7 @@ function setPricingOS(os) {
     updatePricingHeaders();
     // Re-render results if available
     if (currentResults) {
-        displayAlternatives(filterResultsByVendor(currentResults.alternatives));
+        displayAlternatives(filterResults(currentResults.alternatives));
         displayTargetSku(currentResults.targetSku);
     }
 }
@@ -514,7 +520,7 @@ function setPricingModel(model) {
 
     updatePricingHeaders();
     if (currentResults) {
-        displayAlternatives(filterResultsByVendor(currentResults.alternatives));
+        displayAlternatives(filterResults(currentResults.alternatives));
         displayTargetSku(currentResults.targetSku);
     }
 }
@@ -613,8 +619,9 @@ function displayResults(data) {
         noResults.classList.add('hidden');
         displayTargetSku(data.targetSku);
         
-        // Apply CPU vendor filter to results
-        const filteredAlternatives = filterResultsByVendor(data.alternatives);
+        // Populate generation filter from full results, then apply all filters
+        populateGenFilter(data.alternatives);
+        const filteredAlternatives = filterResults(data.alternatives);
         displayAlternatives(filteredAlternatives);
     }
     // Show cache timestamp if available
@@ -642,6 +649,89 @@ function filterResultsByVendor(alternatives) {
         if (alt.cpuVendor === 'ARM' && showARM) return true;
         return false;
     });
+}
+
+// Filter results by CPU generation checkboxes
+function filterResultsByGeneration(alternatives) {
+    const container = document.getElementById('genFilterOptions');
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+    if (checkboxes.length === 0) return alternatives;
+    
+    const selectedGens = new Set();
+    checkboxes.forEach(cb => {
+        if (cb.checked) selectedGens.add(cb.value);
+    });
+    
+    // If all are selected, no filtering needed
+    if (selectedGens.size === checkboxes.length) return alternatives;
+    
+    return alternatives.filter(alt => {
+        const gen = alt.cpuGeneration || 'Unknown';
+        return selectedGens.has(gen);
+    });
+}
+
+// Apply both vendor and generation filters
+function filterResults(alternatives) {
+    return filterResultsByGeneration(filterResultsByVendor(alternatives));
+}
+
+// Populate generation filter checkboxes from current results
+function populateGenFilter(alternatives) {
+    const section = document.getElementById('genFilterSection');
+    const container = document.getElementById('genFilterOptions');
+    
+    // Get unique generations from vendor-filtered results
+    const vendorFiltered = filterResultsByVendor(alternatives);
+    const generations = new Map();
+    vendorFiltered.forEach(alt => {
+        const gen = alt.cpuGeneration || 'Unknown';
+        generations.set(gen, (generations.get(gen) || 0) + 1);
+    });
+    
+    if (generations.size === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    
+    // Sort: by vendor grouping (Intel gens, AMD gens, ARM gens, Unknown last)
+    const sorted = [...generations.entries()].sort((a, b) => {
+        if (a[0] === 'Unknown') return 1;
+        if (b[0] === 'Unknown') return -1;
+        return a[0].localeCompare(b[0]);
+    });
+    
+    container.innerHTML = sorted.map(([gen, count]) => `
+        <label class="checkbox-label gen-checkbox">
+            <input type="checkbox" value="${gen}" checked>
+            ${gen} <span class="gen-count">(${count})</span>
+        </label>
+    `).join('');
+    
+    // Add change listeners to each checkbox
+    container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', updateGenFilter);
+    });
+    
+    section.style.display = '';
+}
+
+// Handle generation filter change
+function updateGenFilter() {
+    if (!currentResults || !currentResults.alternatives) return;
+    trackEvent('result_generation_filter_changed', {});
+    displayAlternatives(filterResults(currentResults.alternatives));
+}
+
+// Handle Select All / Deselect All buttons
+function genSelectAll() {
+    document.getElementById('genFilterOptions').querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+    updateGenFilter();
+}
+
+function genDeselectAll() {
+    document.getElementById('genFilterOptions').querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    updateGenFilter();
 }
 
 // Display Target SKU Info
