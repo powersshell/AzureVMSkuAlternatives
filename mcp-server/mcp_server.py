@@ -101,6 +101,11 @@ async def find_alternative_skus(
     CPU generation, CPU performance score (normalized to Ice Lake = 100, comparable
     across Intel/AMD/ARM), pricing (hourly/monthly USD), and availability zones.
 
+    SKUs announced for retirement receive a ranking penalty (lower similarityScore).
+    Check the retirementStatus field: 'Announced' means planned for retirement,
+    'Retired' means no longer available. retirementDate shows the planned date,
+    and migrationGuideUrl links to the official migration guide.
+
     Use the cpuPerfScore field to compare relative CPU performance across architectures.
     Higher scores mean faster per-vCPU performance. Examples: Ice Lake = 100,
     Sapphire Rapids = 115, Genoa (Zen 4) = 122, Cobalt 100 (ARM) = 120.

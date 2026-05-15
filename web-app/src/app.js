@@ -254,6 +254,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('genSelectAll').addEventListener('click', genSelectAll);
     document.getElementById('genDeselectAll').addEventListener('click', genDeselectAll);
 
+    // Retirement filter checkbox
+    document.getElementById('hideRetiringFilter').addEventListener('change', updateResultsFilters);
+
     // Update discount hint text as user types
     document.getElementById('discountPct').addEventListener('input', updateDiscountHint);
 });
@@ -671,9 +674,15 @@ function filterResultsByGeneration(alternatives) {
     });
 }
 
-// Apply both vendor and generation filters
+// Apply vendor, generation, and retirement filters
 function filterResults(alternatives) {
-    return filterResultsByGeneration(filterResultsByVendor(alternatives));
+    let filtered = filterResultsByGeneration(filterResultsByVendor(alternatives));
+    // Apply retirement filter if checkbox exists and is checked
+    const hideRetiring = document.getElementById('hideRetiringFilter');
+    if (hideRetiring && hideRetiring.checked) {
+        filtered = filtered.filter(alt => !alt.retirementStatus);
+    }
+    return filtered;
 }
 
 // Populate generation filter checkboxes from current results
@@ -791,6 +800,24 @@ function displayTargetSku(targetSku) {
         </div>
     `;
     targetSkuInfo.innerHTML = html;
+
+    // Show retirement warning banner if target SKU is retiring
+    const retirementBanner = document.getElementById('retirementBanner');
+    if (retirementBanner) {
+        if (targetSku.retirementStatus) {
+            const dateStr = targetSku.retirementDate ? new Date(targetSku.retirementDate + 'T00:00:00Z').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'TBD';
+            const statusClass = targetSku.retirementStatus === 'Retired' ? 'retirement-retired' : 'retirement-announced';
+            const statusLabel = targetSku.retirementStatus === 'Retired' ? '❌ This VM SKU has been retired' : '⚠️ This VM SKU is announced for retirement';
+            retirementBanner.className = `retirement-banner ${statusClass}`;
+            retirementBanner.innerHTML = `
+                <strong>${statusLabel}</strong> on ${dateStr}.
+                ${targetSku.migrationGuideUrl ? `<a href="${targetSku.migrationGuideUrl}" target="_blank" rel="noopener">View Migration Guide →</a>` : ''}
+            `;
+            retirementBanner.classList.remove('hidden');
+        } else {
+            retirementBanner.classList.add('hidden');
+        }
+    }
 }
 
 // Format CPU performance display for table cells
@@ -805,6 +832,16 @@ function formatCpuPerf(sku) {
     }
     // Fallback for GPU/specialty SKUs without CPU perf data
     return `<span class="cpu-gen">${vendor} (${arch})</span>`;
+}
+
+// Render retirement badge for a SKU
+function renderRetirementBadge(alt) {
+    if (!alt.retirementStatus) return '';
+    if (alt.retirementStatus === 'Retired') {
+        return '<span class="retirement-badge retired" title="This SKU has been retired">❌ Retired</span>';
+    }
+    const dateStr = alt.retirementDate ? new Date(alt.retirementDate + 'T00:00:00Z').toLocaleDateString('en-US', { year: 'numeric', month: 'short' }) : '';
+    return `<span class="retirement-badge retiring" title="Retirement announced for ${dateStr}">⚠️ Retiring ${dateStr}</span>`;
 }
 
 // Get CPU performance direction indicator
@@ -949,7 +986,7 @@ function displayAlternatives(alternatives) {
 
         row.innerHTML = `
             <td><span class="rank-badge">${index + 1}</span></td>
-            <td><span class="sku-name">${alt.name}</span></td>
+            <td><span class="sku-name">${alt.name}</span> ${renderRetirementBadge(alt)}</td>
             <td>
                 <div class="similarity-score">
                     <span class="score-badge ${scoreClass}">${alt.similarityScore.toFixed(1)}%</span>

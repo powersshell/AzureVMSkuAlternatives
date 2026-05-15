@@ -194,6 +194,15 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 }
                 _enrich_cpu_perf(alt, sku['name'])
                 _enrich_network_bw(alt, sku['name'])
+
+                # Retirement awareness: add status and apply ranking penalty
+                retirement_info = _get_retirement_info(sku['name'])
+                if retirement_info:
+                    alt.update(retirement_info)
+                    penalty = _retirement_penalty(sku['name'])
+                    alt['originalSimilarityScore'] = alt['similarityScore']
+                    alt['similarityScore'] = round(max(0, alt['similarityScore'] - penalty), 2)
+
                 alternatives.append(alt)
 
         # Sort by similarity score
@@ -279,6 +288,10 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         }
         _enrich_cpu_perf(target_sku_data, target_sku['name'])
         _enrich_network_bw(target_sku_data, target_sku['name'])
+        # Add retirement info for target SKU
+        target_retirement = _get_retirement_info(target_sku['name'])
+        if target_retirement:
+            target_sku_data.update(target_retirement)
         response_data = {
             'targetSku': target_sku_data,
             'alternatives': alternatives,
@@ -471,7 +484,9 @@ def compare_details(req: func.HttpRequest) -> func.HttpResponse:
             'target': target_name,
             'alternative': alternative_name,
             'location': location,
-            'differences': differences
+            'differences': differences,
+            'targetRetirement': _get_retirement_info(target_name),
+            'alternativeRetirement': _get_retirement_info(alternative_name)
         }
         
         return func.HttpResponse(
@@ -603,6 +618,9 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
                 'cpuGeneration': entity.get('cpuGeneration'),
             }
             _enrich_cpu_perf(sku_data, entity['name'])
+            retirement_info = _get_retirement_info(entity['name'])
+            if retirement_info:
+                sku_data.update(retirement_info)
             skus.append(sku_data)
         
         # Sort by vCPUs then memory
@@ -2028,6 +2046,109 @@ def _is_retired_no_pricing_sku(name: str) -> bool:
     if name == 'Standard_E96ias_v4':
         return True
     return False
+
+
+# ============================================================================
+# VM SKU Retirement Data
+# Source: https://github.com/MicrosoftDocs/azure-compute-docs/blob/main/articles/virtual-machines/sizes/retirement/retired-sizes-list.md
+# ============================================================================
+VM_RETIREMENT_INFO = [
+    # General Purpose
+    {'pattern': r'^Standard_D\d+$', 'status': 'Announced', 'retirementDate': '2028-05-01',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_DS\d+$', 'status': 'Announced', 'retirementDate': '2028-05-01',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_D\d+_v2$', 'status': 'Announced', 'retirementDate': '2028-05-01',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_DS\d+_v2$', 'status': 'Announced', 'retirementDate': '2028-05-01',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_A\d+m?_v2$', 'status': 'Announced', 'retirementDate': '2028-11-15',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_B\d+[a-z]*s$', 'status': 'Announced', 'retirementDate': '2028-11-15',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_B\d+ls$', 'status': 'Announced', 'retirementDate': '2028-11-15',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    # Compute Optimized
+    {'pattern': r'^Standard_F\d+$', 'status': 'Announced', 'retirementDate': '2028-11-15',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_F\d+s$', 'status': 'Announced', 'retirementDate': '2028-11-15',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_F\d+s_v2$', 'status': 'Announced', 'retirementDate': '2028-11-15',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    # Memory Optimized
+    {'pattern': r'^Standard_G\d+$', 'status': 'Announced', 'retirementDate': '2028-11-15',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_GS\d+(-\d+)?$', 'status': 'Announced', 'retirementDate': '2028-11-15',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_M192idms_v2$', 'status': 'Announced', 'retirementDate': '2027-03-31',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/sizes/retirement/msv2-mdsv2-retirement'},
+    {'pattern': r'^Standard_M192ids_v2$', 'status': 'Announced', 'retirementDate': '2027-03-31',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/sizes/retirement/msv2-mdsv2-retirement'},
+    {'pattern': r'^Standard_M192ims_v2$', 'status': 'Announced', 'retirementDate': '2027-03-31',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/sizes/retirement/msv2-mdsv2-retirement'},
+    {'pattern': r'^Standard_M192is_v2$', 'status': 'Announced', 'retirementDate': '2027-03-31',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/sizes/retirement/msv2-mdsv2-retirement'},
+    # Storage Optimized
+    {'pattern': r'^Standard_L\d+s$', 'status': 'Announced', 'retirementDate': '2028-05-01',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_L\d+s_v2$', 'status': 'Announced', 'retirementDate': '2028-11-15',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    # GPU - Retired
+    {'pattern': r'^Standard_NC24rs_v3$', 'status': 'Retired', 'retirementDate': '2025-09-30',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/ncv3-nc24rs-retirement'},
+    {'pattern': r'^Standard_NC\d+s?_v3$', 'status': 'Retired', 'retirementDate': '2025-09-30',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/ncv3-retirement'},
+    # GPU - Announced
+    {'pattern': r'^Standard_NV\d+s?_v3$', 'status': 'Announced', 'retirementDate': '2026-09-30',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nvv3-series-retirement'},
+    {'pattern': r'^Standard_NV\d+as_v4$', 'status': 'Announced', 'retirementDate': '2026-09-30',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nvv4-retirement'},
+    # FPGA
+    {'pattern': r'^Standard_NP\d+s$', 'status': 'Announced', 'retirementDate': '2027-05-31',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/sizes/retirement/np-series-retirement'},
+]
+
+
+def _get_retirement_info(sku_name: str) -> Optional[Dict]:
+    """
+    Check if a SKU is announced for retirement or already retired.
+    Returns dict with {status, retirementDate, migrationGuideUrl} or None.
+    """
+    for entry in VM_RETIREMENT_INFO:
+        if re.match(entry['pattern'], sku_name):
+            return {
+                'retirementStatus': entry['status'],
+                'retirementDate': entry['retirementDate'],
+                'migrationGuideUrl': entry['migrationGuideUrl']
+            }
+    return None
+
+
+def _retirement_penalty(sku_name: str) -> float:
+    """
+    Calculate a similarity score penalty for retiring/retired SKUs.
+    Returns a negative value to subtract from the similarity score.
+    """
+    info = _get_retirement_info(sku_name)
+    if not info:
+        return 0.0
+
+    if info['retirementStatus'] == 'Retired':
+        return 15.0
+
+    # For 'Announced' status, scale penalty by time until retirement
+    try:
+        retirement_date = datetime.strptime(info['retirementDate'], '%Y-%m-%d').replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        months_remaining = (retirement_date - now).days / 30.44
+        if months_remaining <= 6:
+            return 10.0
+        elif months_remaining <= 12:
+            return 5.0
+        else:
+            return 2.0
+    except (ValueError, TypeError):
+        return 2.0
 
 
 def _is_promo_sku(name: str) -> bool:

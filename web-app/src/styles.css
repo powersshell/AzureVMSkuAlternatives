@@ -561,6 +561,65 @@ input[list]::-webkit-calendar-picker-indicator:hover {
     font-size: 0.8rem;
 }
 
+/* Retirement Banner and Badges */
+.retirement-banner {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.retirement-banner.hidden {
+    display: none;
+}
+
+.retirement-banner.retirement-announced {
+    background: rgba(255, 165, 0, 0.12);
+    border: 1px solid rgba(255, 165, 0, 0.4);
+    color: #e09100;
+}
+
+.retirement-banner.retirement-retired {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+}
+
+.retirement-banner a {
+    color: var(--accent-primary);
+    margin-left: 0.5rem;
+    text-decoration: underline;
+}
+
+.retirement-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    margin-left: 0.4rem;
+    font-weight: 600;
+    vertical-align: middle;
+}
+
+.retirement-badge.retiring {
+    background: rgba(255, 165, 0, 0.15);
+    border: 1px solid rgba(255, 165, 0, 0.4);
+    color: #e09100;
+}
+
+.retirement-badge.retired {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+}
+
+.retirement-filter-label {
+    margin-left: 1rem;
+    border-left: 1px solid var(--border-color);
+    padding-left: 1rem;
+}
+
 .target-sku-item strong {
     color: var(--text-secondary);
     font-size: 0.875rem;
