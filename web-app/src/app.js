@@ -705,6 +705,7 @@ function populateGenFilter(alternatives) {
         section.style.display = 'none';
         return;
     }
+    section.style.display = '';
     
     // Sort: by vendor grouping (Intel gens, AMD gens, ARM gens, Unknown last)
     const sorted = [...generations.entries()].sort((a, b) => {
@@ -724,8 +725,6 @@ function populateGenFilter(alternatives) {
     container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
         cb.addEventListener('change', updateGenFilter);
     });
-    
-    section.style.display = '';
 }
 
 // Handle generation filter change
