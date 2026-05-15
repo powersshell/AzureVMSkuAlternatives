@@ -9,6 +9,14 @@
 
 ## 📋 Changelog
 
+### 2026-05-15
+- **feature:** VM SKU retirement awareness — SKUs announced for retirement are flagged with ⚠️ badges throughout the UI
+- **feature:** Retirement ranking penalty — retiring SKUs are de-prioritized in recommendations (scaled by time-to-retirement)
+- **feature:** "Hide retiring/retired SKUs" filter (enabled by default) to focus on current-gen alternatives
+- **feature:** Retirement warning banner when the target/source SKU itself is retiring, with migration guide links
+- **feature:** CPU generation filter collapsed into a clean dropdown (matches Advanced Options pattern)
+- **data:** Official retirement data for 22 series sourced from [Microsoft docs](https://github.com/MicrosoftDocs/azure-compute-docs/blob/main/articles/virtual-machines/sizes/retirement/retired-sizes-list.md)
+
 ### 2026-05-05
 - **fix:** Coverage telemetry — `custom_dimensions` not supported on Flex Consumption; embed JSON in Message field instead
 - **fix:** Workbook KQL queries updated to `parse_json(Message)` to match new telemetry format
@@ -51,6 +59,7 @@ Azure VM SKU Alternatives helps you discover similar or alternative VM SKUs when
 - 💰 You need a more cost-effective option
 - ⚡ You want better performance for similar specs
 - 🔄 You're migrating between VM families (e.g., Dv3 → Dv5)
+- ⚠️ Your current SKU is announced for retirement
 - 📊 You need to compare VM capabilities side-by-side
 
 **Example:** Need an alternative to `Standard_D4s_v3`? Get instant recommendations with similarity scores, specs, and pricing!
@@ -290,6 +299,9 @@ Total Score = (200 + 200 + 90 + 100 + 37.5) / (2 + 2 + 1 + 1 + 0.5)
 - **Formatted display** - See specs and pricing
 - **Mobile-friendly** - Responsive design
 - **Validation** - Prevents invalid SKU names
+- **Retirement awareness** - Retiring SKUs flagged with ⚠️, hidden by default
+- **CPU performance scoring** - Cross-architecture comparison (Intel/AMD/ARM normalized to Ice Lake = 100)
+- **CPU generation filter** - Collapsible dropdown to filter by microarchitecture
 
 **🔒 Security:**
 - **Private storage** - No public access
