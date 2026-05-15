@@ -196,7 +196,14 @@ document.addEventListener('DOMContentLoaded', () => {
         searchEnabled: true,
         searchPlaceholderValue: 'Search regions...',
         itemSelectText: '',
-        shouldSort: false
+        shouldSort: false,
+        fuseOptions: {
+            includeScore: true,
+            threshold: 0.3,
+            ignoreLocation: true,
+            minMatchCharLength: 1,
+            keys: ['label', 'value']
+        }
     });
     
     // Initialize Choices.js for SKU dropdown
@@ -221,13 +228,19 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     
     // Auto-focus search input when dropdowns open
-    locationChoices.passedElement.element.addEventListener('showDropdown', () => {
-        const input = locationChoices.containerOuter.element.querySelector('.choices__input');
-        if (input) input.focus();
+    // For select-one elements, Choices.js creates a search input inside the dropdown.
+    // We use a click listener on the container to ensure focus lands on the search input.
+    locationChoices.containerOuter.element.addEventListener('click', () => {
+        setTimeout(() => {
+            const input = locationChoices.input.element;
+            if (input && locationChoices.dropdown.isActive) input.focus();
+        }, 0);
     });
-    skuChoices.passedElement.element.addEventListener('showDropdown', () => {
-        const input = skuChoices.containerOuter.element.querySelector('.choices__input');
-        if (input) input.focus();
+    skuChoices.containerOuter.element.addEventListener('click', () => {
+        setTimeout(() => {
+            const input = skuChoices.input.element;
+            if (input && skuChoices.dropdown.isActive) input.focus();
+        }, 0);
     });
 
     // Disable SKU dropdown initially

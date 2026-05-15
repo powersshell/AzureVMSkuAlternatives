@@ -17,6 +17,7 @@
 - **feature:** CPU generation filter collapsed into a clean dropdown (matches Advanced Options pattern)
 - **data:** Official retirement data for 22 series sourced from [Microsoft docs](https://github.com/MicrosoftDocs/azure-compute-docs/blob/main/articles/virtual-machines/sizes/retirement/retired-sizes-list.md)
 - **improvement:** Region and SKU dropdowns auto-focus the search input on open — no extra click needed to start typing
+- **fix:** Region search now matches anywhere in the name (e.g., typing "US" finds all US regions)
 
 📄 [Full changelog →](CHANGELOG.md)
 
