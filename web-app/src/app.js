@@ -197,19 +197,19 @@ document.addEventListener('DOMContentLoaded', () => {
         searchPlaceholderValue: 'Search regions...',
         itemSelectText: '',
         shouldSort: false,
+        searchResultLimit: 50,
         fuseOptions: {
             includeScore: true,
-            threshold: 0.3,
+            threshold: 0.4,
             ignoreLocation: true,
             minMatchCharLength: 1,
-            keys: ['label', 'value']
+            findAllMatches: true
         }
     });
     
     // Initialize Choices.js for SKU dropdown
-    // fuseOptions: ignoreLocation allows matching anywhere in the label (not just the start),
-    // which is required because all SKU names begin with "Standard_" — without this, typing
-    // a single letter like "D" fails to match "Standard_D2_v5" since "D" is at position 9.
+    // fuseOptions with ignoreLocation and findAllMatches ensures substring-style matching
+    // (e.g., typing "D4" matches "Standard_D4s_v5" even though it starts at position 9)
     skuChoices = new Choices(skuSelect, {
         searchEnabled: true,
         searchPlaceholderValue: 'Type to search SKUs...',
@@ -220,28 +220,32 @@ document.addEventListener('DOMContentLoaded', () => {
         searchResultLimit: 200,
         fuseOptions: {
             includeScore: true,
-            threshold: 0.3,
+            threshold: 0.4,
             ignoreLocation: true,
             minMatchCharLength: 1,
-            keys: ['label', 'value']
+            findAllMatches: true
         }
     });
     
-    // Auto-focus search input when dropdowns open
-    // For select-one elements, Choices.js creates a search input inside the dropdown.
-    // We use a click listener on the container to ensure focus lands on the search input.
-    locationChoices.containerOuter.element.addEventListener('click', () => {
-        setTimeout(() => {
-            const input = locationChoices.input.element;
-            if (input && locationChoices.dropdown.isActive) input.focus();
-        }, 0);
-    });
-    skuChoices.containerOuter.element.addEventListener('click', () => {
-        setTimeout(() => {
-            const input = skuChoices.input.element;
-            if (input && skuChoices.dropdown.isActive) input.focus();
-        }, 0);
-    });
+    // Auto-focus search input when dropdowns open.
+    // Choices.js internally focuses the input via requestAnimationFrame, but
+    // containerOuter.focus() can steal focus back on some browsers.
+    // We observe the 'is-active' class on the dropdown to reliably detect open state.
+    function autoFocusSearch(choicesInstance) {
+        const dropdown = choicesInstance.dropdown.element;
+        const observer = new MutationObserver(() => {
+            if (dropdown.classList.contains('is-active')) {
+                setTimeout(() => {
+                    if (choicesInstance.input && choicesInstance.input.element) {
+                        choicesInstance.input.element.focus();
+                    }
+                }, 16);
+            }
+        });
+        observer.observe(dropdown, { attributes: true, attributeFilter: ['class'] });
+    }
+    autoFocusSearch(locationChoices);
+    autoFocusSearch(skuChoices);
 
     // Disable SKU dropdown initially
     skuChoices.disable();
