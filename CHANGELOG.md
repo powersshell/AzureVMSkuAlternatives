@@ -7,6 +7,7 @@
 - **feature:** Retirement warning banner when the target/source SKU itself is retiring, with migration guide links
 - **feature:** CPU generation filter collapsed into a clean dropdown (matches Advanced Options pattern)
 - **data:** Official retirement data for 22 series sourced from [Microsoft docs](https://github.com/MicrosoftDocs/azure-compute-docs/blob/main/articles/virtual-machines/sizes/retirement/retired-sizes-list.md)
+- **improvement:** Region and SKU dropdowns auto-focus the search input on open — no extra click needed to start typing
 
 ## 2026-05-05
 - **fix:** Coverage telemetry — `custom_dimensions` not supported on Flex Consumption; embed JSON in Message field instead

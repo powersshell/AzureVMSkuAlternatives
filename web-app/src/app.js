@@ -220,6 +220,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
+    // Auto-focus search input when dropdowns open
+    locationChoices.passedElement.element.addEventListener('showDropdown', () => {
+        const input = locationChoices.containerOuter.element.querySelector('.choices__input');
+        if (input) input.focus();
+    });
+    skuChoices.passedElement.element.addEventListener('showDropdown', () => {
+        const input = skuChoices.containerOuter.element.querySelector('.choices__input');
+        if (input) input.focus();
+    });
+
     // Disable SKU dropdown initially
     skuChoices.disable();
     
