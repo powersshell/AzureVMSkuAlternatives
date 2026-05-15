@@ -68,7 +68,14 @@ When docs and code conflict, treat runtime code and workflows as source of truth
 - Do not commit these generated module JSON files unless explicitly requested.
 - If they appear as untracked noise, remove them or keep them ignored.
 
-### 5) Command accuracy
+### 5) Changelog maintenance
+- Every commit that changes user-facing behavior (features, fixes, improvements, data updates) **must** include a corresponding entry in `CHANGELOG.md`.
+- Entries are grouped by date (`## YYYY-MM-DD`). If multiple changes land on the same day, add them to the existing date section — do not create a duplicate heading.
+- Use the format: `- **category:** description` where category is one of `feature`, `fix`, `improvement`, or `data`.
+- The `README.md` "Recent Changes" section should always reflect only the **most recent date group** from CHANGELOG.md, followed by a link to the full changelog (`📄 [Full changelog →](CHANGELOG.md)`).
+- When adding entries for a new date, update the README's "Recent Changes" section to show the new date's entries and remove the previous ones.
+
+### 6) Command accuracy
 - Do not claim lint/test/build execution unless commands exist and were actually run.
 - Current `web-app/package.json` scripts are deployment-focused (`deploy`, `clean`) and do not provide lint/test scripts.
 - For verification, use available checks (e.g., Functions health endpoint, workflow status) rather than inventing absent test commands.
