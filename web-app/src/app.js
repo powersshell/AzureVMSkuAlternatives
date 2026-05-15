@@ -382,14 +382,17 @@ function populateSkuChoices(skus) {
     // Backend already sorts by vCPUs then memory, so we trust that order
     
     // Build choices array with displayName constructed on frontend
-    const choices = skus.map(sku => ({
-        value: sku.name,
-        label: `${sku.name} (${sku.vCPUs} vCPUs, ${sku.memoryGB} GB)`,
-        customProperties: {
-            vCPUs: sku.vCPUs,
-            memoryGB: sku.memoryGB
-        }
-    }));
+    const choices = skus.map(sku => {
+        const retiring = sku.retirementStatus ? ' ⚠️ Retiring' : '';
+        return {
+            value: sku.name,
+            label: `${sku.name} (${sku.vCPUs} vCPUs, ${sku.memoryGB} GB)${retiring}`,
+            customProperties: {
+                vCPUs: sku.vCPUs,
+                memoryGB: sku.memoryGB
+            }
+        };
+    });
     
     // Clear existing choices and add new ones
     skuChoices.clearStore();
