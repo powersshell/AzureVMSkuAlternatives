@@ -1,6 +1,6 @@
 // MCP Server — Azure Container Apps module
 // Deploys a Container Apps Environment and Container App for the MCP server
-// Authentication: Entra ID Easy Auth (configured here, no auth code in the application)
+// Authentication: Disabled — MCP server is a stateless proxy to the public API
 
 @description('Base name for MCP container app resources')
 param mcpAppName string = 'vmsku-mcp-server'
@@ -10,12 +10,6 @@ param location string = resourceGroup().location
 
 @description('Container image to deploy (from GHCR)')
 param containerImage string
-
-@description('Entra ID Application (client) ID for Easy Auth')
-param entraClientId string
-
-@description('Entra ID Tenant ID for Easy Auth')
-param entraTenantId string
 
 @description('Tags to apply to all resources')
 param tags object = {
@@ -87,31 +81,14 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   }
 }
 
-// Easy Auth — Entra ID authentication enforced at infrastructure level
-// No auth code needed in the application
+// Auth disabled — MCP server is a public proxy to the already-public Functions API.
+// No sensitive data or operations require authentication.
 resource containerAppAuth 'Microsoft.App/containerApps/authConfigs@2023-05-01' = {
   name: 'current'
   parent: containerApp
   properties: {
-    globalValidation: {
-      unauthenticatedClientAction: 'Return401'
-    }
-    identityProviders: {
-      azureActiveDirectory: {
-        enabled: true
-        registration: {
-          clientId: entraClientId
-          openIdIssuer: '${environment().authentication.loginEndpoint}${entraTenantId}/v2.0'
-        }
-        validation: {
-          allowedAudiences: [
-            'api://${entraClientId}'
-          ]
-        }
-      }
-    }
     platform: {
-      enabled: true
+      enabled: false
     }
   }
 }
