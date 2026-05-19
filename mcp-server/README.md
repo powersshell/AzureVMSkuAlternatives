@@ -14,6 +14,52 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 
 ---
 
+## Quick Start — Remote HTTP (Easiest)
+
+The MCP server is hosted publicly at:
+
+```
+https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp
+```
+
+**No local setup required** — no Python, no dependencies, no cloning. Just point your MCP client at the URL.
+
+### VS Code / GitHub Copilot (remote MCP)
+
+Add to `.vscode/settings.json` or your user settings:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "azure-vm-skus": {
+        "url": "https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp"
+      }
+    }
+  }
+}
+```
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json` (`%APPDATA%\Claude\claude_desktop_config.json` on Windows, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "azure-vm-skus": {
+      "url": "https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp"
+    }
+  }
+}
+```
+
+### Any MCP Client (generic)
+
+Any client that supports [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) can connect using the URL above. No authentication is required.
+
+---
+
 ## GitHub Copilot CLI Setup
 
 The extension at `.github/extensions/azure-vm-skus/extension.mjs` registers all four tools natively in the Copilot CLI — no Python, no `uv`, no MCP config required.
@@ -48,7 +94,9 @@ After installing, the tools appear automatically in new Copilot CLI sessions. To
 
 ---
 
-## VS Code / GitHub Copilot Setup
+## Local Setup (stdio mode)
+
+For offline use or development, you can run the MCP server locally via stdio.
 
 **Prerequisite:** Install [`uv`](https://docs.astral.sh/uv/) — a single binary that manages Python and packages automatically. No separate Python or `pip install` needed.
 
@@ -63,19 +111,13 @@ brew install uv
 curl -LsSf https://astral.uv.sh/install.sh | sh
 ```
 
+### VS Code (local stdio)
+
 A `.vscode/mcp.json` is included in this repo. VS Code with GitHub Copilot will automatically discover and launch the server using `uv run` — which downloads the correct Python version and installs dependencies on first use (subsequent runs are near-instant from cache).
 
 If prompted, approve the server when VS Code asks to start it.
 
----
-
-## Claude Desktop Setup
-
-**Prerequisite:** Install `uv` as above.
-
-Add the following to your `claude_desktop_config.json`
-(`%APPDATA%\Claude\claude_desktop_config.json` on Windows,
-`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+### Claude Desktop (local stdio)
 
 ```json
 {
@@ -94,16 +136,14 @@ Adjust the path to match where the repo is cloned on your machine. Restart Claud
 
 ## Microsoft M365 Copilot Setup
 
-The MCP server can be deployed to Azure Container Apps and connected to M365 Copilot via Copilot Studio. Authentication is handled by Azure Container Apps Easy Auth (Entra ID) — no credentials are needed in the application code.
+The MCP server can be connected to M365 Copilot via Copilot Studio using the hosted endpoint.
 
 See **[COPILOT-STUDIO-SETUP.md](COPILOT-STUDIO-SETUP.md)** for the full step-by-step guide.
 
 **High-level overview:**
-1. Register an Entra ID app in Azure Portal
-2. Add `MCP_ENTRA_CLIENT_ID` to GitHub Actions secrets
-3. Push to `main` — the `deploy-mcp-container.yml` workflow builds the image (pushed to GHCR) and deploys the Container App via Bicep into `rg-vmsku-alternatives`
-4. Register the `/mcp` endpoint as a custom connector in Copilot Studio
-5. Surface the agent in M365 Copilot
+1. Push to `main` — the `deploy-mcp-container.yml` workflow builds the image (pushed to GHCR) and deploys the Container App via Bicep into `rg-vmsku-alternatives`
+2. Register the `/mcp` endpoint as a custom connector in Copilot Studio
+3. Surface the agent in M365 Copilot
 
 **Cost:** $0/month — Container App scales to zero when idle; GHCR is free for public repos.
 
@@ -129,8 +169,8 @@ AI Agent (GitHub Copilot CLI)
         ▼
 .github/extensions/azure-vm-skus/extension.mjs
 
-AI Agent (VS Code Copilot / Claude Desktop / M365 Copilot)
-        │  MCP (stdio for local, streamable-HTTP for M365)
+AI Agent (VS Code / Claude Desktop / any MCP client)
+        │  MCP (streamable-HTTP or stdio)
         ▼
 mcp_server.py (FastMCP)
         │  HTTPS
@@ -144,9 +184,10 @@ Azure Table Storage (SKU cache) + Azure Retail Pricing API
 
 ## Troubleshooting
 
-**Server doesn't start (VS Code / Claude Desktop):** Ensure `uv` is installed — `winget install astral-sh.uv`
+**Remote connection fails:** Ensure your client isn't trying OAuth discovery. Set authentication to `"none"` in your client config. The hosted server requires no authentication.
 
-**Slow first response:** The Azure Functions backend uses Flex Consumption, which may take 3-5 seconds to cold start. Subsequent calls are fast. The Container App (M365 mode) also cold-starts after idle periods.
+**Server doesn't start (local stdio):** Ensure `uv` is installed — `winget install astral-sh.uv`
+
+**Slow first response:** The Azure Functions backend uses Flex Consumption, which may take 3-5 seconds to cold start. Subsequent calls are fast. The Container App also cold-starts after idle periods.
 
 **Tool returns error:** Run `health_check` first to verify API connectivity.
-
