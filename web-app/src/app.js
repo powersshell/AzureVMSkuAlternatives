@@ -169,6 +169,11 @@ let prefetchAbortController = null; // Cancels in-flight prefetch wave on new se
 let regionCheckAbortController = null; // Cancels in-flight region availability check
 let regionAvailabilityData = null; // { region, availability: { skuName: bool } }
 
+// Capture region options before Choices.js takes over the <select>
+const ALL_REGIONS = Array.from(document.getElementById('location').options)
+    .filter(opt => opt.value)
+    .map(opt => ({ value: opt.value, label: opt.textContent }));
+
 // Event Listeners
 compareBtn.addEventListener('click', handleCompare);
 dismissErrorBtn.addEventListener('click', hideError);
@@ -1616,13 +1621,11 @@ function initRegionCheckBar() {
     const select = document.getElementById('checkRegionSelect');
     const currentRegion = document.getElementById('location').value;
 
-    // Populate dropdown with all regions except current
-    const locationSelect = document.getElementById('location');
-    const options = Array.from(locationSelect.options)
-        .filter(opt => opt.value && opt.value !== currentRegion);
+    // Use pre-captured region list (Choices.js modifies original <select> options)
+    const options = ALL_REGIONS.filter(r => r.value !== currentRegion);
 
     select.innerHTML = '<option value="">— Select a region —</option>' +
-        options.map(opt => `<option value="${opt.value}">${opt.textContent}</option>`).join('');
+        options.map(opt => `<option value="${opt.value}">${opt.label}</option>`).join('');
 
     // Show the bar
     bar.classList.remove('hidden');
