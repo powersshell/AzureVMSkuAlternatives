@@ -9,6 +9,7 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 |------|-------------|
 | `find_alternative_skus` | Find SKUs similar to a target, ranked by similarity score |
 | `compare_sku_details` | Detailed side-by-side comparison between two SKUs |
+| `check_region_availability` | Check if SKUs are available in a different region |
 | `list_vm_skus` | List all SKUs available in a region |
 | `health_check` | Verify API connectivity |
 
@@ -62,35 +63,60 @@ Any client that supports [Streamable HTTP transport](https://modelcontextprotoco
 
 ## GitHub Copilot CLI Setup
 
-The extension at `.github/extensions/azure-vm-skus/extension.mjs` registers all four tools natively in the Copilot CLI — no Python, no `uv`, no MCP config required.
+The MCP server integrates directly with GitHub Copilot CLI via the `/mcp` command.
 
-### Option 1: Already in this repo (zero setup)
+### Option 1: Interactive setup (recommended)
 
-If you open GitHub Copilot CLI from inside this cloned repo, the extension loads automatically. You can immediately ask:
+In any Copilot CLI session, run:
 
-> *"Find alternatives to Standard_D8s_v5 in eastus"*
+```
+/mcp add
+```
 
-### Option 2: Use from any directory (global install)
+Then fill in:
+- **Name:** `azure-vm-skus`
+- **Type:** `http`
+- **URL:** `https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp`
 
-Copy the extension file to your personal Copilot CLI extensions directory to make it available in **every session**, regardless of which directory you're in.
+Press `Ctrl+S` to save.
+
+### Option 2: Manual config (one-liner)
+
+Add to `~/.copilot/mcp-config.json` (create it if it doesn't exist):
 
 **Windows (PowerShell):**
 ```powershell
-$dest = "$env:USERPROFILE\.copilot\extensions\azure-vm-skus"
-New-Item -ItemType Directory -Force $dest | Out-Null
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/powersshell/AzureVMSkuAlternatives/main/.github/extensions/azure-vm-skus/extension.mjs" -OutFile "$dest\extension.mjs"
+$file = "$env:USERPROFILE\.copilot\mcp-config.json"
+$config = if (Test-Path $file) { Get-Content $file | ConvertFrom-Json } else { @{ mcpServers = @{} } }
+$config.mcpServers | Add-Member -Force -Name 'azure-vm-skus' -Value @{ type = 'http'; url = 'https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp' } -MemberType NoteProperty
+$config | ConvertTo-Json -Depth 10 | Set-Content $file
 ```
 
 **macOS / Linux:**
 ```bash
-mkdir -p ~/.copilot/extensions/azure-vm-skus
-curl -sSL https://raw.githubusercontent.com/powersshell/AzureVMSkuAlternatives/main/.github/extensions/azure-vm-skus/extension.mjs \
-  -o ~/.copilot/extensions/azure-vm-skus/extension.mjs
+cat ~/.copilot/mcp-config.json 2>/dev/null | \
+  jq '.mcpServers["azure-vm-skus"] = {"type":"http","url":"https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp"}' \
+  > ~/.copilot/mcp-config.json.tmp && mv ~/.copilot/mcp-config.json.tmp ~/.copilot/mcp-config.json
 ```
 
-After installing, the tools appear automatically in new Copilot CLI sessions. To activate without restarting, run `/reload` in an active session.
+### Option 3: Local stdio (for development)
 
-> **No dependencies** — the extension calls the live Azure Functions API directly over HTTPS. Nothing to install beyond the file itself.
+If you prefer to run the server locally (requires `uv`):
+
+```json
+{
+  "mcpServers": {
+    "azure-vm-skus": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "C:\\Azure\\AzureVMSkuAlternatives\\mcp-server\\mcp_server.py"],
+      "cwd": "C:\\Azure\\AzureVMSkuAlternatives"
+    }
+  }
+}
+```
+
+After adding, run `/mcp` in Copilot CLI to verify the server appears, or start a new session.
 
 ---
 
