@@ -504,6 +504,117 @@ def compare_details(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 
+# ============================================================================
+# HTTP Route: /check_region_availability - Check SKU availability in a region
+# ============================================================================
+@app.route(route="check_region_availability", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+def check_region_availability(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Check whether a list of VM SKUs are available in a specified region.
+    Uses the SKU cache (Azure Table Storage) for fast lookups.
+
+    POST Body:
+    - skuNames: list of SKU names to check (max 200)
+    - region: target region to check availability in
+    """
+    logging.info('Processing check_region_availability request')
+
+    try:
+        try:
+            req_body = req.get_json()
+        except ValueError:
+            return func.HttpResponse(
+                json.dumps({'error': 'Invalid JSON in request body'}),
+                mimetype='application/json',
+                status_code=400
+            )
+
+        sku_names = req_body.get('skuNames', [])
+        region = req_body.get('region', '')
+
+        # Validate inputs
+        if not sku_names or not isinstance(sku_names, list):
+            return func.HttpResponse(
+                json.dumps({'error': 'skuNames must be a non-empty array'}),
+                mimetype='application/json',
+                status_code=400
+            )
+
+        if not region or not isinstance(region, str):
+            return func.HttpResponse(
+                json.dumps({'error': 'region is required and must be a string'}),
+                mimetype='application/json',
+                status_code=400
+            )
+
+        # Enforce max count to prevent abuse
+        if len(sku_names) > 200:
+            return func.HttpResponse(
+                json.dumps({'error': 'Maximum 200 SKU names per request'}),
+                mimetype='application/json',
+                status_code=400
+            )
+
+        # Validate region format (lowercase letters, numbers, no special chars)
+        if not re.match(r'^[a-z][a-z0-9]+$', region):
+            return func.HttpResponse(
+                json.dumps({'error': 'Invalid region format'}),
+                mimetype='application/json',
+                status_code=400
+            )
+
+        # Get storage account
+        storage_account_name = os.environ.get('SKU_CACHE_STORAGE_ACCOUNT')
+        if not storage_account_name:
+            return func.HttpResponse(
+                json.dumps({'error': 'SKU cache not configured'}),
+                mimetype='application/json',
+                status_code=500
+            )
+
+        credential = DefaultAzureCredential()
+        table_service = TableServiceClient(
+            endpoint=f"https://{storage_account_name}.table.core.windows.net",
+            credential=credential
+        )
+        table_client = table_service.get_table_client("vmskus")
+
+        # Use individual point lookups for each SKU (safe and efficient)
+        availability = {}
+        deduplicated = list(set(sku_names))
+
+        for sku_name in deduplicated:
+            try:
+                table_client.get_entity(partition_key=region, row_key=sku_name)
+                availability[sku_name] = True
+            except Exception:
+                availability[sku_name] = False
+
+        available_count = sum(1 for v in availability.values() if v)
+
+        response_data = {
+            'region': region,
+            'availability': availability,
+            'availableCount': available_count,
+            'totalChecked': len(deduplicated),
+            'source': 'cache'
+        }
+
+        return func.HttpResponse(
+            json.dumps(response_data),
+            mimetype='application/json',
+            status_code=200
+        )
+
+    except Exception as e:
+        logging.error(f'Error in check_region_availability: {str(e)}')
+        return func.HttpResponse(
+            json.dumps({'error': f'Internal server error: {str(e)}'}),
+            mimetype='application/json',
+            status_code=500
+        )
+
+
 def get_sku_from_cache(sku_name: str, location: str) -> dict:
     """Get single SKU details from cache."""
     try:

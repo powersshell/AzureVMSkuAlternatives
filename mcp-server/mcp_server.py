@@ -180,6 +180,30 @@ async def compare_sku_details(
         return resp.json()
 
 
+@mcp.tool
+async def check_region_availability(
+    sku_names: list[str],
+    region: str,
+) -> dict:
+    """
+    Check whether a list of Azure VM SKUs are available in a specific region.
+
+    Useful when evaluating migration or failover options: given a set of SKU
+    candidates, determine which ones exist in an alternate region.
+
+    Args:
+        sku_names: List of VM SKU names to check, e.g. ["Standard_D4s_v5", "Standard_D4as_v5"]
+        region:    Target Azure region slug to check availability in, e.g. "westus2"
+    """
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        resp = await client.post(
+            f"{API_BASE}/check_region_availability",
+            json={"skuNames": sku_names, "region": region},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
 if __name__ == "__main__":
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
 

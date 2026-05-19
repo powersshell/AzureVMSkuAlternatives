@@ -9,15 +9,11 @@
 
 ## 📋 Recent Changes
 
-### 2026-05-15
-- **feature:** VM SKU retirement awareness — SKUs announced for retirement are flagged with ⚠️ badges throughout the UI
-- **feature:** Retirement ranking penalty — retiring SKUs are de-prioritized in recommendations (scaled by time-to-retirement)
-- **feature:** "Hide retiring/retired SKUs" filter (enabled by default) to focus on current-gen alternatives
-- **feature:** Retirement warning banner when the target/source SKU itself is retiring, with migration guide links
-- **feature:** CPU generation filter collapsed into a clean dropdown (matches Advanced Options pattern)
-- **data:** Official retirement data for 22 series sourced from [Microsoft docs](https://github.com/MicrosoftDocs/azure-compute-docs/blob/main/articles/virtual-machines/sizes/retirement/retired-sizes-list.md)
-- **improvement:** Region and SKU dropdowns auto-focus the search input on open (MutationObserver on dropdown class)
-- **fix:** Region search now matches anywhere in the name (e.g., typing "US" finds all US regions) via Fuse.js ignoreLocation + findAllMatches
+### 2026-05-19
+- **feature:** Cross-region availability check — after running a comparison, select a second region to see which alternatives are available there (✅/❌ per SKU)
+- **feature:** New API endpoint `/api/check_region_availability` for bulk SKU region lookups
+- **feature:** MCP server tool `check_region_availability` for programmatic cross-region queries
+- **improvement:** CSV export includes region availability column when a cross-region check is active
 
 📄 [Full changelog →](CHANGELOG.md)
 

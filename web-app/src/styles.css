@@ -1028,3 +1028,79 @@ footer {
         padding: 10px;
     }
 }
+
+/* Cross-Region Availability Check */
+.region-check-bar {
+    background: var(--card-bg, #ffffff);
+    border: 1px solid var(--border-color, #e1e4e8);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+}
+
+.region-check-inner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.region-check-bar label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
+.region-check-bar select {
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #e1e4e8);
+    background: var(--bg-color, #f6f8fa);
+    color: var(--text-color, #24292e);
+    font-size: 0.85rem;
+    min-width: 180px;
+}
+
+.region-check-summary {
+    font-size: 0.85rem;
+    color: var(--text-muted, #6a737d);
+    margin-left: auto;
+}
+
+.region-check-clear {
+    background: none;
+    border: 1px solid var(--border-color, #e1e4e8);
+    border-radius: 4px;
+    color: var(--text-muted, #6a737d);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 2px 8px;
+    line-height: 1;
+}
+
+.region-check-clear:hover {
+    background: var(--bg-color, #f6f8fa);
+    color: var(--text-color, #24292e);
+}
+
+.region-avail-col.hidden {
+    display: none;
+}
+
+td.region-avail-cell {
+    text-align: center;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+td.region-avail-cell.avail-yes {
+    color: #16a34a;
+}
+
+td.region-avail-cell.avail-no {
+    color: #dc2626;
+}
+
+td.region-avail-cell.avail-loading {
+    color: var(--text-muted, #6a737d);
+}

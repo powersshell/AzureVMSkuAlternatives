@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-05-19
+- **feature:** Cross-region availability check — after running a comparison, select a second region to see which alternatives are available there (✅/❌ per SKU)
+- **feature:** New API endpoint `/api/check_region_availability` for bulk SKU region lookups
+- **feature:** MCP server tool `check_region_availability` for programmatic cross-region queries
+- **improvement:** CSV export includes region availability column when a cross-region check is active
+
 ## 2026-05-15
 - **feature:** VM SKU retirement awareness — SKUs announced for retirement are flagged with ⚠️ badges throughout the UI
 - **feature:** Retirement ranking penalty — retiring SKUs are de-prioritized in recommendations (scaled by time-to-retirement)

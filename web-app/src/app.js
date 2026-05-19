@@ -166,6 +166,8 @@ let locationChoices = null; // Choices.js instance for location
 let skuChoices = null; // Choices.js instance for SKU
 const expandedDetailsCache = new Map(); // Cache for expanded row details (Phase 2)
 let prefetchAbortController = null; // Cancels in-flight prefetch wave on new search (Phase 3)
+let regionCheckAbortController = null; // Cancels in-flight region availability check
+let regionAvailabilityData = null; // { region, availability: { skuName: bool } }
 
 // Event Listeners
 compareBtn.addEventListener('click', handleCompare);
@@ -471,6 +473,7 @@ async function handleCompare() {
     showLoading();
     hideError();
     hideResults();
+    clearRegionCheck();
 
     trackEvent('compare_submitted', {
         location,
@@ -668,6 +671,9 @@ function displayResults(data) {
         timestampEl.textContent = '';
     }
     resultsSection.classList.remove('hidden');
+
+    // Show cross-region check bar and populate with regions (excluding current)
+    initRegionCheckBar();
 }
 
 // Filter results by CPU vendor checkboxes
@@ -994,6 +1000,7 @@ function displayAlternatives(alternatives) {
                 <td>${formatHourlyPriceSafe(alt.pricing)}</td>
                 <td>${formatMonthlyPriceSafe(alt.pricing)}</td>
                 <td>${alt.zones || 'N/A'}</td>
+                ${renderRegionAvailCell(alt.name)}
             `;
             resultsTableBody.appendChild(row);
         });
@@ -1027,6 +1034,7 @@ function displayAlternatives(alternatives) {
             <td>${formatHourlyPriceSafe(alt.pricing)} ${renderIndicator(indicators.hourlyPrice, 'Hourly Price')}</td>
             <td>${formatMonthlyPriceSafe(alt.pricing)} ${renderIndicator(indicators.monthlyPrice, 'Monthly Price')}</td>
             <td>${alt.zones || 'N/A'}</td>
+            ${renderRegionAvailCell(alt.name)}
         `;
         
         // Click handler for expand/collapse (Phase 2)
@@ -1038,7 +1046,8 @@ function displayAlternatives(alternatives) {
         const detailsRow = document.createElement('tr');
         detailsRow.classList.add('details-row', 'hidden');
         detailsRow.dataset.index = index;
-        detailsRow.innerHTML = `<td colspan="9"><div class="details-content"></div></td>`;
+        const colCount = regionAvailabilityData ? 10 : 9;
+        detailsRow.innerHTML = `<td colspan="${colCount}"><div class="details-content"></div></td>`;
         
         resultsTableBody.appendChild(detailsRow);
     });
@@ -1494,6 +1503,11 @@ function exportToCSV() {
         'Availability Zones'
     ];
 
+    // Add region availability column if active
+    if (regionAvailabilityData) {
+        summaryHeaders.push(`Available in ${regionAvailabilityData.region}`);
+    }
+
     const capabilityHeaders = capabilityColumns.map(col => col.label);
 
     const headers = [...summaryHeaders, ...capabilityHeaders];
@@ -1529,6 +1543,12 @@ function exportToCSV() {
             alt.pricing?.currency || 'N/A',
             alt.zones || 'N/A'
         ];
+
+        // Add region availability if active
+        if (regionAvailabilityData) {
+            const avail = regionAvailabilityData.availability[alt.name];
+            summaryRow.push(avail === true ? 'Yes' : avail === false ? 'No' : 'N/A');
+        }
 
         const capabilityRow = capabilityColumns.flatMap(col => {
             const altValue = altCaps[col.key];
@@ -1585,4 +1605,153 @@ function hideError() {
 
 function hideResults() {
     resultsSection.classList.add('hidden');
+}
+
+// ============================================================================
+// Cross-Region Availability Check
+// ============================================================================
+
+function initRegionCheckBar() {
+    const bar = document.getElementById('regionCheckBar');
+    const select = document.getElementById('checkRegionSelect');
+    const currentRegion = document.getElementById('location').value;
+
+    // Populate dropdown with all regions except current
+    const locationSelect = document.getElementById('location');
+    const options = Array.from(locationSelect.options)
+        .filter(opt => opt.value && opt.value !== currentRegion);
+
+    select.innerHTML = '<option value="">— Select a region —</option>' +
+        options.map(opt => `<option value="${opt.value}">${opt.textContent}</option>`).join('');
+
+    // Show the bar
+    bar.classList.remove('hidden');
+
+    // Wire up change handler (remove old listener by replacing element)
+    const newSelect = select.cloneNode(true);
+    select.parentNode.replaceChild(newSelect, select);
+    newSelect.addEventListener('change', handleRegionCheck);
+
+    // Wire up clear button
+    const clearBtn = document.getElementById('regionCheckClear');
+    const newClear = clearBtn.cloneNode(true);
+    clearBtn.parentNode.replaceChild(newClear, clearBtn);
+    newClear.addEventListener('click', clearRegionCheck);
+}
+
+function clearRegionCheck() {
+    // Abort in-flight request
+    if (regionCheckAbortController) {
+        regionCheckAbortController.abort();
+        regionCheckAbortController = null;
+    }
+    regionAvailabilityData = null;
+
+    // Reset UI
+    const select = document.getElementById('checkRegionSelect');
+    if (select) select.value = '';
+    const summary = document.getElementById('regionCheckSummary');
+    if (summary) summary.textContent = '';
+    const clearBtn = document.getElementById('regionCheckClear');
+    if (clearBtn) clearBtn.classList.add('hidden');
+
+    // Hide availability column
+    const thCol = document.getElementById('thRegionAvail');
+    if (thCol) thCol.classList.add('hidden');
+
+    // Re-render results without the column
+    if (currentResults && currentResults.alternatives) {
+        const filteredAlternatives = filterResults(currentResults.alternatives);
+        displayAlternatives(filteredAlternatives);
+    }
+}
+
+async function handleRegionCheck(e) {
+    const region = e.target.value;
+    if (!region) {
+        clearRegionCheck();
+        return;
+    }
+
+    // Abort previous in-flight request
+    if (regionCheckAbortController) {
+        regionCheckAbortController.abort();
+    }
+    regionCheckAbortController = new AbortController();
+    const signal = regionCheckAbortController.signal;
+
+    // Gather SKU names from current results (including target)
+    if (!currentResults || !currentResults.alternatives) return;
+
+    const skuNames = currentResults.alternatives.map(a => a.name);
+    if (currentResults.targetSku && currentResults.targetSku.name) {
+        skuNames.unshift(currentResults.targetSku.name);
+    }
+
+    // Show loading state
+    const summary = document.getElementById('regionCheckSummary');
+    summary.textContent = 'Checking availability...';
+    const clearBtn = document.getElementById('regionCheckClear');
+    clearBtn.classList.remove('hidden');
+
+    // Show the column header with region name
+    const thCol = document.getElementById('thRegionAvail');
+    const regionLabel = e.target.options[e.target.selectedIndex].textContent;
+    thCol.textContent = regionLabel + '?';
+    thCol.classList.remove('hidden');
+
+    // Show loading cells in existing rows
+    document.querySelectorAll('.region-avail-cell').forEach(cell => {
+        cell.textContent = '…';
+        cell.className = 'region-avail-cell avail-loading';
+    });
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/check_region_availability`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ skuNames, region }),
+            signal
+        });
+
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        regionAvailabilityData = data;
+
+        // Update summary
+        summary.textContent = `${data.availableCount} of ${data.totalChecked} available in ${regionLabel}`;
+
+        // Re-render alternatives to include availability column
+        const filteredAlternatives = filterResults(currentResults.alternatives);
+        displayAlternatives(filteredAlternatives);
+
+        trackEvent('region_check_completed', {
+            sourceRegion: document.getElementById('location').value,
+            checkRegion: region
+        }, {
+            availableCount: data.availableCount,
+            totalChecked: data.totalChecked
+        });
+
+    } catch (err) {
+        if (err.name === 'AbortError') return; // user changed selection
+        console.error('Region availability check failed:', err);
+        summary.textContent = 'Check failed — try again';
+        regionAvailabilityData = null;
+    }
+}
+
+function renderRegionAvailCell(skuName) {
+    if (!regionAvailabilityData) return '';
+    const avail = regionAvailabilityData.availability[skuName];
+    if (avail === true) {
+        return '<td class="region-avail-cell avail-yes">✅ Available</td>';
+    } else if (avail === false) {
+        return '<td class="region-avail-cell avail-no">❌ Not available</td>';
+    }
+    return '<td class="region-avail-cell">—</td>';
 }

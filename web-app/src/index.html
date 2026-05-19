@@ -302,6 +302,18 @@
                     </div>
                 </details>
 
+                <!-- Cross-Region Availability Check -->
+                <div class="region-check-bar hidden" id="regionCheckBar">
+                    <div class="region-check-inner">
+                        <label for="checkRegionSelect">🌍 Also check availability in:</label>
+                        <select id="checkRegionSelect">
+                            <option value="">— Select a region —</option>
+                        </select>
+                        <span class="region-check-summary" id="regionCheckSummary"></span>
+                        <button type="button" class="region-check-clear hidden" id="regionCheckClear" title="Clear region check">✕</button>
+                    </div>
+                </div>
+
                 <div class="table-container">
                     <table id="resultsTable">
                         <thead>
@@ -315,6 +327,7 @@
                                 <th id="th-hourly">Hourly Cost (Linux)</th>
                                 <th id="th-monthly">Monthly Cost (Linux)</th>
                                 <th>Availability Zones</th>
+                                <th class="region-avail-col hidden" id="thRegionAvail">Region?</th>
                             </tr>
                         </thead>
                         <tbody id="resultsTableBody">
