@@ -725,11 +725,11 @@ body {
     color: var(--text-secondary);
 }
 .diff-item.upgrade {
-    color: #d83b01;
+    color: var(--success);
     font-weight: 500;
 }
 .diff-item.downgrade {
-    color: #d13438;
+    color: var(--danger);
     font-weight: 500;
 }
 .diff-item.positive {

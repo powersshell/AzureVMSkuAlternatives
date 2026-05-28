@@ -1333,7 +1333,7 @@ function renderPricingSection(pricing) {
 
 function renderBooleanDiff(diff) {
     const icon = diff.changed ? (diff.direction === 'added' ? '✅' : '❌') : '●';
-    const className = diff.changed ? 'diff-item' : 'diff-item same';
+    const className = diff.changed ? (diff.direction === 'added' ? 'diff-item upgrade' : 'diff-item downgrade') : 'diff-item same';
     const text = diff.changed ? 
         `${diff.target ? 'Yes' : 'No'} → ${diff.alternative ? 'Yes' : 'No'}` :
         `${diff.alternative ? 'Yes' : 'No'} (same)`;
@@ -1346,8 +1346,9 @@ function renderEfficiency(efficiency) {
     
     if (efficiency.costPerVCPU) {
         const icon = efficiency.costPerVCPU.betterEfficiency ? '✅' : '⚠️';
+        const cls = efficiency.costPerVCPU.betterEfficiency ? 'diff-item positive' : 'diff-item negative';
         html += `
-            <div class="diff-item">
+            <div class="${cls}">
                 ${icon} Cost per vCPU: $${efficiency.costPerVCPU.alternative.toFixed(4)}
                 (${efficiency.costPerVCPU.betterEfficiency ? 'better' : 'worse'} efficiency)
             </div>
@@ -1356,8 +1357,9 @@ function renderEfficiency(efficiency) {
     
     if (efficiency.costPerGB) {
         const icon = efficiency.costPerGB.betterEfficiency ? '✅' : '⚠️';
+        const cls = efficiency.costPerGB.betterEfficiency ? 'diff-item positive' : 'diff-item negative';
         html += `
-            <div class="diff-item">
+            <div class="${cls}">
                 ${icon} Cost per GB: $${efficiency.costPerGB.alternative.toFixed(4)}
                 (${efficiency.costPerGB.betterEfficiency ? 'better' : 'worse'} efficiency)
             </div>
