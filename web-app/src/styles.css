@@ -78,46 +78,42 @@ body {
 
 /* ========== Page Title ========== */
 .page-title {
-    text-align: center;
-    padding: 12px 24px 8px;
+    text-align: right;
+    padding: 6px 24px 4px;
     flex-shrink: 0;
 }
 .page-title h1 {
-    color: white;
-    font-size: 22px;
-    font-weight: 600;
-    margin-bottom: 2px;
-    text-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    display: none;
 }
 .page-title p {
     color: rgba(255,255,255,0.85);
-    font-size: 13px;
+    font-size: 12px;
 }
 
 /* ========== Disclaimer Banner ========== */
 .disclaimer-banner {
     margin: 0 16px;
-    padding: 8px 16px;
+    padding: 6px 16px;
     background: #fff3cd;
     color: #664d03;
     border: 1px solid #ffecb5;
     border-radius: var(--radius);
-    font-size: 12px;
-    line-height: 1.5;
+    font-size: 11px;
+    line-height: 1.4;
 }
 
 /* ========== Config Bar ========== */
 .config-bar {
     background: var(--card-bg);
     margin: 0 16px;
-    padding: 12px 16px;
+    padding: 10px 16px;
     border-radius: var(--radius);
     box-shadow: var(--shadow);
     flex-shrink: 0;
 }
 .config-row {
     display: flex;
-    align-items: flex-end;
+    align-items: flex-start;
     gap: 10px;
     flex-wrap: wrap;
 }
@@ -254,8 +250,8 @@ body {
 .content-grid {
     display: grid;
     grid-template-columns: 260px 1fr;
-    gap: 12px;
-    padding: 12px 16px;
+    gap: 10px;
+    padding: 8px 16px;
     flex: 1;
     min-height: 0;
     overflow: hidden;
