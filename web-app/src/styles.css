@@ -662,13 +662,20 @@ body {
     color: #6a4b00;
 }
 
-/* Region availability cell in cards */
-.card-region-avail {
-    font-size: 11px;
-    margin-top: 3px;
+/* Region availability chip in cards */
+.mini-spec-avail {
+    min-width: 64px;
 }
-.avail-yes { color: var(--success); }
-.avail-no { color: var(--danger); }
+.mini-spec-avail.avail-yes {
+    background: #e6f4e6;
+    border-color: #c3e6c3;
+}
+.mini-spec-avail.avail-no {
+    background: #fde7e9;
+    border-color: #f5c6cb;
+}
+.avail-yes .mini-spec-val { color: var(--success); }
+.avail-no .mini-spec-val { color: var(--danger); }
 
 /* Details expansion */
 .details-row {

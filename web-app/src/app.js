@@ -1705,15 +1705,11 @@ async function handleRegionCheck(e) {
 
     // Show the column header with region name
     const thCol = document.getElementById('thRegionAvail');
-    const regionLabel = e.target.options[e.target.selectedIndex].textContent;
-    thCol.textContent = regionLabel + '?';
-    thCol.classList.remove('hidden');
-
-    // Show loading cells in existing rows
-    document.querySelectorAll('.region-avail-cell').forEach(cell => {
-        cell.textContent = '…';
-        cell.className = 'region-avail-cell avail-loading';
-    });
+    const regionLabel = e.target.options[e.target.selectedIndex]?.textContent || region;
+    if (thCol) {
+        thCol.textContent = regionLabel + '?';
+        thCol.classList.remove('hidden');
+    }
 
     try {
         // Set a 30-second timeout for the region check
@@ -1767,11 +1763,12 @@ async function handleRegionCheck(e) {
 
 function renderRegionAvailCell(skuName) {
     if (!regionAvailabilityData) return '';
+    const region = regionAvailabilityData.region || 'Region';
     const avail = regionAvailabilityData.availability[skuName];
     if (avail === true) {
-        return '<div class="mini-spec"><div class="mini-spec-val avail-yes">✅</div><div class="mini-spec-lbl">Region</div></div>';
+        return `<div class="mini-spec mini-spec-avail avail-yes"><div class="mini-spec-val">✅</div><div class="mini-spec-lbl">${region}</div></div>`;
     } else if (avail === false) {
-        return '<div class="mini-spec"><div class="mini-spec-val avail-no">❌</div><div class="mini-spec-lbl">Region</div></div>';
+        return `<div class="mini-spec mini-spec-avail avail-no"><div class="mini-spec-val">❌</div><div class="mini-spec-lbl">${region}</div></div>`;
     }
-    return '<div class="mini-spec"><div class="mini-spec-val">—</div><div class="mini-spec-lbl">Region</div></div>';
+    return `<div class="mini-spec mini-spec-avail"><div class="mini-spec-val">—</div><div class="mini-spec-lbl">${region}</div></div>`;
 }
