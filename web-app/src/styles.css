@@ -94,6 +94,18 @@ body {
     font-size: 13px;
 }
 
+/* ========== Disclaimer Banner ========== */
+.disclaimer-banner {
+    margin: 0 16px;
+    padding: 8px 16px;
+    background: #fff3cd;
+    color: #664d03;
+    border: 1px solid #ffecb5;
+    border-radius: var(--radius);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 /* ========== Config Bar ========== */
 .config-bar {
     background: var(--card-bg);
