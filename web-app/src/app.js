@@ -1716,12 +1716,17 @@ async function handleRegionCheck(e) {
     });
 
     try {
+        // Set a 30-second timeout for the region check
+        const timeoutId = setTimeout(() => regionCheckAbortController.abort(), 30000);
+
         const response = await fetch(`${API_BASE_URL}/check_region_availability`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ skuNames, region }),
             signal
         });
+
+        clearTimeout(timeoutId);
 
         if (!response.ok) {
             const errData = await response.json().catch(() => ({}));
@@ -1747,7 +1752,13 @@ async function handleRegionCheck(e) {
         });
 
     } catch (err) {
-        if (err.name === 'AbortError') return; // user changed selection
+        if (err.name === 'AbortError') {
+            // Could be user-initiated or timeout
+            if (summary.textContent === 'Checking availability...') {
+                summary.textContent = 'Timed out — try again';
+            }
+            return;
+        }
         console.error('Region availability check failed:', err);
         summary.textContent = 'Check failed — try again';
         regionAvailabilityData = null;

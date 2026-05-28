@@ -683,6 +683,92 @@ body {
     font-size: 12px;
 }
 
+/* Detailed Comparison Layout */
+.comparison-details h4 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--blue-start);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--blue-start);
+}
+.details-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+}
+.details-section {
+    background: #fafbfc;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+}
+.details-section h5 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+.diff-item {
+    padding: 3px 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+.diff-item.upgrade {
+    color: #d83b01;
+    font-weight: 500;
+}
+.diff-item.downgrade {
+    color: #d13438;
+    font-weight: 500;
+}
+.diff-item.positive {
+    color: var(--success);
+    font-weight: 500;
+}
+.diff-item.negative {
+    color: var(--danger);
+    font-weight: 500;
+}
+.diff-item.same {
+    color: var(--text-muted);
+}
+.diff-item .delta,
+.diff-item .diff-pct {
+    display: block;
+    font-size: 11px;
+    margin-left: 16px;
+    font-weight: 600;
+}
+.features-diff {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-light);
+}
+.features-added {
+    color: var(--success);
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+.features-removed {
+    color: var(--danger);
+    font-size: 12px;
+}
+
+@media (max-width: 900px) {
+    .details-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+@media (max-width: 600px) {
+    .details-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* Diff indicators */
 .diff-indicator {
     font-size: 10px;
