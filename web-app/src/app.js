@@ -981,85 +981,91 @@ function renderIndicator(indicator, fieldName) {
     return '';
 }
 
-// Display Alternatives Table
+// Display Alternatives as Cards
 function displayAlternatives(alternatives) {
     resultsTableBody.innerHTML = '';
+
+    // Update results count badge
+    const countBadge = document.getElementById('resultsCount');
+    if (countBadge) countBadge.textContent = alternatives.length;
     
     // Get target SKU for comparison
     const targetSku = currentResults?.targetSku;
-    if (!targetSku) {
-        console.error('No target SKU available for comparison');
-        // Fall back to display without indicators
-        alternatives.forEach((alt, index) => {
-            const row = document.createElement('tr');
-            const scoreClass = alt.similarityScore >= 80 ? 'score-high' :
-                              alt.similarityScore >= 60 ? 'score-medium' : 'score-low';
-
-            row.innerHTML = `
-                <td><span class="rank-badge">${index + 1}</span></td>
-                <td><span class="sku-name">${alt.name}</span></td>
-                <td><div class="similarity-score"><span class="score-badge ${scoreClass}">${alt.similarityScore.toFixed(1)}%</span></div></td>
-                <td>${formatCpuPerf(alt)}</td>
-                <td>${alt.vCPUs || 'N/A'}</td>
-                <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'}</td>
-                <td>${formatHourlyPriceSafe(alt.pricing)}</td>
-                <td>${formatMonthlyPriceSafe(alt.pricing)}</td>
-                <td>${alt.zones || 'N/A'}</td>
-                ${renderRegionAvailCell(alt.name)}
-            `;
-            resultsTableBody.appendChild(row);
-        });
-        return;
-    }
 
     alternatives.forEach((alt, index) => {
-        // Main result row
-        const row = document.createElement('tr');
-        row.classList.add('result-row', 'clickable');
-        row.dataset.index = index;
-        row.dataset.skuName = alt.name;
+        const scoreClass = alt.similarityScore >= 90 ? 'high' :
+                          alt.similarityScore >= 85 ? 'mid' : 'low';
+        const scorePercent = alt.similarityScore.toFixed(1);
 
-        const scoreClass = alt.similarityScore >= 80 ? 'score-high' :
-                          alt.similarityScore >= 60 ? 'score-medium' : 'score-low';
+        // Calculate price delta
+        let deltaHtml = '';
+        if (targetSku) {
+            const targetPrice = getMonthlyPrice(targetSku.pricing);
+            const altPrice = getMonthlyPrice(alt.pricing);
+            if (targetPrice && altPrice && targetPrice > 0) {
+                const pctDiff = ((altPrice - targetPrice) / targetPrice * 100).toFixed(0);
+                if (pctDiff < -1) {
+                    deltaHtml = `<span class="card-price-delta delta-save">${pctDiff}% ↓</span>`;
+                } else if (pctDiff > 1) {
+                    deltaHtml = `<span class="card-price-delta delta-more">+${pctDiff}% ↑</span>`;
+                } else {
+                    deltaHtml = `<span class="card-price-delta delta-same">same price</span>`;
+                }
+            }
+        }
 
-        // Calculate indicators from existing data
-        const indicators = calculateIndicators(targetSku, alt);
+        // CPU info line
+        const cpuInfo = alt.cpuVendor 
+            ? `${alt.cpuVendor}${alt.cpuGeneration ? ' ' + alt.cpuGeneration : ''} (${alt.architecture || 'x64'})`
+            : '';
 
-        row.innerHTML = `
-            <td><span class="rank-badge">${index + 1}</span></td>
-            <td><span class="sku-name">${alt.name}</span> ${renderRetirementBadge(alt)}</td>
-            <td>
-                <div class="similarity-score">
-                    <span class="score-badge ${scoreClass}">${alt.similarityScore.toFixed(1)}%</span>
+        // Region availability
+        const regionAvail = renderRegionAvailCell(alt.name);
+
+        // Build card
+        const card = document.createElement('div');
+        card.classList.add('result-card');
+        card.dataset.index = index;
+        card.dataset.skuName = alt.name;
+
+        card.innerHTML = `
+            <div class="card-sku-info">
+                <div class="card-sku-name">${alt.name} ${renderRetirementBadge(alt)}</div>
+                <div class="card-sku-cpu">${cpuInfo}</div>
+                <div class="card-score-bar">
+                    <div class="score-track"><div class="score-fill ${scoreClass}" style="width:${scorePercent}%"></div></div>
+                    <span class="card-score-pct ${scoreClass}">${scorePercent}%</span>
                 </div>
-            </td>
-            <td>${formatCpuPerf(alt)} ${renderCpuPerfIndicator(indicators.cpuPerf)}</td>
-            <td>${alt.vCPUs || 'N/A'} ${renderIndicator(indicators.vCPUs, 'vCPUs')}</td>
-            <td>${alt.memoryGB ? alt.memoryGB + ' GB' : 'N/A'} ${renderIndicator(indicators.memory, 'Memory')}</td>
-            <td>${formatHourlyPriceSafe(alt.pricing)} ${renderIndicator(indicators.hourlyPrice, 'Hourly Price')}</td>
-            <td>${formatMonthlyPriceSafe(alt.pricing)} ${renderIndicator(indicators.monthlyPrice, 'Monthly Price')}</td>
-            <td>${alt.zones || 'N/A'}</td>
-            ${renderRegionAvailCell(alt.name)}
+            </div>
+            <div class="card-specs">
+                <div class="mini-spec"><div class="mini-spec-val">${alt.vCPUs || '—'}</div><div class="mini-spec-lbl">vCPUs</div></div>
+                <div class="mini-spec"><div class="mini-spec-val">${alt.memoryGB ? alt.memoryGB + 'GB' : '—'}</div><div class="mini-spec-lbl">Memory</div></div>
+                <div class="mini-spec"><div class="mini-spec-val">${alt.zones || '—'}</div><div class="mini-spec-lbl">AZs</div></div>
+                ${regionAvail}
+            </div>
+            <div class="card-price">
+                <div class="card-price-hourly">${formatHourlyPriceSafe(alt.pricing)}</div>
+                <div class="card-price-monthly">${formatMonthlyPriceSafe(alt.pricing)}/mo</div>
+                ${deltaHtml}
+            </div>
         `;
         
-        // Click handler for expand/collapse (Phase 2)
-        row.addEventListener('click', () => toggleDetails(index, alt, targetSku));
+        card.addEventListener('click', () => toggleDetails(index, alt, targetSku || alt));
+        resultsTableBody.appendChild(card);
         
-        resultsTableBody.appendChild(row);
-        
-        // Create hidden details row (Phase 2)
-        const detailsRow = document.createElement('tr');
-        detailsRow.classList.add('details-row', 'hidden');
-        detailsRow.dataset.index = index;
-        const colCount = regionAvailabilityData ? 10 : 9;
-        detailsRow.innerHTML = `<td colspan="${colCount}"><div class="details-content"></div></td>`;
-        
-        resultsTableBody.appendChild(detailsRow);
+        // Details expansion div
+        const detailsDiv = document.createElement('div');
+        detailsDiv.classList.add('details-row', 'hidden');
+        detailsDiv.dataset.index = index;
+        detailsDiv.innerHTML = `<div class="details-content"></div>`;
+        resultsTableBody.appendChild(detailsDiv);
     });
 
     // Kick off background prefetch for top 10 rows (Phase 3)
-    const location = currentResults?.location || document.getElementById('location').value;
-    prefetchTopDetails(alternatives, targetSku, location);
+    if (targetSku) {
+        const location = currentResults?.location || document.getElementById('location').value;
+        prefetchTopDetails(alternatives, targetSku, location);
+    }
 }
 
 // Toggle details row expand/collapse (Phase 2)
@@ -1752,9 +1758,9 @@ function renderRegionAvailCell(skuName) {
     if (!regionAvailabilityData) return '';
     const avail = regionAvailabilityData.availability[skuName];
     if (avail === true) {
-        return '<td class="region-avail-cell avail-yes">✅ Available</td>';
+        return '<div class="mini-spec"><div class="mini-spec-val avail-yes">✅</div><div class="mini-spec-lbl">Region</div></div>';
     } else if (avail === false) {
-        return '<td class="region-avail-cell avail-no">❌ Not available</td>';
+        return '<div class="mini-spec"><div class="mini-spec-val avail-no">❌</div><div class="mini-spec-lbl">Region</div></div>';
     }
-    return '<td class="region-avail-cell">—</td>';
+    return '<div class="mini-spec"><div class="mini-spec-val">—</div><div class="mini-spec-lbl">Region</div></div>';
 }
