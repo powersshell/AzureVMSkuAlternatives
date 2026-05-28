@@ -689,6 +689,18 @@ body {
 .avail-yes .mini-spec-val { color: var(--success); }
 .avail-no .mini-spec-val { color: var(--danger); }
 
+/* AZ zone match/mismatch chips */
+.mini-spec-zones-match {
+    background: #e6f4e6;
+    border-color: #c3e6c3;
+}
+.mini-spec-zones-match .mini-spec-val { color: var(--success); }
+.mini-spec-zones-mismatch {
+    background: #fde7e9;
+    border-color: #f5c6cb;
+}
+.mini-spec-zones-mismatch .mini-spec-val { color: var(--danger); }
+
 /* Details expansion */
 .details-row {
     background: var(--card-bg);

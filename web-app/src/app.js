@@ -1040,7 +1040,7 @@ function displayAlternatives(alternatives) {
             <div class="card-specs">
                 <div class="mini-spec"><div class="mini-spec-val">${alt.vCPUs || '—'}</div><div class="mini-spec-lbl">vCPUs</div></div>
                 <div class="mini-spec"><div class="mini-spec-val">${alt.memoryGB ? alt.memoryGB + 'GB' : '—'}</div><div class="mini-spec-lbl">Memory</div></div>
-                <div class="mini-spec"><div class="mini-spec-val">${alt.zones || '—'}</div><div class="mini-spec-lbl">AZs</div></div>
+                ${renderZonesChip(alt.zones, targetSku?.zones)}
                 ${regionAvail}
             </div>
             <div class="card-price">
@@ -1760,6 +1760,25 @@ async function handleRegionCheck(e) {
         summary.textContent = 'Check failed — try again';
         regionAvailabilityData = null;
     }
+}
+
+function renderZonesChip(altZones, targetZones) {
+    const altStr = altZones || '—';
+    if (!targetZones || !altZones) {
+        return `<div class="mini-spec"><div class="mini-spec-val">${altStr}</div><div class="mini-spec-lbl">AZs</div></div>`;
+    }
+    const targetSet = new Set(targetZones.split(',').map(z => z.trim()));
+    const altSet = new Set(altZones.split(',').map(z => z.trim()));
+    // Check if alt has all the same zones as target
+    const hasAll = [...targetSet].every(z => altSet.has(z));
+    const extraZones = [...altSet].some(z => !targetSet.has(z));
+    let cls = '';
+    if (hasAll && altSet.size >= targetSet.size) {
+        cls = ' mini-spec-zones-match'; // same or more zones = green
+    } else {
+        cls = ' mini-spec-zones-mismatch'; // missing zones = red
+    }
+    return `<div class="mini-spec${cls}"><div class="mini-spec-val">${altStr}</div><div class="mini-spec-lbl">AZs</div></div>`;
 }
 
 function renderRegionAvailCell(skuName) {
