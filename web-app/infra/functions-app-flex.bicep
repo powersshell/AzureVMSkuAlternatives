@@ -466,7 +466,8 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
       cors: {
         allowedOrigins: [
           'https://portal.azure.com'
-          'https://black-sea-0784c5d0f.1.azurestaticapps.net'  // Static Web App
+          'https://black-sea-0784c5d0f.1.azurestaticapps.net'  // Static Web App (production)
+          'https://black-sea-0784c5d0f-1.eastus2.1.azurestaticapps.net' // SWA preview (PR #1)
         ]
         supportCredentials: false
       }

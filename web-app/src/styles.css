@@ -113,7 +113,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 3px;
-    min-width: 130px;
+    min-width: 160px;
 }
 .config-field label {
     font-size: 11px;
@@ -122,8 +122,8 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.3px;
 }
-.config-field-grow { flex: 1; min-width: 200px; }
-.config-field-sm { min-width: 80px; max-width: 100px; }
+.config-field-grow { flex: 1; min-width: 220px; }
+.config-field-sm { min-width: 80px; max-width: 110px; }
 
 .config-field select,
 .config-field input {
@@ -751,6 +751,9 @@ body {
 .no-results p { font-size: 13px; }
 
 /* ========== Choices.js Overrides ========== */
+.choices {
+    margin-bottom: 0 !important;
+}
 .choices__inner {
     padding: 5px 8px !important;
     min-height: 34px !important;
@@ -763,12 +766,28 @@ body {
     border-radius: var(--radius-sm) !important;
     border-color: var(--border) !important;
     z-index: 200 !important;
+    word-break: normal !important;
+    min-width: 200px !important;
+}
+.choices__list--dropdown .choices__item {
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    word-break: normal !important;
 }
 .choices__list--dropdown .choices__item--selectable.is-highlighted {
     background: rgba(0,120,212,0.08) !important;
 }
 .choices[data-type*="select-one"] .choices__inner {
     padding-bottom: 5px !important;
+}
+/* Ensure Choices.js containers don't collapse */
+.config-field .choices {
+    width: 100% !important;
+}
+.config-field .choices__list--dropdown {
+    width: auto !important;
+    min-width: 100% !important;
 }
 
 /* ========== Responsive ========== */
