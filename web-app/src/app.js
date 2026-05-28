@@ -1703,12 +1703,11 @@ async function handleRegionCheck(e) {
     const clearBtn = document.getElementById('regionCheckClear');
     clearBtn.classList.remove('hidden');
 
-    // Show the column header with region name
+    // Store region label for chip display (no visible header in card layout)
     const thCol = document.getElementById('thRegionAvail');
     const regionLabel = e.target.options[e.target.selectedIndex]?.textContent || region;
     if (thCol) {
-        thCol.textContent = regionLabel + '?';
-        thCol.classList.remove('hidden');
+        thCol.textContent = regionLabel;
     }
 
     try {
