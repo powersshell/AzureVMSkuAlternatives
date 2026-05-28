@@ -1911,12 +1911,11 @@ def get_cpu_performance(sku_name: str) -> Optional[Dict]:
 
 
 def _enrich_cpu_perf(data: Dict, sku_name: str) -> None:
-    """Fill in cpuPerfScore/cpuGeneration on a response dict if missing, using on-the-fly lookup."""
-    if not data.get('cpuPerfScore'):
-        cpu_perf = get_cpu_performance(sku_name)
-        if cpu_perf:
-            data['cpuPerfScore'] = cpu_perf['score']
-            data['cpuGeneration'] = cpu_perf['generation']
+    """Fill in cpuPerfScore/cpuGeneration on a response dict, always using the code mapping as source of truth."""
+    cpu_perf = get_cpu_performance(sku_name)
+    if cpu_perf:
+        data['cpuPerfScore'] = cpu_perf['score']
+        data['cpuGeneration'] = cpu_perf['generation']
 
 
 def _enrich_network_bw(data: Dict, sku_name: str) -> None:
