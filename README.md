@@ -9,12 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-05-19
-- **feature:** Cross-region availability check — after running a comparison, select a second region to see which alternatives are available there (✅/❌ per SKU)
-- **feature:** New API endpoint `/api/check_region_availability` for bulk SKU region lookups
-- **feature:** MCP server tool `check_region_availability` for programmatic cross-region queries
-- **improvement:** CSV export includes region availability column when a cross-region check is active
-- **fix:** Region check dropdown now correctly populated (capture options before Choices.js initialization)
+### 2026-05-28
+- **fix:** Corrected CPU generation mapping for AMD B-series burstable SKUs (Balsv2, Batsv2) — previously showed "Ice Lake" (Intel) instead of "Milan/Zen 3" (AMD)
 
 📄 [Full changelog →](CHANGELOG.md)
 

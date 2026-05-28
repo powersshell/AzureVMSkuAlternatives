@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-05-28
+- **fix:** Corrected CPU generation mapping for AMD B-series burstable SKUs (Balsv2, Batsv2) — previously showed "Ice Lake" (Intel) instead of "Milan/Zen 3" (AMD)
+
 ## 2026-05-19
 - **feature:** Cross-region availability check — after running a comparison, select a second region to see which alternatives are available there (✅/❌ per SKU)
 - **feature:** New API endpoint `/api/check_region_availability` for bulk SKU region lookups
