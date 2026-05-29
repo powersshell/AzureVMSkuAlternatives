@@ -9,8 +9,13 @@
 
 ## 📋 Recent Changes
 
-### 2026-05-28
-- **fix:** Corrected CPU generation mapping for AMD B-series burstable SKUs (Balsv2, Batsv2) — previously showed "Ice Lake" (Intel) instead of "Milan/Zen 3" (AMD)
+### 2026-05-29
+- **feature:** Complete frontend redesign — new two-panel card layout inspired by SaaS comparison pages (Stytch-style)
+- **feature:** Color-coded availability zones — green when alternative matches/exceeds target zones, red when zones are missing
+- **feature:** Region availability shown as ✅/❌ chips on each result card
+- **improvement:** Detailed comparison colors — green for upgrades/price decreases, red for downgrades/price increases
+- **improvement:** Increased font sizes across the UI for better readability at 100% zoom
+- **fix:** Corrected CPU generation mapping for AMD B-series burstable SKUs
 
 📄 [Full changelog →](CHANGELOG.md)
 
