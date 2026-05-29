@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Azure VM SKU Comparison Tool</title>
     <link rel="stylesheet" href="styles.css">
-    <!-- Choices.js CSS for searchable dropdowns -->
     <link rel="stylesheet" 
           href="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/styles/choices.min.css"
           integrity="sha384-9oHz8X4XgvL+WkhPjPTMHviP0FM/eWUHWFmAVXKJ3PnbIK8Vi2ranPMgb0LZhaeQ"
@@ -13,225 +12,219 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>
-                <svg class="logo" width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect width="40" height="40" rx="8" fill="#0078D4"/>
-                    <path d="M10 20L15 10L25 15L30 10L35 20L25 30L15 25L10 20Z" fill="white"/>
+    <!-- Top Navigation Bar -->
+    <nav class="top-nav">
+        <div class="nav-left">
+            <svg class="nav-logo" width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#0078d4"/>
+                        <stop offset="100%" stop-color="#00bcf2"/>
+                    </linearGradient>
+                </defs>
+                <rect width="32" height="32" rx="6" fill="url(#logoGrad)"/>
+                <path d="M8 18c0-4.5 3-8 7-9.5C18 7 22 9 23 12c2.5.5 4.5 2.5 4.5 5.5 0 3-2.5 5.5-5.5 5.5H10c-2.8 0-5-2-5-5h3z" fill="rgba(255,255,255,0.95)"/>
+                <rect x="13" y="16" width="2" height="5" rx="1" fill="url(#logoGrad)"/>
+                <rect x="17" y="14" width="2" height="7" rx="1" fill="url(#logoGrad)"/>
+            </svg>
+            <span class="nav-title">Azure VM SKU Comparison</span>
+        </div>
+        <div class="nav-right">
+            <a href="https://github.com/powersshell/AzureVMSkuAlternatives" target="_blank" rel="noopener" class="nav-link">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                GitHub
+            </a>
+            <a id="reportIssueLink" href="https://github.com/powersshell/AzureVMSkuAlternatives/issues/new/choose" target="_blank" rel="noopener" class="nav-link">Report Issue</a>
+        </div>
+    </nav>
+
+    <!-- Page Title -->
+    <div class="page-title">
+        <h1>VM SKU Comparison</h1>
+        <p>Find alternative Azure Virtual Machine SKUs based on capabilities, performance, and pricing</p>
+    </div>
+
+    <!-- Disclaimer Banner -->
+    <div class="disclaimer-banner">
+        ⚠️ <strong>Experimental preview:</strong> Treat results as guidance only. Validate compatibility, regional availability, and current pricing before production decisions.
+    </div>
+
+    <!-- Configuration Bar -->
+    <div class="config-bar">
+        <div class="config-row">
+            <div class="config-field">
+                <label for="location">Region</label>
+                <select id="location" required>
+                    <option value="">Select a region...</option>
+                    <option value="eastus">East US</option>
+                    <option value="eastus2">East US 2</option>
+                    <option value="westus">West US</option>
+                    <option value="westus2">West US 2</option>
+                    <option value="westus3">West US 3</option>
+                    <option value="centralus">Central US</option>
+                    <option value="northcentralus">North Central US</option>
+                    <option value="southcentralus">South Central US</option>
+                    <option value="westcentralus">West Central US</option>
+                    <option value="canadacentral">Canada Central</option>
+                    <option value="canadaeast">Canada East</option>
+                    <option value="brazilsouth">Brazil South</option>
+                    <option value="northeurope">North Europe</option>
+                    <option value="westeurope">West Europe</option>
+                    <option value="uksouth">UK South</option>
+                    <option value="ukwest">UK West</option>
+                    <option value="francecentral">France Central</option>
+                    <option value="germanywestcentral">Germany West Central</option>
+                    <option value="norwayeast">Norway East</option>
+                    <option value="switzerlandnorth">Switzerland North</option>
+                    <option value="swedencentral">Sweden Central</option>
+                    <option value="southeastasia">Southeast Asia</option>
+                    <option value="eastasia">East Asia</option>
+                    <option value="australiaeast">Australia East</option>
+                    <option value="australiasoutheast">Australia Southeast</option>
+                    <option value="japaneast">Japan East</option>
+                    <option value="japanwest">Japan West</option>
+                    <option value="koreacentral">Korea Central</option>
+                    <option value="koreasouth">Korea South</option>
+                    <option value="southindia">South India</option>
+                    <option value="centralindia">Central India</option>
+                    <option value="westindia">West India</option>
+                    <option value="southafricanorth">South Africa North</option>
+                    <option value="uaenorth">UAE North</option>
+                </select>
+            </div>
+            <div class="config-field config-field-grow">
+                <label for="skuName">Source SKU</label>
+                <select id="skuName" required disabled>
+                    <option value="">Select a region first...</option>
+                </select>
+                <small id="skuCount" class="sku-count"></small>
+            </div>
+            <div class="config-field config-field-sm">
+                <label for="minSimilarityScore">Min Score</label>
+                <select id="minSimilarityScore">
+                    <option value="60">60%</option>
+                    <option value="65">65%</option>
+                    <option value="70">70%</option>
+                    <option value="75">75%</option>
+                    <option value="80" selected>80%</option>
+                    <option value="85">85%</option>
+                    <option value="90">90%</option>
+                    <option value="95">95%</option>
+                    <option value="100">100%</option>
+                </select>
+            </div>
+            <div class="config-field config-field-sm">
+                <label for="discountPct">Discount %</label>
+                <input type="number" id="discountPct" value="0" min="0" max="100" step="0.1" placeholder="0">
+                <small id="discountHint" class="discount-hint"></small>
+            </div>
+            <div class="config-field config-field-sm">
+                <label for="currencyCode">Currency</label>
+                <select id="currencyCode">
+                    <option value="USD">USD</option>
+                    <option value="EUR">EUR</option>
+                    <option value="GBP">GBP</option>
+                    <option value="CAD">CAD</option>
+                    <option value="AUD">AUD</option>
+                    <option value="JPY">JPY</option>
+                    <option value="INR">INR</option>
+                    <option value="BRL">BRL</option>
+                </select>
+            </div>
+            <button id="compareBtn" class="compare-btn">
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                    <path d="M10 3L10 17M10 17L6 13M10 17L14 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
-                Azure VM SKU Comparison Tool
-            </h1>
-            <p class="subtitle">Find alternative Azure Virtual Machine SKUs based on capabilities, performance, and pricing</p>
-            <p class="experimental-notice" role="note">
-                <strong>Experimental preview:</strong> Treat results as guidance only. Validate compatibility, regional availability, and current pricing before production decisions.
-            </p>
-        </header>
+                Compare
+            </button>
+        </div>
 
-        <main>
-            <section class="input-section">
-                <div class="form-grid">
-                    <!-- Region First - User must select region before SKU -->
-                    <div class="form-group">
-                        <label for="location">Azure Region *</label>
-                        <select id="location" required>
-                            <option value="">Select a region...</option>
-                            <option value="eastus">East US</option>
-                            <option value="eastus2">East US 2</option>
-                            <option value="westus">West US</option>
-                            <option value="westus2">West US 2</option>
-                            <option value="westus3">West US 3</option>
-                            <option value="centralus">Central US</option>
-                            <option value="northcentralus">North Central US</option>
-                            <option value="southcentralus">South Central US</option>
-                            <option value="westcentralus">West Central US</option>
-                            <option value="canadacentral">Canada Central</option>
-                            <option value="canadaeast">Canada East</option>
-                            <option value="brazilsouth">Brazil South</option>
-                            <option value="northeurope">North Europe</option>
-                            <option value="westeurope">West Europe</option>
-                            <option value="uksouth">UK South</option>
-                            <option value="ukwest">UK West</option>
-                            <option value="francecentral">France Central</option>
-                            <option value="germanywestcentral">Germany West Central</option>
-                            <option value="norwayeast">Norway East</option>
-                            <option value="switzerlandnorth">Switzerland North</option>
-                            <option value="swedencentral">Sweden Central</option>
-                            <option value="southeastasia">Southeast Asia</option>
-                            <option value="eastasia">East Asia</option>
-                            <option value="australiaeast">Australia East</option>
-                            <option value="australiasoutheast">Australia Southeast</option>
-                            <option value="japaneast">Japan East</option>
-                            <option value="japanwest">Japan West</option>
-                            <option value="koreacentral">Korea Central</option>
-                            <option value="koreasouth">Korea South</option>
-                            <option value="southindia">South India</option>
-                            <option value="centralindia">Central India</option>
-                            <option value="westindia">West India</option>
-                            <option value="southafricanorth">South Africa North</option>
-                            <option value="uaenorth">UAE North</option>
-                        </select>
-                        <small>Select a region to see available VM SKUs</small>
-                    </div>
+        <!-- Filter Row -->
+        <div class="filter-row">
+            <span class="filter-label">CPU Vendor:</span>
+            <label class="filter-check"><input type="checkbox" id="filterIntel" checked> Intel</label>
+            <label class="filter-check"><input type="checkbox" id="filterAMD" checked> AMD</label>
+            <label class="filter-check"><input type="checkbox" id="filterARM" checked> ARM</label>
+        </div>
 
-                    <!-- CPU Vendor Filter - Between region and SKU dropdowns -->
-                    <div class="form-group">
-                        <label>Filter by CPU Vendor:</label>
-                        <div class="checkbox-group">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="filterIntel" checked>
-                                Intel (x64)
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="filterAMD" checked>
-                                AMD (x64)
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="filterARM" checked>
-                                ARM (Arm64)
-                            </label>
-                        </div>
-                    </div>
+        <!-- Advanced Options -->
+        <details class="advanced-options">
+            <summary>Advanced Options</summary>
+            <div class="advanced-grid">
+                <div class="adv-field">
+                    <label for="weightCPU">CPU Priority</label>
+                    <select id="weightCPU">
+                        <option value="low">Low</option>
+                        <option value="normal">Normal</option>
+                        <option value="high" selected>High</option>
+                    </select>
+                </div>
+                <div class="adv-field">
+                    <label for="weightMemory">Memory Priority</label>
+                    <select id="weightMemory">
+                        <option value="low">Low</option>
+                        <option value="normal">Normal</option>
+                        <option value="high" selected>High</option>
+                    </select>
+                </div>
+                <div class="adv-field">
+                    <label for="weightGPU">GPU Priority</label>
+                    <select id="weightGPU">
+                        <option value="low">Low</option>
+                        <option value="normal" selected>Normal</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+                <div class="adv-field">
+                    <label for="weightStorage">Storage Priority</label>
+                    <select id="weightStorage">
+                        <option value="low">Low</option>
+                        <option value="normal" selected>Normal</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+                <div class="adv-field">
+                    <label for="weightNetwork">Network Priority</label>
+                    <select id="weightNetwork">
+                        <option value="low" selected>Low</option>
+                        <option value="normal">Normal</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+                <div class="adv-field">
+                    <label for="weightFeatures">Features Priority</label>
+                    <select id="weightFeatures">
+                        <option value="low" selected>Low</option>
+                        <option value="normal">Normal</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+                <div class="adv-field adv-check">
+                    <label><input type="checkbox" id="requireNVMeMatch"> Require NVMe Match</label>
+                </div>
+                <div class="adv-field adv-check">
+                    <label><input type="checkbox" id="requireGPUMatch"> Require GPU Match</label>
+                </div>
+            </div>
+        </details>
+    </div>
 
-                    <!-- SKU Dropdown Second - Populated based on selected region -->
-                    <div class="form-group">
-                        <label for="skuName">VM SKU Name *</label>
-                        <select 
-                            id="skuName" 
-                            required 
-                            disabled
-                        >
-                            <option value="">Select a region first...</option>
-                        </select>
-                        <small id="skuCount" class="sku-count"></small>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="minSimilarityScore">Min Similarity Score</label>
-                        <select id="minSimilarityScore">
-                            <option value="60">60%</option>
-                            <option value="65">65%</option>
-                            <option value="70">70%</option>
-                            <option value="75">75%</option>
-                            <option value="80" selected>80% (default)</option>
-                            <option value="85">85%</option>
-                            <option value="90">90%</option>
-                            <option value="95">95%</option>
-                            <option value="100">100%</option>
-                        </select>
-                        <small>Minimum overall match score required to show a VM in results. Higher values show only very similar VMs.</small>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="discountPct">Corporate Discount (%)</label>
-                        <input type="number" id="discountPct" value="0" min="0" max="100" step="0.1" placeholder="0">
-                        <small id="discountHint">No discount applied. Enter 0–100 to reduce displayed prices.</small>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="currencyCode">Currency</label>
-                        <select id="currencyCode">
-                            <option value="USD">USD - US Dollar</option>
-                            <option value="EUR">EUR - Euro</option>
-                            <option value="GBP">GBP - British Pound</option>
-                            <option value="CAD">CAD - Canadian Dollar</option>
-                            <option value="AUD">AUD - Australian Dollar</option>
-                            <option value="JPY">JPY - Japanese Yen</option>
-                            <option value="INR">INR - Indian Rupee</option>
-                            <option value="BRL">BRL - Brazilian Real</option>
-                        </select>
+    <!-- Main Content Grid (two panels) -->
+    <div class="content-grid">
+        <!-- Left Panel: Source SKU Info -->
+        <aside class="source-panel">
+            <div class="source-panel-inner">
+                <div id="targetSkuInfo" class="source-sku-info">
+                    <div class="source-empty">
+                        <p>Select a region and SKU, then click <strong>Compare</strong> to see source details here.</p>
                     </div>
                 </div>
+                <div id="retirementBanner" class="retirement-banner hidden"></div>
+            </div>
+        </aside>
 
-                <details class="advanced-options">
-                    <summary>Advanced Options</summary>
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label for="weightCPU">CPU Priority</label>
-                            <select id="weightCPU">
-                                <option value="low">Low</option>
-                                <option value="normal">Normal</option>
-                                <option value="high" selected>High</option>
-                            </select>
-                            <small>Importance of CPU matching</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="weightMemory">Memory Priority</label>
-                            <select id="weightMemory">
-                                <option value="low">Low</option>
-                                <option value="normal">Normal</option>
-                                <option value="high" selected>High</option>
-                            </select>
-                            <small>Importance of memory matching</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="weightGPU">GPU Priority</label>
-                            <select id="weightGPU">
-                                <option value="low">Low</option>
-                                <option value="normal" selected>Normal</option>
-                                <option value="high">High</option>
-                            </select>
-                            <small>Importance of GPU matching</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="weightStorage">Storage Priority</label>
-                            <select id="weightStorage">
-                                <option value="low">Low</option>
-                                <option value="normal" selected>Normal</option>
-                                <option value="high">High</option>
-                            </select>
-                            <small>Importance of storage matching</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="weightNetwork">Network Priority</label>
-                            <select id="weightNetwork">
-                                <option value="low" selected>Low</option>
-                                <option value="normal">Normal</option>
-                                <option value="high">High</option>
-                            </select>
-                            <small>Importance of network matching</small>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="weightFeatures">Features Priority</label>
-                            <select id="weightFeatures">
-                                <option value="low" selected>Low</option>
-                                <option value="normal">Normal</option>
-                                <option value="high">High</option>
-                            </select>
-                            <small>Importance of feature matching</small>
-                        </div>
-
-                        <div class="form-group checkbox-group">
-                            <label>
-                                <input type="checkbox" id="requireNVMeMatch">
-                                Require NVMe Match
-                            </label>
-                            <small>Only show NVMe alternatives if target has NVMe</small>
-                        </div>
-
-                        <div class="form-group checkbox-group">
-                            <label>
-                                <input type="checkbox" id="requireGPUMatch">
-                                Require GPU Match
-                            </label>
-                            <small>Only show GPU alternatives if target has GPU</small>
-                        </div>
-                    </div>
-                </details>
-
-                <button id="compareBtn" class="primary-btn">
-                    <span>Compare VM SKUs</span>
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M10 3L10 17M10 17L6 13M10 17L14 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                </button>
-            </section>
-
+        <!-- Right Panel: Results (scrollable) -->
+        <section class="results-panel">
             <div id="loadingOverlay" class="loading-overlay hidden">
                 <div class="loading-spinner">
                     <div class="spinner"></div>
@@ -240,106 +233,72 @@
             </div>
 
             <section id="resultsSection" class="results-section hidden">
+                <!-- Results Header -->
                 <div class="results-header">
-                    <h2>Comparison Results</h2>
-                    <span id="cacheTimestamp" class="cache-timestamp"></span>
-                    <div class="results-actions">
+                    <div class="results-header-top">
+                        <h2>Alternatives <span id="resultsCount" class="results-badge"></span></h2>
+                        <span id="cacheTimestamp" class="cache-timestamp"></span>
+                    </div>
+                    <div class="results-controls">
                         <div class="pricing-model-toggle">
-                            <span>Pricing:</span>
-                            <button id="btn-payg" class="btn-pricing active" onclick="setPricingModel('payg')">Pay-As-You-Go</button>
-                            <button id="btn-ri1year" class="btn-pricing" onclick="setPricingModel('ri1year')">1-Year RI</button>
-                            <button id="btn-ri3year" class="btn-pricing" onclick="setPricingModel('ri3year')">3-Year RI</button>
+                            <button id="btn-payg" class="btn-pricing active" onclick="setPricingModel('payg')">PAYG</button>
+                            <button id="btn-ri1year" class="btn-pricing" onclick="setPricingModel('ri1year')">1yr RI</button>
+                            <button id="btn-ri3year" class="btn-pricing" onclick="setPricingModel('ri3year')">3yr RI</button>
                         </div>
                         <div class="os-pricing-toggle" id="osPricingToggle">
-                            <span>OS Pricing:</span>
                             <button id="btn-linux-pricing" class="btn-os active" onclick="setPricingOS('linux')">Linux</button>
                             <button id="btn-windows-pricing" class="btn-os" onclick="setPricingOS('windows')">Windows</button>
                         </div>
-                        <button id="exportBtn" class="secondary-btn">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <button id="exportBtn" class="export-btn" title="Export to CSV">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                                 <path d="M14 10v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-2M8 2v8m0 0l3-3M8 10L5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                             </svg>
-                            Export to CSV
+                            CSV
                         </button>
                     </div>
                 </div>
 
-                <div id="targetSkuInfo" class="target-sku-card"></div>
-                <div id="retirementBanner" class="retirement-banner hidden"></div>
-
-                <!-- CPU Vendor Filters for Results -->
+                <!-- Result Filters -->
                 <div class="results-filters">
-                    <label>Filter Results by CPU Vendor:</label>
-                    <div class="checkbox-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="resultFilterIntel" checked>
-                            Intel (x64)
-                        </label>
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="resultFilterAMD" checked>
-                            AMD (x64)
-                        </label>
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="resultFilterARM" checked>
-                            ARM (Arm64)
-                        </label>
-                        <label class="checkbox-label retirement-filter-label">
-                            <input type="checkbox" id="hideRetiringFilter" checked>
-                            Hide retiring/retired SKUs
-                        </label>
-                    </div>
+                    <label class="filter-check"><input type="checkbox" id="resultFilterIntel" checked> Intel</label>
+                    <label class="filter-check"><input type="checkbox" id="resultFilterAMD" checked> AMD</label>
+                    <label class="filter-check"><input type="checkbox" id="resultFilterARM" checked> ARM</label>
+                    <label class="filter-check filter-retirement"><input type="checkbox" id="hideRetiringFilter" checked> Hide retiring</label>
                 </div>
 
-                <!-- CPU Generation Filter for Results -->
-                <details class="gen-filter-section results-filters" id="genFilterSection" style="display:none;">
+                <!-- CPU Generation Filter -->
+                <details class="gen-filter-section" id="genFilterSection" style="display:none;">
                     <summary>Filter by CPU Generation</summary>
                     <div class="gen-filter-controls">
                         <button type="button" class="gen-filter-btn" id="genSelectAll">Select All</button>
                         <button type="button" class="gen-filter-btn" id="genDeselectAll">Deselect All</button>
                     </div>
-                    <div class="gen-filter-options" id="genFilterOptions">
-                        <!-- Dynamically populated with checkboxes -->
-                    </div>
+                    <div class="gen-filter-options" id="genFilterOptions"></div>
                 </details>
 
-                <!-- Cross-Region Availability Check -->
+                <!-- Cross-Region Availability -->
                 <div class="region-check-bar hidden" id="regionCheckBar">
                     <div class="region-check-inner">
-                        <label for="checkRegionSelect">🌍 Also check availability in:</label>
+                        <label for="checkRegionSelect">🌍 Check availability in:</label>
                         <select id="checkRegionSelect">
                             <option value="">— Select a region —</option>
                         </select>
                         <span class="region-check-summary" id="regionCheckSummary"></span>
-                        <button type="button" class="region-check-clear hidden" id="regionCheckClear" title="Clear region check">✕</button>
+                        <button type="button" class="region-check-clear hidden" id="regionCheckClear" title="Clear">✕</button>
                     </div>
                 </div>
 
-                <div class="table-container">
-                    <table id="resultsTable">
-                        <thead>
-                            <tr>
-                                <th>Rank</th>
-                                <th>SKU Name</th>
-                                <th>Similarity Score</th>
-                                <th>CPU / Perf</th>
-                                <th>vCPUs</th>
-                                <th>Memory (GB)</th>
-                                <th id="th-hourly">Hourly Cost (Linux)</th>
-                                <th id="th-monthly">Monthly Cost (Linux)</th>
-                                <th>Availability Zones</th>
-                                <th class="region-avail-col hidden" id="thRegionAvail">Region?</th>
-                            </tr>
-                        </thead>
-                        <tbody id="resultsTableBody">
-                        </tbody>
-                    </table>
+                <!-- Hidden elements for pricing header compatibility -->
+                <span id="th-hourly" class="hidden"></span>
+                <span id="th-monthly" class="hidden"></span>
+                <span id="thRegionAvail" class="hidden"></span>
+
+                <!-- Results Cards Container -->
+                <div class="results-scroll">
+                    <div id="resultsTableBody" class="results-cards"></div>
                 </div>
 
                 <div id="noResults" class="no-results hidden">
-                    <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
-                        <circle cx="32" cy="32" r="30" stroke="#E1E4E8" stroke-width="2"/>
-                        <path d="M32 20v16m0 4h.01" stroke="#6C757D" stroke-width="3" stroke-linecap="round"/>
-                    </svg>
                     <h3>No alternatives found</h3>
                     <p>Try adjusting your filters or similarity threshold</p>
                 </div>
@@ -347,30 +306,12 @@
 
             <section id="errorSection" class="error-section hidden">
                 <div class="error-card">
-                    <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                        <circle cx="24" cy="24" r="22" stroke="#DC3545" stroke-width="2"/>
-                        <path d="M24 14v14m0 4h.01" stroke="#DC3545" stroke-width="3" stroke-linecap="round"/>
-                    </svg>
-                    <h3>Error</h3>
+                    <h3>⚠️ Error</h3>
                     <p id="errorMessage"></p>
                     <button id="dismissErrorBtn" class="secondary-btn">Dismiss</button>
                 </div>
             </section>
-        </main>
-
-        <footer>
-            <p>&copy; 2026 Azure VM SKU Comparison Tool | Powered by Azure Static Web Apps & Azure Functions</p>
-            <p class="footer-links">
-                <a
-                    id="reportIssueLink"
-                    class="footer-link"
-                    href="https://github.com/powersshell/AzureVMSkuAlternatives/issues/new/choose"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Report an issue in GitHub Issues"
-                >Report an issue or feedback</a>
-            </p>
-        </footer>
+        </section>
     </div>
 
     <!-- Choices.js library for searchable dropdowns -->
