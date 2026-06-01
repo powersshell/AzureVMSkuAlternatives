@@ -9,13 +9,9 @@
 
 ## 📋 Recent Changes
 
-### 2026-05-29
-- **feature:** Complete frontend redesign — new two-panel card layout inspired by SaaS comparison pages (Stytch-style)
-- **feature:** Color-coded availability zones — green when alternative matches/exceeds target zones, red when zones are missing
-- **feature:** Region availability shown as ✅/❌ chips on each result card
-- **improvement:** Detailed comparison colors — green for upgrades/price decreases, red for downgrades/price increases
-- **improvement:** Increased font sizes across the UI for better readability at 100% zoom
-- **fix:** Corrected CPU generation mapping for AMD B-series burstable SKUs
+### 2026-06-01
+- **feature:** PowerShell script (`Compare-AzureVms.ps1`) brought to feature parity with the web app — CPU vendor/generation/performance, `-CpuVendor` filtering, retirement awareness, Reserved Instance & Windows pricing, cost-efficiency metrics, cross-region availability (`-CheckRegion`), and CSV export
+- **data:** Ported CPU performance, series-to-CPU, and retirement reference tables into the PowerShell script from the API
 
 📄 [Full changelog →](CHANGELOG.md)
 

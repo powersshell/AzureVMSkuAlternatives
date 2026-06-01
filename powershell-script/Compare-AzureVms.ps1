@@ -33,6 +33,20 @@
     If the target SKU has NVMe support, only show alternatives that also have NVMe support
 .PARAMETER RequireGPUMatch
     If the target SKU has GPU support, only show alternatives that also have GPU support
+.PARAMETER CpuVendor
+    Filter alternatives by CPU vendor. One or more of: Intel, AMD, ARM. Default: all vendors.
+.PARAMETER HideRetiring
+    Exclude SKUs announced for retirement or already retired (default: $true, matching the website).
+    Use -HideRetiring:$false to include retiring SKUs (a similarity-score penalty is applied for ranking).
+.PARAMETER PricingModel
+    Pricing model to display and use for cost-efficiency: PAYG, RI1Year, or RI3Year (default: PAYG).
+    Reserved Instance models show $null/N/A for SKUs without RI pricing.
+.PARAMETER OS
+    Operating system for pricing: Linux or Windows (default: Linux).
+.PARAMETER CheckRegion
+    A second Azure region to check each alternative's availability in (adds an AvailableIn<region> column).
+.PARAMETER ExportCsv
+    Path to export the full result set as a CSV file.
 .EXAMPLE
     .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v3" -Location "eastus"
 .EXAMPLE
@@ -43,6 +57,12 @@
     .\Compare-AzureVms.ps1 -SkuName "Standard_L8s_v3" -Location "eastus" -RequireNVMeMatch
 .EXAMPLE
     .\Compare-AzureVms.ps1 -SkuName "Standard_NC6s_v3" -Location "eastus" -RequireGPUMatch -WeightGPU 3.0
+.EXAMPLE
+    .\Compare-AzureVms.ps1 -SkuName "Standard_D4as_v5" -Location "eastus" -CpuVendor AMD,ARM
+.EXAMPLE
+    .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -PricingModel RI3Year -OS Windows
+.EXAMPLE
+    .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -CheckRegion "westeurope" -ExportCsv ".\results.csv"
 #>
 
 [CmdletBinding()]
@@ -87,7 +107,28 @@ param(
     [switch]$RequireNVMeMatch,
 
     [Parameter(Mandatory = $false)]
-    [switch]$RequireGPUMatch
+    [switch]$RequireGPUMatch,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('Intel', 'AMD', 'ARM')]
+    [string[]]$CpuVendor,
+
+    [Parameter(Mandatory = $false)]
+    [bool]$HideRetiring = $true,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('PAYG', 'RI1Year', 'RI3Year')]
+    [string]$PricingModel = 'PAYG',
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('Linux', 'Windows')]
+    [string]$OS = 'Linux',
+
+    [Parameter(Mandatory = $false)]
+    [string]$CheckRegion,
+
+    [Parameter(Mandatory = $false)]
+    [string]$ExportCsv
 )
 
 # Ensure Az.Compute module is available
@@ -96,7 +137,412 @@ if (-not (Get-Module -ListAvailable -Name Az.Compute)) {
     exit 1
 }
 
-# Function to get pricing information for VM SKUs
+# ============================================================================
+# Static data tables ported from web-app/api/function_app.py (source of truth)
+# ============================================================================
+$script:CpuPerformanceTable = @{
+    'E5-2673 v3' = @{ Score = 96; Generation = 'Haswell'; Year = 2014 }
+    'E5-2673 v4' = @{ Score = 89; Generation = 'Broadwell'; Year = 2016 }
+    '8171M' = @{ Score = 85; Generation = 'Skylake'; Year = 2017 }
+    '8168' = @{ Score = 97; Generation = 'Skylake'; Year = 2017 }
+    'E-2288G' = @{ Score = 187; Generation = 'Coffee Lake'; Year = 2019 }
+    'E-2176G' = @{ Score = 176; Generation = 'Coffee Lake'; Year = 2018 }
+    '8272CL' = @{ Score = 96; Generation = 'Cascade Lake'; Year = 2019 }
+    '8280M' = @{ Score = 73; Generation = 'Cascade Lake'; Year = 2019 }
+    '6246R' = @{ Score = 108; Generation = 'Cascade Lake'; Year = 2020 }
+    '8370C' = @{ Score = 100; Generation = 'Ice Lake'; Year = 2021 }
+    '8473C' = @{ Score = 115; Generation = 'Sapphire Rapids'; Year = 2023 }
+    '8488C' = @{ Score = 115; Generation = 'Sapphire Rapids'; Year = 2023 }
+    '8573C' = @{ Score = 120; Generation = 'Emerald Rapids'; Year = 2024 }
+    '8592+' = @{ Score = 120; Generation = 'Emerald Rapids'; Year = 2024 }
+    '7551' = @{ Score = 72; Generation = 'Naples (Zen 1)'; Year = 2017 }
+    '7452' = @{ Score = 101; Generation = 'Rome (Zen 2)'; Year = 2019 }
+    '7V12' = @{ Score = 121; Generation = 'Rome (Zen 2)'; Year = 2020 }
+    '7763' = @{ Score = 106; Generation = 'Milan (Zen 3)'; Year = 2021 }
+    '7V13' = @{ Score = 136; Generation = 'Milan (Zen 3)'; Year = 2021 }
+    '7V73X' = @{ Score = 141; Generation = 'Milan-X (Zen 3)'; Year = 2022 }
+    '9004' = @{ Score = 122; Generation = 'Genoa (Zen 4)'; Year = 2023 }
+    '9V004' = @{ Score = 122; Generation = 'Genoa (Zen 4)'; Year = 2023 }
+    '9005' = @{ Score = 135; Generation = 'Turin (Zen 5)'; Year = 2024 }
+    '9754' = @{ Score = 95; Generation = 'Bergamo (Zen 4c)'; Year = 2023 }
+    'Cobalt 100' = @{ Score = 120; Generation = 'Cobalt 100 (Neoverse N2)'; Year = 2023 }
+    'Ampere Altra' = @{ Score = 95; Generation = 'Ampere Altra (Neoverse N1)'; Year = 2022 }
+}
+
+$script:SeriesCpuMap = @{
+    'Dv3' = @('8272CL', '8171M', 'E5-2673 v4')
+    'Dsv3' = @('8272CL', '8171M', 'E5-2673 v4')
+    'Dv4' = @('8272CL')
+    'Dsv4' = @('8272CL')
+    'Ddv4' = @('8272CL')
+    'Ddsv4' = @('8272CL')
+    'Dv5' = @('8370C')
+    'Dsv5' = @('8473C', '8370C', '8573C')
+    'Ddv5' = @('8370C')
+    'Ddsv5' = @('8370C')
+    'Dlsv5' = @('8370C')
+    'Dldsv5' = @('8370C')
+    'Dsv6' = @('8473C', '8573C')
+    'Ddsv6' = @('8473C', '8573C')
+    'Dlsv6' = @('8473C', '8573C')
+    'Dldsv6' = @('8473C', '8573C')
+    'Dsv7' = @('8573C')
+    'Ddsv7' = @('8573C')
+    'Dlsv7' = @('8573C')
+    'Dldsv7' = @('8573C')
+    'Dav4' = @('7452')
+    'Dasv4' = @('7452')
+    'Dasv5' = @('7763')
+    'Dadsv5' = @('7763')
+    'Dasv6' = @('9004')
+    'Dadsv6' = @('9004')
+    'Dalsv6' = @('9004')
+    'Daldsv6' = @('9004')
+    'Dasv7' = @('9005')
+    'Dadsv7' = @('9005')
+    'Dalsv7' = @('9005')
+    'Daldsv7' = @('9005')
+    'Dpsv5' = @('Ampere Altra')
+    'Dpdsv5' = @('Ampere Altra')
+    'Dplsv5' = @('Ampere Altra')
+    'Dpldsv5' = @('Ampere Altra')
+    'Dpsv6' = @('Cobalt 100')
+    'Dpdsv6' = @('Cobalt 100')
+    'Dplsv6' = @('Cobalt 100')
+    'Dpldsv6' = @('Cobalt 100')
+    'Ev3' = @('8272CL', '8171M', 'E5-2673 v4')
+    'Esv3' = @('8272CL', '8171M', 'E5-2673 v4')
+    'Ev4' = @('8272CL')
+    'Esv4' = @('8272CL')
+    'Edv4' = @('8272CL')
+    'Edsv4' = @('8272CL')
+    'Ev5' = @('8370C')
+    'Esv5' = @('8473C', '8370C', '8573C')
+    'Edv5' = @('8370C')
+    'Edsv5' = @('8370C')
+    'Esv6' = @('8473C', '8573C')
+    'Edsv6' = @('8473C', '8573C')
+    'Ensv6' = @('8473C', '8573C')
+    'Endsv6' = @('8473C', '8573C')
+    'Esv7' = @('8573C')
+    'Edsv7' = @('8573C')
+    'Eav4' = @('7452')
+    'Easv4' = @('7452')
+    'Easv5' = @('7763')
+    'Eadsv5' = @('7763')
+    'Easv6' = @('9004')
+    'Eadsv6' = @('9004')
+    'Easv7' = @('9005')
+    'Eadsv7' = @('9005')
+    'Epsv5' = @('Ampere Altra')
+    'Epdsv5' = @('Ampere Altra')
+    'Epsv6' = @('Cobalt 100')
+    'Epdsv6' = @('Cobalt 100')
+    'Ebsv5' = @('8370C')
+    'Ebdsv5' = @('8370C', '8573C')
+    'Ebsv6' = @('8573C')
+    'Ebdsv6' = @('8573C')
+    'Msv2' = @('8280M')
+    'Mdsv2' = @('8280M')
+    'Msv3' = @('8473C')
+    'Mdsv3' = @('8473C')
+    'Mbsv3' = @('8473C')
+    'Mbdsv3' = @('8473C')
+    'Mv2' = @('8280M')
+    'Fsv2' = @('8272CL', '8370C', '8168')
+    'FXsv2' = @('8370C')
+    'FXmdsv2' = @('8370C')
+    'Fasv6' = @('9004')
+    'Famsv6' = @('9004')
+    'Falsv6' = @('9004')
+    'Fasv7' = @('9005')
+    'Fadsv7' = @('9005')
+    'Falsv7' = @('9005')
+    'Faldsv7' = @('9005')
+    'Famsv7' = @('9005')
+    'Famdsv7' = @('9005')
+    'Lsv2' = @('7551')
+    'Lasv3' = @('7763')
+    'Lsv3' = @('8370C')
+    'Lasv4' = @('9004')
+    'Lsv4' = @('8473C')
+    'DCsv2' = @('E-2288G')
+    'DCsv3' = @('8370C')
+    'DCdsv3' = @('8370C')
+    'DCesv6' = @('8573C')
+    'DCedsv6' = @('8573C')
+    'DCasv5' = @('7763')
+    'DCadsv5' = @('7763')
+    'DCasv6' = @('9004')
+    'DCadsv6' = @('9004')
+    'ECasv5' = @('7763')
+    'ECadsv5' = @('7763')
+    'ECasv6' = @('9004')
+    'ECadsv6' = @('9004')
+    'Bsv2' = @('8370C')
+    'Basv2' = @('7763')
+    'Bpsv2' = @('Ampere Altra')
+    'Balsv2' = @('7763')
+    'Blsv2' = @('8370C')
+    'Batsv2' = @('7763')
+    'Btsv2' = @('8370C')
+    'Bplsv2' = @('Ampere Altra')
+    'Bptsv2' = @('Ampere Altra')
+    'HBv3' = @('7V13')
+    'HBv4' = @('9V004')
+    'HBv2' = @('7V12')
+    'HBrsv3' = @('7V13')
+    'HBrsv4' = @('9V004')
+    'HBrsv2' = @('7V12')
+    'HC' = @('8168')
+    'HX' = @('7V13')
+    'HXrs' = @('7V13')
+    'FXmsv2' = @('8370C')
+    'Laosv4' = @('9004')
+    'Mmsv2' = @('8280M')
+    'Mmsv3' = @('8473C')
+    'Ensv7' = @('8573C')
+    'Endsv7' = @('8573C')
+    'Epsv7' = @('Cobalt 100')
+    'Epdsv7' = @('Cobalt 100')
+    'Dv2' = @('8272CL', '8171M', 'E5-2673 v4', 'E5-2673 v3')
+    'DSv2' = @('8272CL', '8171M', 'E5-2673 v4', 'E5-2673 v3')
+    'Av2' = @('8272CL', '8171M', 'E5-2673 v4', 'E5-2673 v3')
+    'D' = @('E5-2673 v3')
+    'DS' = @('E5-2673 v3')
+    'F' = @('E5-2673 v3', 'E5-2673 v4')
+    'Fs' = @('E5-2673 v3', 'E5-2673 v4')
+    'M' = @('E5-2673 v4')
+    'Mms' = @('E5-2673 v4')
+    'Ms' = @('E5-2673 v4')
+    'G' = @('E5-2673 v3')
+    'Gs' = @('E5-2673 v3')
+    'L' = @('E5-2673 v3')
+    'Ls' = @('E5-2673 v3')
+    'B' = @('E5-2673 v4', '8171M')
+    'Bms' = @('E5-2673 v4', '8171M')
+    'Bs' = @('E5-2673 v4', '8171M')
+    'Bls' = @('E5-2673 v4', '8171M')
+    'DC' = @('E-2176G')
+    'DCs' = @('E-2176G')
+    'DCv2' = @('E-2288G')
+    'EC' = @('7763')
+    'FX' = @('8370C')
+    'FXmds' = @('8370C')
+    'Amv2' = @('8272CL', '8171M', 'E5-2673 v4', 'E5-2673 v3')
+    'HCrs' = @('8168')
+}
+
+$script:VmRetirementInfo = @(
+    @{ Pattern = '^Standard_D\d+$'; Status = 'Announced'; RetirementDate = '2028-05-01'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_DS\d+$'; Status = 'Announced'; RetirementDate = '2028-05-01'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_D\d+_v2$'; Status = 'Announced'; RetirementDate = '2028-05-01'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_DS\d+_v2$'; Status = 'Announced'; RetirementDate = '2028-05-01'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_A\d+m?_v2$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_B\d+[a-z]*s$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_B\d+ls$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_F\d+$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_F\d+s$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_F\d+s_v2$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_G\d+$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_GS\d+(-\d+)?$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_M192idms_v2$'; Status = 'Announced'; RetirementDate = '2027-03-31'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/sizes/retirement/msv2-mdsv2-retirement' }
+    @{ Pattern = '^Standard_M192ids_v2$'; Status = 'Announced'; RetirementDate = '2027-03-31'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/sizes/retirement/msv2-mdsv2-retirement' }
+    @{ Pattern = '^Standard_M192ims_v2$'; Status = 'Announced'; RetirementDate = '2027-03-31'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/sizes/retirement/msv2-mdsv2-retirement' }
+    @{ Pattern = '^Standard_M192is_v2$'; Status = 'Announced'; RetirementDate = '2027-03-31'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/sizes/retirement/msv2-mdsv2-retirement' }
+    @{ Pattern = '^Standard_L\d+s$'; Status = 'Announced'; RetirementDate = '2028-05-01'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_L\d+s_v2$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_NC24rs_v3$'; Status = 'Retired'; RetirementDate = '2025-09-30'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/ncv3-nc24rs-retirement' }
+    @{ Pattern = '^Standard_NC\d+s?_v3$'; Status = 'Retired'; RetirementDate = '2025-09-30'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/ncv3-retirement' }
+    @{ Pattern = '^Standard_NV\d+s?_v3$'; Status = 'Announced'; RetirementDate = '2026-09-30'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nvv3-series-retirement' }
+    @{ Pattern = '^Standard_NV\d+as_v4$'; Status = 'Announced'; RetirementDate = '2026-09-30'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nvv4-retirement' }
+    @{ Pattern = '^Standard_NP\d+s$'; Status = 'Announced'; RetirementDate = '2027-05-31'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/sizes/retirement/np-series-retirement' }
+)
+
+# --- CPU performance, vendor, and retirement helpers ---
+# Static data and logic below are ported from web-app/api/function_app.py
+# (CPU_PERFORMANCE_TABLE, SERIES_CPU_MAP, VM_RETIREMENT_INFO, detect_cpu_vendor,
+#  _get_series_prefix, get_cpu_performance, _get_retirement_info, _retirement_penalty).
+# Keep these in sync with the Python source of truth when it changes.
+
+function Get-SeriesPrefix {
+    <#
+    .SYNOPSIS
+        Extract the series prefix from a SKU name for CPU mapping.
+        E.g., 'Standard_D2s_v5' -> 'Dsv5', 'Standard_E96-24ads_v6' -> 'Eadsv6'.
+        Ported from _get_series_prefix in function_app.py.
+    #>
+    param([Parameter(Mandatory = $true)][string]$SkuName)
+
+    $name = $SkuName -replace '^Standard_', '' -replace '^Basic_', ''
+    # Remove constrained vCPU prefix (e.g., E96-24ads_v6 -> Eads_v6)
+    $name = [regex]::Replace($name, '^([A-Za-z]+)\d+-\d+', '$1')
+
+    $ic = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $m = [regex]::Match($name, '^([A-Za-z]+)[0-9]*([a-z]*)_v(\d+)', $ic)
+    if ($m.Success) {
+        return ('{0}{1}v{2}' -f $m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value)
+    }
+    # Handle non-versioned series (HC, HB, M, etc.)
+    $m2 = [regex]::Match($name, '^([A-Za-z]+)[0-9]*([a-z]*)', $ic)
+    if ($m2.Success) {
+        $family = $m2.Groups[1].Value
+        $modifiers = $m2.Groups[2].Value
+        $prefix = "$family$modifiers"
+        if ($script:SeriesCpuMap.ContainsKey($prefix)) { return $prefix }
+        if ($script:SeriesCpuMap.ContainsKey($family)) { return $family }
+    }
+    return $null
+}
+
+function Get-CpuPerformance {
+    <#
+    .SYNOPSIS
+        Get CPU performance data (score, generation, year) for a SKU.
+        Ported from get_cpu_performance in function_app.py.
+    #>
+    param([Parameter(Mandatory = $true)][string]$SkuName)
+
+    $series = Get-SeriesPrefix -SkuName $SkuName
+    if (-not $series -or -not $script:SeriesCpuMap.ContainsKey($series)) { return $null }
+
+    $cpuIds = $script:SeriesCpuMap[$series]
+    $scores = New-Object System.Collections.Generic.List[double]
+    $generations = New-Object System.Collections.Generic.List[string]
+    $firstKnownYear = $null
+    foreach ($id in $cpuIds) {
+        if ($script:CpuPerformanceTable.ContainsKey($id)) {
+            $entry = $script:CpuPerformanceTable[$id]
+            $scores.Add([double]$entry.Score)
+            $generations.Add([string]$entry.Generation)
+            if ($null -eq $firstKnownYear) { $firstKnownYear = $entry.Year }
+        }
+    }
+
+    if ($scores.Count -eq 0) { return $null }
+
+    $avgScore = [int][Math]::Round(($scores | Measure-Object -Average).Average)
+    return [PSCustomObject]@{
+        Score      = $avgScore
+        Generation = $generations[0]
+        Year       = $firstKnownYear
+        CpuModels  = $cpuIds
+    }
+}
+
+function Get-CpuVendor {
+    <#
+    .SYNOPSIS
+        Detect CPU vendor (Intel/AMD/ARM) from SKU name and architecture.
+        Ported from detect_cpu_vendor in function_app.py.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$SkuName,
+        [Parameter(Mandatory = $false)][string]$Architecture = ''
+    )
+
+    if ($Architecture -and $Architecture.ToLower() -in @('arm64', 'arm')) { return 'ARM' }
+
+    $skuLower = $SkuName.ToLower()
+    # AMD: 'a' + zero or more ('d'/'l') + 's' + '_v' + version, or '_a_v' + version
+    if ($skuLower -match 'a[dl]*s_v\d' -or $skuLower -match '_a_v\d') { return 'AMD' }
+
+    return 'Intel'
+}
+
+function Get-RetirementInfo {
+    <#
+    .SYNOPSIS
+        Return retirement info for a SKU, or $null if not retiring.
+        Ported from _get_retirement_info in function_app.py.
+    #>
+    param([Parameter(Mandatory = $true)][string]$SkuName)
+
+    foreach ($entry in $script:VmRetirementInfo) {
+        if ($SkuName -match $entry.Pattern) {
+            return [PSCustomObject]@{
+                RetirementStatus  = $entry.Status
+                RetirementDate    = $entry.RetirementDate
+                MigrationGuideUrl = $entry.MigrationGuideUrl
+            }
+        }
+    }
+    return $null
+}
+
+function Get-RetirementPenalty {
+    <#
+    .SYNOPSIS
+        Similarity-score penalty for retiring/retired SKUs (used for ranking only).
+        Ported from _retirement_penalty in function_app.py.
+    #>
+    param([Parameter(Mandatory = $true)][string]$SkuName)
+
+    $info = Get-RetirementInfo -SkuName $SkuName
+    if (-not $info) { return 0.0 }
+    if ($info.RetirementStatus -eq 'Retired') { return 15.0 }
+
+    try {
+        $retDate = [datetime]::ParseExact($info.RetirementDate, 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture)
+        $monthsRemaining = ($retDate - (Get-Date)).Days / 30.44
+        if ($monthsRemaining -le 6) { return 10.0 }
+        elseif ($monthsRemaining -le 12) { return 5.0 }
+        else { return 2.0 }
+    } catch {
+        return 2.0
+    }
+}
+
+function Get-SelectedPrice {
+    <#
+    .SYNOPSIS
+        Pick hourly/monthly price from a pricing object based on PricingModel and OS.
+        RI models are strict: returns $null if the requested term is unavailable.
+        PAYG falls back from Windows to Linux when no Windows price exists.
+    #>
+    param(
+        [Parameter(Mandatory = $false)]$Pricing,
+        [Parameter(Mandatory = $true)][string]$Model,
+        [Parameter(Mandatory = $true)][string]$OS
+    )
+
+    if (-not $Pricing) { return $null }
+    $wantWindows = ($OS -eq 'Windows')
+
+    switch ($Model) {
+        'RI1Year' {
+            if ($wantWindows) {
+                if ($null -ne $Pricing.Ri1YearMonthlyWindows) {
+                    return @{ Hourly = $Pricing.Ri1YearHourlyWindows; Monthly = $Pricing.Ri1YearMonthlyWindows; Source = 'RI 1-Year (Windows)' }
+                }
+            } elseif ($null -ne $Pricing.Ri1YearMonthly) {
+                return @{ Hourly = $Pricing.Ri1YearHourly; Monthly = $Pricing.Ri1YearMonthly; Source = 'RI 1-Year' }
+            }
+            return $null
+        }
+        'RI3Year' {
+            if ($wantWindows) {
+                if ($null -ne $Pricing.Ri3YearMonthlyWindows) {
+                    return @{ Hourly = $Pricing.Ri3YearHourlyWindows; Monthly = $Pricing.Ri3YearMonthlyWindows; Source = 'RI 3-Year (Windows)' }
+                }
+            } elseif ($null -ne $Pricing.Ri3YearMonthly) {
+                return @{ Hourly = $Pricing.Ri3YearHourly; Monthly = $Pricing.Ri3YearMonthly; Source = 'RI 3-Year' }
+            }
+            return $null
+        }
+        default {
+            # PAYG
+            if ($wantWindows -and $null -ne $Pricing.MonthlyPriceWindows) {
+                return @{ Hourly = $Pricing.HourlyPriceWindows; Monthly = $Pricing.MonthlyPriceWindows; Source = 'PAYG (Windows)' }
+            }
+            return @{ Hourly = $Pricing.HourlyPrice; Monthly = $Pricing.MonthlyPrice; Source = 'PAYG' }
+        }
+    }
+}
+
+# Function to get pricing information for VM SKUs.
+# Fetches both Consumption (PAYG) and Reservation (RI) prices, for Linux and Windows.
+# Ported from get_vm_pricing / _compute_windows_ri in web-app/api/function_app.py.
 function Get-VmPricingInfo {
     param(
         [Parameter(Mandatory = $true)]
@@ -110,9 +556,9 @@ function Get-VmPricingInfo {
     )
 
     try {
-        # Construct the Azure Retail Prices API URL
+        # Construct the Azure Retail Prices API URL (Consumption + Reservation)
         $apiUrl = "https://prices.azure.com/api/retail/prices"
-        $filter = "serviceName eq 'Virtual Machines' and armSkuName eq '$SkuName' and armRegionName eq '$Location' and type eq 'Consumption'"
+        $filter = "serviceName eq 'Virtual Machines' and armSkuName eq '$SkuName' and armRegionName eq '$Location' and (type eq 'Consumption' or type eq 'Reservation')"
 
         if ($CurrencyCode -ne 'USD') {
             $requestUrl = "$($apiUrl)?currencyCode='$CurrencyCode'&`$filter=$filter"
@@ -122,47 +568,124 @@ function Get-VmPricingInfo {
 
         Write-Verbose "Fetching pricing data from: $requestUrl"
 
-        # Make the API call with retry logic
+        # Page through all results; retry each page with exponential backoff
+        $items = New-Object System.Collections.Generic.List[object]
         $maxRetries = 2
-        $retryCount = 0
-        $response = $null
-
-        do {
-            try {
-                $response = Invoke-RestMethod -Uri $requestUrl -Method Get -ErrorAction Stop
-                break
-            }
-            catch {
-                $retryCount++
-                if ($retryCount -ge $maxRetries) {
-                    Write-Warning "Failed to fetch pricing data for $SkuName after $maxRetries attempts: $($_.Exception.Message)"
-                    return $null
+        while ($requestUrl) {
+            $retryCount = 0
+            $response = $null
+            do {
+                try {
+                    $response = Invoke-RestMethod -Uri $requestUrl -Method Get -ErrorAction Stop
+                    break
                 }
-                Write-Verbose "Retry $retryCount for pricing data..."
-                Start-Sleep -Seconds (2 * $retryCount)  # Exponential backoff
-            }
-        } while ($retryCount -lt $maxRetries)
+                catch {
+                    $retryCount++
+                    if ($retryCount -ge $maxRetries) {
+                        Write-Warning "Failed to fetch pricing data for $SkuName after $maxRetries attempts: $($_.Exception.Message)"
+                        return $null
+                    }
+                    Write-Verbose "Retry $retryCount for pricing data..."
+                    Start-Sleep -Seconds (2 * $retryCount)  # Exponential backoff
+                }
+            } while ($retryCount -lt $maxRetries)
 
-        if ($response -and $response.Items -and $response.Items.Count -gt 0) {
-            # Find the best matching price (prefer Linux if available, otherwise use Windows)
-            $linuxPrice = $response.Items | Where-Object { $_.productName -like '*Linux*' -or $_.productName -notlike '*Windows*' } | Select-Object -First 1
-            $windowsPrice = $response.Items | Where-Object { $_.productName -like '*Windows*' } | Select-Object -First 1
+            if ($response.Items) { foreach ($it in $response.Items) { $items.Add($it) } }
+            # NextPageLink already carries currencyCode and the filter; use it as-is
+            $requestUrl = $response.NextPageLink
+        }
 
-            $priceItem = if ($linuxPrice) { $linuxPrice } else { $windowsPrice }
+        if ($items.Count -eq 0) {
+            Write-Verbose "No pricing data found for $SkuName in $Location"
+            return $null
+        }
 
-            if ($priceItem) {
-                return @{
-                    HourlyPrice = [Math]::Round($priceItem.unitPrice, 4)
-                    MonthlyPrice = [Math]::Round($priceItem.unitPrice * 730, 2)  # 730 hours = ~1 month
-                    Currency = $priceItem.currencyCode
-                    PriceType = $priceItem.type
-                    ProductName = $priceItem.productName
+        # Linux PAYG: exclude DedicatedHost/Cloud/Windows/Spot/Low Priority
+        $linuxItem = $items | Where-Object {
+            $_.type -eq 'Consumption' -and $_.productName -and
+            $_.productName -notlike '*dedicatedhost*' -and
+            $_.productName -notlike '*Cloud*' -and
+            $_.productName -notlike '*Windows*' -and
+            $_.skuName -notlike '*Spot*' -and
+            $_.skuName -notlike '*Low Priority*'
+        } | Select-Object -First 1
+
+        # Windows PAYG: require Windows, exclude DedicatedHost/Cloud/Spot/Low Priority
+        $windowsItem = $items | Where-Object {
+            $_.type -eq 'Consumption' -and $_.productName -and
+            $_.productName -notlike '*dedicatedhost*' -and
+            $_.productName -notlike '*Cloud*' -and
+            $_.productName -like '*Windows*' -and
+            $_.skuName -notlike '*Spot*' -and
+            $_.skuName -notlike '*Low Priority*'
+        } | Select-Object -First 1
+
+        # Fall back to first non-Spot/non-Low Priority Consumption item if no Linux item
+        if (-not $linuxItem) {
+            $linuxItem = $items | Where-Object {
+                $_.type -eq 'Consumption' -and
+                $_.skuName -notlike '*Spot*' -and
+                $_.skuName -notlike '*Low Priority*'
+            } | Select-Object -First 1
+        }
+
+        if (-not $linuxItem) {
+            Write-Verbose "No usable Consumption pricing for $SkuName in $Location"
+            return $null
+        }
+
+        $pricing = @{
+            HourlyPrice           = [Math]::Round($linuxItem.unitPrice, 4)
+            MonthlyPrice          = [Math]::Round($linuxItem.unitPrice * 730, 2)  # 730 hours = ~1 month
+            HourlyPriceWindows    = if ($windowsItem) { [Math]::Round($windowsItem.unitPrice, 4) } else { $null }
+            MonthlyPriceWindows   = if ($windowsItem) { [Math]::Round($windowsItem.unitPrice * 730, 2) } else { $null }
+            Currency              = $linuxItem.currencyCode
+            ProductName           = $linuxItem.productName
+            Ri1YearMonthly        = $null
+            Ri1YearHourly         = $null
+            Ri3YearMonthly        = $null
+            Ri3YearHourly         = $null
+            Ri1YearMonthlyWindows = $null
+            Ri1YearHourlyWindows  = $null
+            Ri3YearMonthlyWindows = $null
+            Ri3YearHourlyWindows  = $null
+        }
+
+        # Reserved Instance pricing (unitPrice = full term total)
+        $ri1 = $items | Where-Object {
+            $_.type -eq 'Reservation' -and $_.reservationTerm -eq '1 Year' -and
+            $_.productName -notlike '*dedicatedhost*' -and $_.productName -notlike '*Cloud*'
+        } | Select-Object -First 1
+        $ri3 = $items | Where-Object {
+            $_.type -eq 'Reservation' -and $_.reservationTerm -eq '3 Years' -and
+            $_.productName -notlike '*dedicatedhost*' -and $_.productName -notlike '*Cloud*'
+        } | Select-Object -First 1
+
+        if ($ri1) {
+            $pricing.Ri1YearMonthly = [Math]::Round($ri1.unitPrice / 12, 2)
+            $pricing.Ri1YearHourly = [Math]::Round($ri1.unitPrice / (12 * 730), 4)
+        }
+        if ($ri3) {
+            $pricing.Ri3YearMonthly = [Math]::Round($ri3.unitPrice / 36, 2)
+            $pricing.Ri3YearHourly = [Math]::Round($ri3.unitPrice / (36 * 730), 4)
+        }
+
+        # Windows RI = RI compute + Windows license surcharge (Windows PAYG hourly - Linux PAYG hourly)
+        if ($null -ne $pricing.HourlyPriceWindows) {
+            $licenseSurcharge = $pricing.HourlyPriceWindows - $pricing.HourlyPrice
+            if ($licenseSurcharge -gt 0) {
+                if ($null -ne $pricing.Ri1YearHourly) {
+                    $pricing.Ri1YearHourlyWindows = [Math]::Round($pricing.Ri1YearHourly + $licenseSurcharge, 4)
+                    $pricing.Ri1YearMonthlyWindows = [Math]::Round(($pricing.Ri1YearHourly + $licenseSurcharge) * 730, 2)
+                }
+                if ($null -ne $pricing.Ri3YearHourly) {
+                    $pricing.Ri3YearHourlyWindows = [Math]::Round($pricing.Ri3YearHourly + $licenseSurcharge, 4)
+                    $pricing.Ri3YearMonthlyWindows = [Math]::Round(($pricing.Ri3YearHourly + $licenseSurcharge) * 730, 2)
                 }
             }
         }
 
-        Write-Verbose "No pricing data found for $SkuName in $Location"
-        return $null
+        return $pricing
     }
     catch {
         Write-Warning "Error fetching pricing data for $SkuName`: $($_.Exception.Message)"
@@ -173,6 +696,23 @@ function Get-VmPricingInfo {
 # Get all VM sizes for the specified location
 Write-Host "Retrieving VM SKUs for location: $Location..." -ForegroundColor Cyan
 $allSkus = Get-AzComputeResourceSku -Location $Location | Where-Object { $_.ResourceType -eq 'virtualMachines' }
+
+# Optionally pre-fetch SKU availability for a second region (-CheckRegion)
+$regionAvailableSkuNames = $null
+if ($CheckRegion) {
+    Write-Host "Retrieving VM SKUs for comparison region: $CheckRegion..." -ForegroundColor Cyan
+    $regionAvailableSkuNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($rsku in (Get-AzComputeResourceSku -Location $CheckRegion | Where-Object { $_.ResourceType -eq 'virtualMachines' })) {
+        # Treat a SKU as available only if it has no subscription/location restriction in that region
+        $restricted = $false
+        if ($rsku.Restrictions) {
+            foreach ($r in $rsku.Restrictions) {
+                if ($r.ReasonCode -eq 'NotAvailableForSubscription') { $restricted = $true; break }
+            }
+        }
+        if (-not $restricted) { [void]$regionAvailableSkuNames.Add($rsku.Name) }
+    }
+}
 
 # Find the target SKU
 $targetSku = $allSkus | Where-Object { $_.Name -eq $SkuName }
@@ -202,6 +742,21 @@ $targetZonesDisplay = if ($targetZones.Count -gt 0) { ($targetZones -join ', ') 
 
 Write-Host "`nTarget SKU: $SkuName" -ForegroundColor Green
 Write-Host "Availability Zones: $targetZonesDisplay" -ForegroundColor Cyan
+
+# CPU vendor, generation/performance, and retirement status for the target SKU
+$targetArch = if ($targetCapabilities.ContainsKey('CpuArchitectureType')) { $targetCapabilities['CpuArchitectureType'] } else { 'x64' }
+$targetVendor = Get-CpuVendor -SkuName $SkuName -Architecture $targetArch
+$targetCpuPerf = Get-CpuPerformance -SkuName $SkuName
+$targetRetirement = Get-RetirementInfo -SkuName $SkuName
+
+Write-Host "CPU Vendor: $targetVendor" -ForegroundColor Cyan
+if ($targetCpuPerf) {
+    Write-Host "CPU Generation: $($targetCpuPerf.Generation) (perf score $($targetCpuPerf.Score))" -ForegroundColor Cyan
+}
+if ($targetRetirement) {
+    Write-Host "[!] Retirement: $($targetRetirement.RetirementStatus) - $($targetRetirement.RetirementDate)" -ForegroundColor Red
+    Write-Host "    Migration guide: $($targetRetirement.MigrationGuideUrl)" -ForegroundColor Red
+}
 Write-Host "Capabilities:" -ForegroundColor Cyan
 
 # Display all capabilities organized by category
@@ -254,10 +809,24 @@ foreach ($category in $capabilityDisplay.Keys | Sort-Object) {
 # Get pricing for target SKU
 Write-Host "`nFetching pricing information for target SKU..." -ForegroundColor Cyan
 $targetPricing = Get-VmPricingInfo -SkuName $SkuName -Location $Location -CurrencyCode $CurrencyCode
-if ($targetPricing) {
-    Write-Host "  Hourly Price: `$$($targetPricing.HourlyPrice) $($targetPricing.Currency)"
-    Write-Host "  Monthly Price: `$$($targetPricing.MonthlyPrice) $($targetPricing.Currency)"
-    Write-Host "  Product: $($targetPricing.ProductName)"
+$targetSelectedPrice = Get-SelectedPrice -Pricing $targetPricing -Model $PricingModel -OS $OS
+$targetCostPerVCPU = $null
+$targetCostPerGB = $null
+if ($targetSelectedPrice) {
+    Write-Host "  Pricing model: $PricingModel ($OS) - $($targetSelectedPrice.Source)"
+    Write-Host "  Hourly Price: `$$($targetSelectedPrice.Hourly) $($targetPricing.Currency)"
+    Write-Host "  Monthly Price: `$$($targetSelectedPrice.Monthly) $($targetPricing.Currency)"
+    $tCores = if ($targetCapabilities.ContainsKey('vCPUs')) { [double]$targetCapabilities['vCPUs'] } else { 0 }
+    $tMem = if ($targetCapabilities.ContainsKey('MemoryGB')) { [double]$targetCapabilities['MemoryGB'] } else { 0 }
+    if ($tCores -gt 0) { $targetCostPerVCPU = [Math]::Round($targetSelectedPrice.Hourly / $tCores, 4) }
+    if ($tMem -gt 0) { $targetCostPerGB = [Math]::Round($targetSelectedPrice.Hourly / $tMem, 4) }
+    if ($null -ne $targetCostPerVCPU -or $null -ne $targetCostPerGB) {
+        $perVcpuText = if ($null -ne $targetCostPerVCPU) { "`$$targetCostPerVCPU/vCPU/hr" } else { 'N/A' }
+        $perGbText = if ($null -ne $targetCostPerGB) { "`$$targetCostPerGB/GB/hr" } else { 'N/A' }
+        Write-Host "  Cost Efficiency: $perVcpuText, $perGbText"
+    }
+} elseif ($targetPricing) {
+    Write-Host "  No $PricingModel ($OS) price available for target SKU" -ForegroundColor Yellow
 } else {
     Write-Host "  Pricing information not available" -ForegroundColor Yellow
 }
@@ -536,10 +1105,25 @@ $similarSkus = $allSkus | Where-Object {
         $gpuFilterPass = $false
     }
 
+    # CPU vendor filter
+    $skuArch = if ($skuCapabilities.ContainsKey('CpuArchitectureType')) { $skuCapabilities['CpuArchitectureType'] } else { 'x64' }
+    $skuVendor = Get-CpuVendor -SkuName $sku.Name -Architecture $skuArch
+    $vendorFilterPass = $true
+    if ($CpuVendor -and $CpuVendor.Count -gt 0 -and ($skuVendor -notin $CpuVendor)) {
+        $vendorFilterPass = $false
+    }
+
+    # Retirement filter (hidden by default to match the website)
+    $skuRetirement = Get-RetirementInfo -SkuName $sku.Name
+    $retirementFilterPass = $true
+    if ($HideRetiring -and $skuRetirement) {
+        $retirementFilterPass = $false
+    }
+
     # Apply basic tolerance filter on CPU, Memory, NVMe, and GPU (if required)
     if ($cores -ge $coreMin -and $cores -le $coreMax -and
         $memoryGB -ge $memoryMin -and $memoryGB -le $memoryMax -and
-        $nvmeFilterPass -and $gpuFilterPass) {
+        $nvmeFilterPass -and $gpuFilterPass -and $vendorFilterPass -and $retirementFilterPass) {
 
         # Calculate weighted similarity score across ALL capabilities
         $weightedScore = 0
@@ -574,21 +1158,58 @@ $similarSkus = $allSkus | Where-Object {
             0
         }
 
-        # Only include SKUs above minimum similarity threshold
+        # Only include SKUs above minimum similarity threshold (unpenalized score,
+        # matching the website which thresholds first then penalizes for ranking)
         if ($similarityScore -ge $MinSimilarityScore) {
+            # Apply retirement penalty for ranking only (after threshold)
+            $originalSimilarityScore = $similarityScore
+            $penalty = Get-RetirementPenalty -SkuName $sku.Name
+            if ($penalty -gt 0) {
+                $similarityScore = [Math]::Round([Math]::Max(0, $similarityScore - $penalty), 2)
+            }
+
             # Get pricing information for this SKU
             Write-Verbose "Fetching pricing for $($sku.Name)..."
             $pricingInfo = Get-VmPricingInfo -SkuName $sku.Name -Location $Location -CurrencyCode $CurrencyCode
+            $selectedPrice = Get-SelectedPrice -Pricing $pricingInfo -Model $PricingModel -OS $OS
+
+            # CPU performance / generation
+            $cpuPerf = Get-CpuPerformance -SkuName $sku.Name
+
+            # Cost-efficiency metrics based on the selected price
+            $costPerVCPU = 'N/A'
+            $costPerGB = 'N/A'
+            if ($selectedPrice) {
+                if ($cores -gt 0) { $costPerVCPU = [Math]::Round($selectedPrice.Hourly / $cores, 4) }
+                if ($memoryGB -gt 0) { $costPerGB = [Math]::Round($selectedPrice.Hourly / $memoryGB, 4) }
+            }
 
             # Build result object with key capabilities
             $resultObject = [PSCustomObject]@{
                 SkuName                           = $sku.Name
                 SimilarityScore                   = $similarityScore
+                CpuVendor                         = $skuVendor
+                CpuGeneration                     = if ($cpuPerf) { $cpuPerf.Generation } else { 'Unknown' }
+                CpuPerfScore                      = if ($cpuPerf) { $cpuPerf.Score } else { 'N/A' }
                 vCPUs                             = $cores
                 MemoryGB                          = $memoryGB
                 AvailabilityZones                 = $skuZonesDisplay
-                "HourlyPrice($CurrencyCode)"      = if ($pricingInfo) { $pricingInfo.HourlyPrice } else { 'N/A' }
-                "MonthlyPrice($CurrencyCode)"     = if ($pricingInfo) { $pricingInfo.MonthlyPrice } else { 'N/A' }
+                RetirementStatus                  = if ($skuRetirement) { $skuRetirement.RetirementStatus } else { 'Active' }
+                "HourlyPrice($CurrencyCode)"      = if ($selectedPrice) { $selectedPrice.Hourly } else { 'N/A' }
+                "MonthlyPrice($CurrencyCode)"     = if ($selectedPrice) { $selectedPrice.Monthly } else { 'N/A' }
+                "CostPerVCPU($CurrencyCode)"      = $costPerVCPU
+                "CostPerGB($CurrencyCode)"        = $costPerGB
+            }
+
+            # Add cross-region availability column when -CheckRegion is supplied
+            if ($CheckRegion) {
+                $availInRegion = if ($regionAvailableSkuNames -and $regionAvailableSkuNames.Contains($sku.Name)) { 'Yes' } else { 'No' }
+                $resultObject | Add-Member -NotePropertyName "AvailableIn_$CheckRegion" -NotePropertyValue $availInRegion -Force
+            }
+
+            # Keep original (pre-penalty) score available for reference
+            if ($penalty -gt 0) {
+                $resultObject | Add-Member -NotePropertyName 'OriginalSimilarityScore' -NotePropertyValue $originalSimilarityScore -Force
             }
 
             # Add all other capabilities if ShowAllCapabilities is specified
@@ -687,14 +1308,11 @@ if ($similarSkus.Count -gt 0) {
     }
     else {
         # Show condensed view with key metrics - include GPUs if target has them
-        if ($targetHasGPU) {
-            $displaySkus | Format-Table -Property SkuName, SimilarityScore, vCPUs, MemoryGB, GPUs,
-                AvailabilityZones, MaxDataDiskCount, PremiumIO, "MonthlyPrice($CurrencyCode)" -AutoSize
-        } else {
-            $displaySkus | Format-Table -Property SkuName, SimilarityScore, vCPUs, MemoryGB,
-                AvailabilityZones, MaxDataDiskCount, PremiumIO, AcceleratedNetworkingEnabled,
-                "MonthlyPrice($CurrencyCode)" -AutoSize
-        }
+        $baseProps = @('SkuName', 'SimilarityScore', 'CpuVendor', 'CpuGeneration', 'vCPUs', 'MemoryGB')
+        if ($targetHasGPU) { $baseProps += 'GPUs' }
+        $baseProps += @('AvailabilityZones', 'RetirementStatus', "MonthlyPrice($CurrencyCode)", "CostPerVCPU($CurrencyCode)")
+        if ($CheckRegion) { $baseProps += "AvailableIn_$CheckRegion" }
+        $displaySkus | Format-Table -Property $baseProps -AutoSize
     }
 
     if ($similarSkus.Count -gt 20) {
@@ -717,10 +1335,10 @@ if ($similarSkus.Count -gt 0) {
         Write-Host "  Average Monthly Price: `$$avgPrice $CurrencyCode"
         Write-Host "  Price Range: `$$minPrice - `$$maxPrice $CurrencyCode"
 
-        if ($targetPricing) {
-            $targetMonthly = $targetPricing.MonthlyPrice
+        if ($targetSelectedPrice) {
+            $targetMonthly = $targetSelectedPrice.Monthly
             $cheaperCount = ($similarSkus | Where-Object { $_.$priceField -ne 'N/A' -and $_.$priceField -lt $targetMonthly }).Count
-            Write-Host "  SKUs cheaper than target: $cheaperCount of $($similarSkus.Count)"
+            Write-Host "  SKUs cheaper than target ($PricingModel/$OS): $cheaperCount of $($similarSkus.Count)"
         }
     }
 } else {
@@ -729,6 +1347,18 @@ if ($similarSkus.Count -gt 0) {
     Write-Host "  - Increase -Tolerance (current: $Tolerance%)"
     Write-Host "  - Decrease -MinSimilarityScore (current: $MinSimilarityScore)"
     Write-Host "  - Adjust weights to prioritize different capabilities"
+    if ($CpuVendor) { Write-Host "  - Broaden -CpuVendor (current: $($CpuVendor -join ', '))" }
+    if ($HideRetiring) { Write-Host "  - Use -HideRetiring:`$false to include retiring SKUs" }
+}
+
+# Optional CSV export of the full result set
+if ($ExportCsv -and $similarSkus.Count -gt 0) {
+    try {
+        $similarSkus | Export-Csv -Path $ExportCsv -NoTypeInformation -Encoding UTF8
+        Write-Host "`nExported $($similarSkus.Count) results to: $ExportCsv" -ForegroundColor Green
+    } catch {
+        Write-Warning "Failed to export CSV to '$ExportCsv': $($_.Exception.Message)"
+    }
 }
 
 # Return results for further analysis

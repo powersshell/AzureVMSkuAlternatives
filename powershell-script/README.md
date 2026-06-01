@@ -20,13 +20,21 @@ A powerful PowerShell script for comparing Azure VM SKUs based on comprehensive 
 ## Features
 
 - **Comprehensive Capability Comparison**: Compares ALL VM capabilities including CPU, Memory, GPU, Storage, Network, and Features
+- **CPU Vendor & Generation Awareness**: Detects Intel / AMD / ARM vendor and reports CPU generation and a relative performance score
+- **CPU Vendor Filtering**: Restrict alternatives to specific vendors (Intel, AMD, ARM)
+- **Retirement Awareness**: Flags retiring/retired SKUs, hides them by default (matching the website), and applies a ranking penalty when shown
 - **Customizable Weighting System**: Adjust importance of different capabilities (CPU, Memory, GPU, Storage, Network, Features)
 - **Intelligent Scoring**: Weighted similarity scores (0-100) to rank alternatives
-- **Pricing Integration**: Real-time pricing data from Azure Retail Prices API
+- **Pricing Integration**: Real-time pricing data from Azure Retail Prices API, including **Reserved Instance (1-year / 3-year)** and **Windows** pricing
+- **Cost-Efficiency Metrics**: Cost per vCPU and cost per GB for the selected pricing model
 - **Availability Zone Information**: Shows which availability zones each SKU supports
+- **Cross-Region Availability Check**: Optionally check whether each alternative is available in a second region
 - **Special Hardware Support**: Enhanced handling for NVMe and GPU-enabled VMs
 - **Flexible Filtering**: Filter by similarity threshold, require specific features (NVMe/GPU matching)
-- **Multiple Output Formats**: Condensed or detailed capability display
+- **Multiple Output Formats**: Condensed or detailed capability display, plus CSV export
+
+> The CPU, generation, and retirement reference data is ported from the web app's API
+> (`web-app/api/function_app.py`), which is the source of truth. Keep them in sync when that data changes.
 
 ## Requirements
 
@@ -62,6 +70,12 @@ Connect-AzAccount
 | `ShowAllCapabilities` | Switch | Off | Display all capabilities in output (verbose) |
 | `RequireNVMeMatch` | Switch | Off | Only show alternatives with NVMe if target has NVMe |
 | `RequireGPUMatch` | Switch | Off | Only show alternatives with GPU if target has GPU |
+| `CpuVendor` | String[] | *(all)* | Filter alternatives by CPU vendor: `Intel`, `AMD`, `ARM` (one or more) |
+| `HideRetiring` | Bool | `$true` | Exclude retiring/retired SKUs (matches the website). Use `-HideRetiring:$false` to include them |
+| `PricingModel` | String | PAYG | Pricing to display/use: `PAYG`, `RI1Year`, `RI3Year` |
+| `OS` | String | Linux | Operating system for pricing: `Linux` or `Windows` |
+| `CheckRegion` | String | *(none)* | Second region to check each alternative's availability in |
+| `ExportCsv` | String | *(none)* | Path to export the full result set as CSV |
 
 ## Usage Examples
 
@@ -113,24 +127,52 @@ Show all capabilities for detailed analysis:
 .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v3" -Location "eastus" -ShowAllCapabilities
 ```
 
+### Filter by CPU Vendor
+Only show AMD and ARM alternatives:
+```powershell
+.\Compare-AzureVms.ps1 -SkuName "Standard_D4as_v5" -Location "eastus" -CpuVendor AMD,ARM
+```
+
+### Reserved Instance / Windows Pricing
+Compare using 3-year Reserved Instance pricing for Windows:
+```powershell
+.\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -PricingModel RI3Year -OS Windows
+```
+
+### Include Retiring SKUs
+Show retiring/retired SKUs (a ranking penalty is applied):
+```powershell
+.\Compare-AzureVms.ps1 -SkuName "Standard_NC6s_v3" -Location "eastus" -HideRetiring:$false
+```
+
+### Cross-Region Availability + CSV Export
+Check availability in a second region and export results:
+```powershell
+.\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -CheckRegion "westeurope" -ExportCsv ".\results.csv"
+```
+
 ## Output
 
 The script provides detailed output including:
 
 ### Target SKU Information
 - SKU name and availability zones
+- CPU vendor, generation, and performance score
+- Retirement status (if announced/retired) with a migration guide link
 - Organized capability listing by category (Compute, Memory, GPU, Storage, Network, Features)
-- Pricing information (hourly and monthly)
+- Pricing information for the selected model/OS (hourly and monthly) plus cost efficiency
 
 ### Comparison Results
 **Condensed View** (default):
 - SKU Name
 - Similarity Score (0-100)
+- CPU Vendor and Generation
 - vCPUs and Memory
 - GPUs (if applicable)
 - Availability Zones
-- Key storage/network capabilities
-- Monthly pricing
+- Retirement status
+- Monthly pricing and cost per vCPU
+- Availability in the comparison region (when `-CheckRegion` is used)
 
 **Detailed View** (`-ShowAllCapabilities`):
 - All capabilities from the target SKU
@@ -237,6 +279,7 @@ The script compares the following capability categories:
 
 **Compute**
 - vCPUs, vCPUs Available, vCPUs Per Core, ACUs, Hyper-V Generations
+- CPU vendor (Intel/AMD/ARM), CPU generation, and relative performance score
 
 **Memory**
 - Memory GB, Memory Preserving Maintenance Support
@@ -263,9 +306,7 @@ The script compares the following capability categories:
 
 Feel free to enhance this script with additional features such as:
 - Support for spot pricing
-- Reserved instance pricing
-- Cross-region comparisons
-- Export to different formats (JSON, HTML)
+- Export to additional formats (JSON, HTML)
 - Interactive selection mode
 
 ## License
@@ -274,6 +315,7 @@ This script is provided as-is for use with Azure infrastructure management.
 
 ## Version History
 
+- **v3.0** - Feature parity with the web app: CPU vendor/generation/performance, CPU vendor filtering, retirement awareness, Reserved Instance & Windows pricing, cost-efficiency metrics, cross-region availability check, and CSV export
 - **v2.0** - Added GPU support, availability zones, and enhanced filtering
 - **v1.5** - Added NVMe support and custom weighting
 - **v1.0** - Initial release with basic capability comparison
