@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-01
+- **feature:** PowerShell script (`Compare-AzureVms.ps1`) brought to feature parity with the web app — added CPU vendor/generation/performance reporting, `-CpuVendor` filtering, retirement awareness (`-HideRetiring`, on by default), Reserved Instance and Windows pricing (`-PricingModel`, `-OS`), cost-efficiency metrics, cross-region availability (`-CheckRegion`), and CSV export (`-ExportCsv`)
+- **data:** Ported CPU performance, series-to-CPU, and retirement reference tables into the PowerShell script from the API (`web-app/api/function_app.py`)
+
 ## 2026-05-29
 - **feature:** Complete frontend redesign — new two-panel card layout inspired by SaaS comparison pages (Stytch-style)
 - **feature:** Color-coded availability zones — green when alternative matches/exceeds target zones, red when zones are missing
