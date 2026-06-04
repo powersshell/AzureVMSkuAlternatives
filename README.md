@@ -10,6 +10,7 @@
 ## 📋 Recent Changes
 
 ### 2026-06-04
+- **improvement:** Mobile usability — on phones and small tablets (≤900px) the page now scrolls naturally so the results are always reachable; previously the tall configuration bar could fill the screen and hide the results below it
 - **improvement:** Clearer "getting started" flow — numbered steps (1 Region → 2 Source SKU → 3 Compare), a "Start here" hint on the Region selector, downstream controls dimmed until a region is chosen, and a 3-step guide in the results area before your first comparison
 - **feature:** Expand all / Collapse all control for results — open or close every result's detailed comparison at once, with a rotating chevron on each card to signal expandability (uncached rows load through a concurrency-limited queue)
 
