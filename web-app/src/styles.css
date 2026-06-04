@@ -1058,12 +1058,47 @@ body {
 
 /* ========== Responsive ========== */
 @media (max-width: 900px) {
+    /* Mobile: switch from the fixed desktop app-shell to natural document-flow
+       scrolling so the whole page (and the results) can be reached by scrolling. */
+    html, body {
+        height: auto;
+        overflow: visible;
+    }
+
     .content-grid {
         grid-template-columns: 1fr;
+        overflow: visible;
+        flex: none;
+        min-height: 0;
     }
+    /* Source panel flows at its natural height above the results */
     .source-panel {
-        max-height: 200px;
+        max-height: none;
+        overflow: visible;
     }
+    .source-panel-inner { height: auto; }
+    .source-empty { height: auto; }
+
+    /* Results grow with content; the page scrolls instead of an inner box */
+    .results-panel {
+        overflow: visible;
+    }
+    .results-section {
+        height: auto;
+        min-height: 0;
+    }
+    .results-scroll {
+        overflow: visible;
+        flex: none;
+        min-height: 0;
+    }
+    /* While loading, the results panel has natural (possibly zero) height, so anchor
+       the overlay to the viewport instead of the panel to keep the spinner visible. */
+    .loading-overlay {
+        position: fixed;
+        border-radius: 0;
+    }
+
     .config-row {
         flex-direction: column;
         align-items: stretch;
@@ -1074,6 +1109,12 @@ body {
     }
 }
 @media (max-width: 600px) {
+    /* Trim chrome height so results sit closer to the top on phones */
+    .page-title { padding: 1px 12px; }
+    .disclaimer-banner { margin: 0 12px; padding: 5px 12px; }
+    .config-bar { margin: 8px 12px 0; padding: 8px 12px; }
+    .content-grid { padding: 8px 12px 16px; }
+
     .advanced-grid {
         grid-template-columns: 1fr;
     }
