@@ -10,6 +10,7 @@
 ## 📋 Recent Changes
 
 ### 2026-06-04
+- **improvement:** Clearer "getting started" flow — numbered steps (1 Region → 2 Source SKU → 3 Compare), a "Start here" hint on the Region selector, downstream controls dimmed until a region is chosen, and a 3-step guide in the results area before your first comparison
 - **feature:** Expand all / Collapse all control for results — open or close every result's detailed comparison at once, with a rotating chevron on each card to signal expandability (uncached rows load through a concurrency-limited queue)
 
 📄 [Full changelog →](CHANGELOG.md)
