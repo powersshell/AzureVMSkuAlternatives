@@ -169,6 +169,13 @@ let prefetchAbortController = null; // Cancels in-flight prefetch wave on new se
 let regionCheckAbortController = null; // Cancels in-flight region availability check
 let regionAvailabilityData = null; // { region, availability: { skuName: bool } }
 
+// Expand/Collapse-all state
+let resultsRenderVersion = 0; // Bumped on every displayAlternatives render; guards stale async writes
+let renderedAlternatives = []; // The currently-rendered (filtered) list — source of truth for expand-all
+let expandAllAbortController = null; // Stops scheduling new expand-all fetches
+const detailsInFlight = new Map(); // cacheKey -> Promise (de-dups fetches across expand-all/prefetch)
+const expandAllBtn = document.getElementById('expandAllBtn');
+
 // Capture region options before Choices.js takes over the <select>
 const ALL_REGIONS = Array.from(document.getElementById('location').options)
     .filter(opt => opt.value)
@@ -293,6 +300,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Update discount hint text as user types
     document.getElementById('discountPct').addEventListener('input', updateDiscountHint);
+
+    // Expand/Collapse all results
+    expandAllBtn?.addEventListener('click', () => {
+        if (expandAllBtn.getAttribute('aria-pressed') === 'true') {
+            collapseAll();
+        } else {
+            expandAll();
+        }
+    });
 });
 
 // Store all SKUs for current region (unfiltered)
@@ -654,8 +670,11 @@ function formatMonthlyPriceSafe(pricing) {
 function displayResults(data) {
     if (!data.alternatives || data.alternatives.length === 0) {
         noResults.classList.remove('hidden');
+        resetExpansionState();
+        renderedAlternatives = [];
         resultsTableBody.innerHTML = '';
         targetSkuInfo.innerHTML = '';
+        updateExpandAllButton();
     } else {
         noResults.classList.add('hidden');
         displayTargetSku(data.targetSku);
@@ -983,6 +1002,9 @@ function renderIndicator(indicator, fieldName) {
 
 // Display Alternatives as Cards
 function displayAlternatives(alternatives) {
+    // Bump render version + abort any in-flight expand-all so late fetches can't write into the rebuilt DOM
+    resetExpansionState();
+    renderedAlternatives = alternatives;
     resultsTableBody.innerHTML = '';
 
     // Update results count badge
@@ -1027,6 +1049,7 @@ function displayAlternatives(alternatives) {
         card.classList.add('result-card');
         card.dataset.index = index;
         card.dataset.skuName = alt.name;
+        card.setAttribute('aria-expanded', 'false');
 
         card.innerHTML = `
             <div class="card-sku-info">
@@ -1048,18 +1071,25 @@ function displayAlternatives(alternatives) {
                 <div class="card-price-monthly">${formatMonthlyPriceSafe(alt.pricing)}/mo</div>
                 ${deltaHtml}
             </div>
+            <svg class="card-chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
         `;
         
-        card.addEventListener('click', () => toggleDetails(index, alt, targetSku || alt));
+        card.addEventListener('click', () => toggleDetails(index));
         resultsTableBody.appendChild(card);
         
         // Details expansion div
         const detailsDiv = document.createElement('div');
         detailsDiv.classList.add('details-row', 'hidden');
         detailsDiv.dataset.index = index;
+        detailsDiv.dataset.skuName = alt.name;
         detailsDiv.innerHTML = `<div class="details-content"></div>`;
         resultsTableBody.appendChild(detailsDiv);
     });
+
+    // Reset the expand/collapse-all button to reflect the freshly-rendered (all-collapsed) state
+    updateExpandAllButton();
 
     // Kick off background prefetch for top 10 rows (Phase 3)
     if (targetSku) {
@@ -1068,50 +1098,195 @@ function displayAlternatives(alternatives) {
     }
 }
 
-// Toggle details row expand/collapse (Phase 2)
-async function toggleDetails(index, altSku, targetSku) {
+// Resolve the alternative + target SKU for a rendered card index (render-scoped source of truth)
+function getCardData(index) {
+    const altSku = renderedAlternatives[index];
+    if (!altSku) return null;
+    const targetSku = currentResults?.targetSku || altSku;
+    return { altSku, targetSku };
+}
+
+// De-duplicated details fetch shared across single-expand and expand-all
+function getDetails(cacheKey, targetName, altName, location) {
+    if (expandedDetailsCache.has(cacheKey)) return Promise.resolve(expandedDetailsCache.get(cacheKey));
+    if (detailsInFlight.has(cacheKey)) return detailsInFlight.get(cacheKey);
+    const p = fetchComparisonDetails(targetName, altName, location)
+        .then(d => { expandedDetailsCache.set(cacheKey, d); detailsInFlight.delete(cacheKey); return d; })
+        .catch(err => { detailsInFlight.delete(cacheKey); throw err; });
+    detailsInFlight.set(cacheKey, p);
+    return p;
+}
+
+// Write fetched content into a row only if it's still the same render and still expanded
+function renderDetailsIfLive(index, altSku, targetSku, details, myVersion) {
+    if (myVersion !== resultsRenderVersion) return;
+    const row = document.querySelector(`.details-row[data-index="${index}"]`);
+    if (!row || row.dataset.skuName !== altSku.name || row.classList.contains('hidden')) return;
+    row.querySelector('.details-content').innerHTML = renderDetailedComparison(details, targetSku, altSku);
+}
+
+function renderErrorIfLive(index, altSku, myVersion) {
+    if (myVersion !== resultsRenderVersion) return;
+    const row = document.querySelector(`.details-row[data-index="${index}"]`);
+    if (!row || row.dataset.skuName !== altSku.name || row.classList.contains('hidden')) return;
+    row.querySelector('.details-content').innerHTML = '<div class="error"><p>❌ Failed to load details. Click row again to retry.</p></div>';
+}
+
+// Toggle a single details row (card click entry point)
+function toggleDetails(index) {
     const detailsRow = document.querySelector(`.details-row[data-index="${index}"]`);
-    const detailsContent = detailsRow.querySelector('.details-content');
-    
-    // Toggle visibility
+    if (!detailsRow) return;
     if (detailsRow.classList.contains('hidden')) {
-        // Show details
-        detailsRow.classList.remove('hidden');
-        
-        // Check cache first
-        const cacheKey = `${targetSku.name}_${altSku.name}`;
-        if (expandedDetailsCache.has(cacheKey)) {
-            detailsContent.innerHTML = renderDetailedComparison(
-                expandedDetailsCache.get(cacheKey),
-                targetSku,
-                altSku
-            );
+        expandCard(index);
+    } else {
+        collapseCard(index);
+    }
+}
+
+// Expand a single card: reveal the row, render from cache, or fetch with guards
+async function expandCard(index) {
+    const detailsRow = document.querySelector(`.details-row[data-index="${index}"]`);
+    const card = document.querySelector(`.result-card[data-index="${index}"]`);
+    const data = getCardData(index);
+    if (!detailsRow || !card || !data) return;
+    const { altSku, targetSku } = data;
+    const myVersion = resultsRenderVersion;
+
+    detailsRow.classList.remove('hidden');
+    card.classList.add('expanded');
+    card.setAttribute('aria-expanded', 'true');
+    updateExpandAllButton();
+
+    const detailsContent = detailsRow.querySelector('.details-content');
+    const cacheKey = `${targetSku.name}_${altSku.name}`;
+    if (expandedDetailsCache.has(cacheKey)) {
+        detailsContent.innerHTML = renderDetailedComparison(expandedDetailsCache.get(cacheKey), targetSku, altSku);
+        return;
+    }
+    detailsContent.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading detailed comparison...</p></div>';
+    const location = currentResults?.location || document.getElementById('location').value;
+    try {
+        const details = await getDetails(cacheKey, targetSku.name, altSku.name, location);
+        renderDetailsIfLive(index, altSku, targetSku, details, myVersion);
+    } catch (error) {
+        console.error('Failed to load details:', error);
+        renderErrorIfLive(index, altSku, myVersion);
+    }
+}
+
+// Collapse a single card
+function collapseCard(index) {
+    const detailsRow = document.querySelector(`.details-row[data-index="${index}"]`);
+    const card = document.querySelector(`.result-card[data-index="${index}"]`);
+    if (detailsRow) detailsRow.classList.add('hidden');
+    if (card) {
+        card.classList.remove('expanded');
+        card.setAttribute('aria-expanded', 'false');
+    }
+    updateExpandAllButton();
+}
+
+// Expand every visible card: batch the visual reveal (rAF) + cap fetch concurrency to avoid a stampede
+function expandAll() {
+    const allCards = Array.from(resultsTableBody.querySelectorAll('.result-card'));
+    if (!allCards.length) return;
+    trackEvent('results_expand_all', { count: allCards.length });
+
+    if (expandAllAbortController) expandAllAbortController.abort();
+    expandAllAbortController = new AbortController();
+    const signal = expandAllAbortController.signal;
+    const myVersion = resultsRenderVersion;
+    const location = currentResults?.location || document.getElementById('location').value;
+
+    const collapsed = allCards.filter(card => {
+        const r = document.querySelector(`.details-row[data-index="${card.dataset.index}"]`);
+        return r && r.classList.contains('hidden');
+    });
+
+    const needFetch = [];
+    const VISUAL_BATCH = 6; // reveal in small rAF batches to avoid a layout spike with many rows
+    let vi = 0;
+
+    function expandVisualBatch() {
+        if (signal.aborted || myVersion !== resultsRenderVersion) return;
+        collapsed.slice(vi, vi + VISUAL_BATCH).forEach(card => {
+            const index = parseInt(card.dataset.index, 10);
+            const data = getCardData(index);
+            const detailsRow = document.querySelector(`.details-row[data-index="${index}"]`);
+            if (!data || !detailsRow) return;
+            const { altSku, targetSku } = data;
+            detailsRow.classList.remove('hidden');
+            card.classList.add('expanded');
+            card.setAttribute('aria-expanded', 'true');
+            const detailsContent = detailsRow.querySelector('.details-content');
+            const cacheKey = `${targetSku.name}_${altSku.name}`;
+            if (expandedDetailsCache.has(cacheKey)) {
+                detailsContent.innerHTML = renderDetailedComparison(expandedDetailsCache.get(cacheKey), targetSku, altSku);
+            } else {
+                detailsContent.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading detailed comparison...</p></div>';
+                needFetch.push({ index, altSku, targetSku, cacheKey });
+            }
+        });
+        vi += VISUAL_BATCH;
+        updateExpandAllButton();
+        if (vi < collapsed.length) {
+            requestAnimationFrame(expandVisualBatch);
         } else {
-            // Show loading state
-            detailsContent.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading detailed comparison...</p></div>';
-            
-            // Fetch from API
-            try {
-                const details = await fetchComparisonDetails(
-                    targetSku.name,
-                    altSku.name,
-                    currentResults.location || document.getElementById('location').value
-                );
-                
-                // Cache it
-                expandedDetailsCache.set(cacheKey, details);
-                
-                // Render it
-                detailsContent.innerHTML = renderDetailedComparison(details, targetSku, altSku);
-            } catch (error) {
-                console.error('Failed to load details:', error);
-                detailsContent.innerHTML = '<div class="error"><p>❌ Failed to load details. Click row again to retry.</p></div>';
+            drainFetchQueue();
+        }
+    }
+
+    function drainFetchQueue() {
+        const CONCURRENCY = 4;
+        let qi = 0;
+        async function worker() {
+            while (!signal.aborted && myVersion === resultsRenderVersion && qi < needFetch.length) {
+                const job = needFetch[qi++];
+                try {
+                    const details = await getDetails(job.cacheKey, job.targetSku.name, job.altSku.name, location);
+                    if (signal.aborted || myVersion !== resultsRenderVersion) return;
+                    renderDetailsIfLive(job.index, job.altSku, job.targetSku, details, myVersion);
+                } catch (error) {
+                    if (myVersion !== resultsRenderVersion) return;
+                    renderErrorIfLive(job.index, job.altSku, myVersion);
+                }
             }
         }
-    } else {
-        // Hide details
-        detailsRow.classList.add('hidden');
+        for (let w = 0; w < Math.min(CONCURRENCY, needFetch.length); w++) worker();
     }
+
+    requestAnimationFrame(expandVisualBatch);
+}
+
+// Collapse every expanded card and stop scheduling any pending expand-all fetches
+function collapseAll() {
+    if (expandAllAbortController) { expandAllAbortController.abort(); expandAllAbortController = null; }
+    trackEvent('results_collapse_all', {});
+    resultsTableBody.querySelectorAll('.result-card.expanded').forEach(card => {
+        card.classList.remove('expanded');
+        card.setAttribute('aria-expanded', 'false');
+    });
+    resultsTableBody.querySelectorAll('.details-row:not(.hidden)').forEach(row => row.classList.add('hidden'));
+    updateExpandAllButton();
+}
+
+// Sync the global button label/state from the DOM (loading + error rows still count as expanded)
+function updateExpandAllButton() {
+    if (!expandAllBtn) return;
+    const total = resultsTableBody.querySelectorAll('.result-card').length;
+    const expanded = resultsTableBody.querySelectorAll('.result-card.expanded').length;
+    const label = expandAllBtn.querySelector('.expand-all-label');
+    expandAllBtn.disabled = total === 0;
+    const allExpanded = total > 0 && expanded === total;
+    expandAllBtn.setAttribute('aria-pressed', allExpanded ? 'true' : 'false');
+    if (label) label.textContent = allExpanded ? 'Collapse all' : 'Expand all';
+    expandAllBtn.title = allExpanded ? 'Collapse all result details' : 'Expand all result details';
+}
+
+// Reset expansion bookkeeping before a re-render so stale async writes are discarded
+function resetExpansionState() {
+    resultsRenderVersion++;
+    if (expandAllAbortController) { expandAllAbortController.abort(); expandAllAbortController = null; }
 }
 
 // Fetch comparison details from API (Phase 2)

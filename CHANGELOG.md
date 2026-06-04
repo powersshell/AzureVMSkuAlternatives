@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-06-04
+- **feature:** Expand all / Collapse all control for results — a button in the results header (next to CSV) opens or closes every result's detailed comparison at once, with a rotating chevron on each card to signal expandability. Uncached rows load through a concurrency-limited queue to avoid overloading the API.
+
 ## 2026-06-01
 - **feature:** PowerShell script (`Compare-AzureVms.ps1`) brought to feature parity with the web app — added CPU vendor/generation/performance reporting, `-CpuVendor` filtering, retirement awareness (`-HideRetiring`, on by default), Reserved Instance and Windows pricing (`-PricingModel`, `-OS`), cost-efficiency metrics, cross-region availability (`-CheckRegion`), and CSV export (`-ExportCsv`)
 - **data:** Ported CPU performance, series-to-CPU, and retirement reference tables into the PowerShell script from the API (`web-app/api/function_app.py`)

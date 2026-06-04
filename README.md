@@ -9,9 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-06-01
-- **feature:** PowerShell script (`Compare-AzureVms.ps1`) brought to feature parity with the web app — CPU vendor/generation/performance, `-CpuVendor` filtering, retirement awareness, Reserved Instance & Windows pricing, cost-efficiency metrics, cross-region availability (`-CheckRegion`), and CSV export
-- **data:** Ported CPU performance, series-to-CPU, and retirement reference tables into the PowerShell script from the API
+### 2026-06-04
+- **feature:** Expand all / Collapse all control for results — open or close every result's detailed comparison at once, with a rotating chevron on each card to signal expandability (uncached rows load through a concurrency-limited queue)
 
 📄 [Full changelog →](CHANGELOG.md)
 
