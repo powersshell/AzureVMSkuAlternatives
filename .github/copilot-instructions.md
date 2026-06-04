@@ -56,6 +56,7 @@ Before final handoff for web UI/site changes, run and report:
 1. `git --no-pager status --short`
 2. push to remote branch (usually `main`)
 3. `gh run list ... "Deploy to Azure Static Web Apps"` status
+4. If a **PR preview** environment was created, allowlist its origin for CORS — see section 7.
 
 If deployment is still running, explicitly say so.
 
@@ -79,6 +80,27 @@ When docs and code conflict, treat runtime code and workflows as source of truth
 - Do not claim lint/test/build execution unless commands exist and were actually run.
 - Current `web-app/package.json` scripts are deployment-focused (`deploy`, `clean`) and do not provide lint/test scripts.
 - For verification, use available checks (e.g., Functions health endpoint, workflow status) rather than inventing absent test commands.
+
+### 7) PR preview CORS allowlisting (required for every new PR)
+The frontend (`web-app/src/app.js`) calls the Functions API **cross-origin** at
+`https://vmsku-api-functions-flex.azurewebsites.net/api` (the SWA rewrite can't do the POST flow).
+The Function App CORS allowlist is an **explicit list**, and each new PR gets a **unique** SWA
+preview origin, so SKUs fail to load on a fresh PR preview until that origin is allowlisted.
+
+Whenever you open a PR that produces a SWA preview environment, allowlist its origin:
+1. Get the preview URL from the deploy run log (look for `Visit your site at:`):
+   `gh run view <run-id> --log | Select-String 'Visit your site at'`
+   The origin pattern is `https://black-sea-0784c5d0f-<PR#>.eastus2.1.azurestaticapps.net`.
+2. Add it to the live Function App CORS (takes effect immediately, no redeploy):
+   `az functionapp cors add --name vmsku-api-functions-flex --resource-group rg-vmsku-alternatives --allowed-origins "<preview-origin>"`
+3. Verify the API returns the matching `Access-Control-Allow-Origin` and real data:
+   `Invoke-WebRequest 'https://vmsku-api-functions-flex.azurewebsites.net/api/skus?location=eastus2' -Headers @{Origin='<preview-origin>'} -UseBasicParsing`
+
+Notes:
+- The Bicep source of truth is `web-app/infra/functions-app-flex.bicep` (`cors.allowedOrigins`,
+  ~line 466). The `az` CLI add is the established quick fix and does **not** persist to Bicep;
+  add a matching `// SWA preview (PR #<n>)` entry there only if asked to make it durable.
+- Origins can be pruned when a PR is closed/merged: `az functionapp cors remove ... --allowed-origins "<origin>"`.
 
 ## Practical editing guidance for this repo
 
