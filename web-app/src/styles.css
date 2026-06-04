@@ -177,6 +177,120 @@ body {
 .compare-btn:hover { background: #106ebe; }
 .compare-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* ========== Getting-started UX: step badges, region emphasis, dimming ========== */
+.step-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-right: 4px;
+    border-radius: 50%;
+    background: var(--blue-start);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    vertical-align: middle;
+}
+.step-badge-on-dark {
+    background: rgba(255,255,255,0.25);
+    color: #fff;
+}
+
+/* B. "Start here" emphasis on the Region field while no region is selected */
+.region-field.needs-region select,
+.region-field.needs-region .choices__inner {
+    border-color: var(--blue-start) !important;
+    box-shadow: 0 0 0 2px rgba(0,120,212,0.18);
+    animation: region-pulse 2s ease-in-out infinite;
+}
+@keyframes region-pulse {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(0,120,212,0.18); }
+    50% { box-shadow: 0 0 0 5px rgba(0,120,212,0.10); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .region-field.needs-region select,
+    .region-field.needs-region .choices__inner { animation: none; }
+}
+
+/* C. Inline hint under Region (hidden once a region is chosen) */
+.region-hint {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--blue-start);
+    margin-top: 2px;
+}
+.region-field:not(.needs-region) .region-hint { display: none; }
+
+/* F. Dim downstream controls until a region is selected */
+.config-row.region-pending .downstream-field {
+    opacity: 0.5;
+    transition: opacity 0.2s ease;
+}
+.config-row.region-pending .downstream-field { pointer-events: none; }
+.config-row .downstream-field { transition: opacity 0.2s ease; }
+
+/* ========== Getting-started onboarding card ========== */
+.getting-started {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 24px;
+}
+.getting-started-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 28px 32px;
+    max-width: 560px;
+    width: 100%;
+}
+.gs-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 18px;
+}
+.gs-steps {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.gs-steps li {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+}
+.gs-num {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--blue-start), var(--blue-end));
+    color: #fff;
+    font-weight: 700;
+    font-size: 14px;
+}
+.gs-text { display: flex; flex-direction: column; gap: 2px; }
+.gs-text strong { font-size: 15px; color: var(--text-primary); }
+.gs-text span { font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
+.gs-tip {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-light);
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
 /* Filter row */
 .filter-row {
     display: flex;

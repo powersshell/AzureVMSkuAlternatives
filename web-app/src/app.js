@@ -159,6 +159,25 @@ const targetSkuInfo = document.getElementById('targetSkuInfo');
 const noResults = document.getElementById('noResults');
 const exportBtn = document.getElementById('exportBtn');
 
+// Getting-started / onboarding elements
+const regionField = document.getElementById('regionField');
+const configRow = document.getElementById('configRow');
+const gettingStarted = document.getElementById('gettingStarted');
+
+// Reflects the region-first onboarding cues: emphasizes Region while empty, dims downstream
+// controls until a region is chosen, and keeps Compare disabled until both Region + SKU are set.
+function updateOnboardingState() {
+    const hasRegion = !!document.getElementById('location').value;
+    const hasSku = !!document.getElementById('skuName').value;
+    if (regionField) regionField.classList.toggle('needs-region', !hasRegion);
+    if (configRow) configRow.classList.toggle('region-pending', !hasRegion);
+    compareBtn.disabled = !(hasRegion && hasSku);
+}
+
+function hideGettingStarted() {
+    if (gettingStarted) gettingStarted.classList.add('hidden');
+}
+
 let currentResults = null;
 let currentPricingOS = 'linux';
 let currentPricingModel = 'payg'; // 'payg', 'ri1year', 'ri3year'
@@ -263,23 +282,41 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Disable SKU dropdown initially
     skuChoices.disable();
+
+    // Initialize region-first onboarding cues (emphasis, dimming, Compare disabled)
+    updateOnboardingState();
+
+    // E. Draw attention to the starting point: open the Region dropdown on first load
+    // (only when nothing is selected yet).
+    if (!locationSelect.value) {
+        setTimeout(() => {
+            try { locationChoices.showDropdown(); } catch (e) { /* non-fatal */ }
+        }, 250);
+    }
     
     // Listen for region changes - using Choices.js passedElement
     locationChoices.passedElement.element.addEventListener('change', async (e) => {
         const location = e.target.value;
-        
+
         if (!location) {
             // No region selected - disable SKU dropdown
             skuChoices.clearStore();
             skuChoices.setChoices([{ value: '', label: 'Select a region first...', disabled: true }], 'value', 'label', true);
             skuChoices.disable();
             document.getElementById('skuCount').textContent = '';
+            updateOnboardingState();
             return;
         }
-        
+
+        // Region chosen - clear the "start here" emphasis/dimming
+        updateOnboardingState();
+
         // Fetch SKUs for selected region
         await loadSkusForRegion(location);
     });
+
+    // Listen for source SKU changes - enables Compare once both region + SKU are set
+    skuChoices.passedElement.element.addEventListener('change', updateOnboardingState);
     
     // Listen for CPU vendor filter changes (dropdown filters)
     document.getElementById('filterIntel').addEventListener('change', updateSkuFilters);
@@ -695,6 +732,7 @@ function displayResults(data) {
         timestampEl.textContent = '';
     }
     resultsSection.classList.remove('hidden');
+    hideGettingStarted();
 
     // Show cross-region check bar and populate with regions (excluding current)
     initRegionCheckBar();
@@ -1774,12 +1812,13 @@ function exportToCSV() {
 // UI Helper Functions
 function showLoading() {
     loadingOverlay.classList.remove('hidden');
+    hideGettingStarted();
     compareBtn.disabled = true;
 }
 
 function hideLoading() {
     loadingOverlay.classList.add('hidden');
-    compareBtn.disabled = false;
+    updateOnboardingState();
 }
 
 function showError(message) {
