@@ -977,6 +977,25 @@ def extract_capabilities(sku: Dict) -> Dict:
     }
 
 
+def _asymmetric_score(target_val: float, candidate_val: float, overshoot_factor: float = 1.0) -> float:
+    """Score one numeric capability dimension on a 0-100 scale.
+
+    Shortfall (candidate below target) is always penalized at full rate.
+    Overshoot (candidate at or above target) is penalized at ``overshoot_factor``
+    of the full rate, so ``overshoot_factor=0.0`` means meeting-or-exceeding the
+    target is not penalized at all (more of a resource is never "worse").
+    ``overshoot_factor=1.0`` reproduces the original symmetric scoring.
+    """
+    if target_val <= 0:
+        return 100.0
+    diff = candidate_val - target_val
+    if diff >= 0:
+        penalty = (diff / target_val) * overshoot_factor
+    else:
+        penalty = (-diff) / target_val
+    return max(0.0, 100.0 - penalty * 100.0)
+
+
 def calculate_similarity(target: Dict, candidate: Dict, weights: Dict) -> float:
     """Calculate similarity score between two SKUs"""
     total_score = 0.0
@@ -1002,31 +1021,35 @@ def calculate_similarity(target: Dict, candidate: Dict, weights: Dict) -> float:
         total_score += gpu_match * weights['weightGPU']
         total_weight += weights['weightGPU']
 
-    # Storage comparison
+    # Storage comparison — a candidate that meets or exceeds the target's IOPS is
+    # not "worse", so overshoot is not penalized (overshoot_factor=0.0).
     if target['uncachedDiskIOPS'] > 0:
-        iops_diff = abs(target['uncachedDiskIOPS'] - candidate['uncachedDiskIOPS']) / target['uncachedDiskIOPS']
-        iops_score = max(0, 100 - (iops_diff * 100))
+        iops_score = _asymmetric_score(target['uncachedDiskIOPS'], candidate['uncachedDiskIOPS'], overshoot_factor=0.0)
         total_score += iops_score * weights['weightStorage']
         total_weight += weights['weightStorage']
 
-    # Network comparison — prefer bandwidth (Mbps) when available, fall back to NIC count
+    # Network comparison — prefer bandwidth (Mbps) when available, fall back to NIC
+    # count. Exceeding the target's bandwidth/NICs is not penalized (overshoot_factor=0.0).
     target_bw = target.get('networkBandwidthMbps')
     candidate_bw = candidate.get('networkBandwidthMbps')
     if target_bw and target_bw > 0 and candidate_bw is not None:
-        bw_diff = abs(target_bw - candidate_bw) / target_bw
-        network_score = max(0, 100 - (bw_diff * 100))
+        network_score = _asymmetric_score(target_bw, candidate_bw, overshoot_factor=0.0)
         total_score += network_score * weights['weightNetwork']
         total_weight += weights['weightNetwork']
     elif target['maxNics'] > 0:
-        nic_diff = abs(target['maxNics'] - candidate['maxNics']) / target['maxNics']
-        nic_score = max(0, 100 - (nic_diff * 100))
+        nic_score = _asymmetric_score(target['maxNics'], candidate['maxNics'], overshoot_factor=0.0)
         total_score += nic_score * weights['weightNetwork']
         total_weight += weights['weightNetwork']
 
-    # Features comparison
+    # Features comparison — only penalize for features the target has that the
+    # candidate lacks; extra capabilities on the candidate are not "worse".
     features = ['premiumIO', 'acceleratedNetworking', 'encryptionAtHost', 'ephemeralOSDisk']
-    feature_matches = sum(1 for f in features if target[f] == candidate[f])
-    feature_score = (feature_matches / len(features)) * 100
+    target_features = [f for f in features if target[f]]
+    if target_features:
+        feature_matches = sum(1 for f in target_features if candidate[f])
+        feature_score = (feature_matches / len(target_features)) * 100
+    else:
+        feature_score = 100
     total_score += feature_score * weights['weightFeatures']
     total_weight += weights['weightFeatures']
 

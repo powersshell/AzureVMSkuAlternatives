@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-06-05
+- **fix:** Low-baseline and burstable SKUs (e.g. `Standard_B2s`) no longer return zero alternatives at the default minimum match score. Storage (IOPS/throughput) and network (bandwidth/NICs) dimensions are now scored asymmetrically — a candidate that meets or exceeds the target is treated as a full match instead of being penalized for "overshooting" — so an exact 2 vCPU / 4 GB twin now scores ~98 instead of ~79. Feature flags are likewise only penalized when the target has a capability the candidate lacks; extra capabilities are no longer counted against a candidate. The same fix was mirrored in the PowerShell script (`Compare-AzureVms.ps1`).
+
 ## 2026-06-04
 - **improvement:** Mobile usability — on phones and small tablets (≤900px) the page now scrolls naturally so the results are always reachable; previously the tall stacked configuration bar could fill the screen and hide the results below it. The source-details panel now flows above the results and header spacing is tightened on small screens.
 - **improvement:** Clearer "getting started" flow — numbered step labels (1 Region → 2 Source SKU → 3 Compare), a "Start here" hint and highlight on the Region selector until a region is chosen, downstream controls dimmed (and Compare disabled) until you pick a region, the Region dropdown opens automatically on load, and a 3-step "Get started" guide now fills the results area before your first comparison.
