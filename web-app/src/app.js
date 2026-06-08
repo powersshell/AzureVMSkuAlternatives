@@ -574,6 +574,16 @@ async function handleCompare() {
         // Parse the response as JSON
         const data = await response.json();
 
+        // Cap to the closest MAX_RESULTS client-side too, so the UI is consistent
+        // whether or not the API applied maxResults. Preserve the true total count
+        // (the API sends totalMatches; fall back to the pre-cap length otherwise).
+        data.totalMatches = (typeof data.totalMatches === 'number')
+            ? data.totalMatches
+            : (Array.isArray(data.alternatives) ? data.alternatives.length : 0);
+        if (Array.isArray(data.alternatives)) {
+            data.alternatives = data.alternatives.slice(0, MAX_RESULTS);
+        }
+
         currentResults = data;
         displayResults(data);
 
@@ -736,8 +746,9 @@ function displayResults(data) {
     } else {
         noResults.classList.add('hidden');
         displayTargetSku(data.targetSku);
-        
-        // Populate generation filter from full results, then apply all filters
+
+        // Populate generation filter from results (already capped to MAX_RESULTS
+        // when the response was stored), then apply all filters
         populateGenFilter(data.alternatives);
         const filteredAlternatives = filterResults(data.alternatives);
         displayAlternatives(filteredAlternatives);
@@ -1064,15 +1075,16 @@ function updateResultsCaption(alternatives) {
     const caption = document.getElementById('resultsCaption');
     const note = document.getElementById('weakMatchNote');
     const shown = alternatives.length;
-    const total = currentResults?.totalMatches;
-    const serverReturned = currentResults?.alternatives?.length ?? shown;
+    // Total candidates found: prefer the API's pre-cap count, else fall back to the
+    // length of the returned list (older API builds don't send totalMatches).
+    const total = currentResults?.totalMatches ?? currentResults?.alternatives?.length ?? shown;
 
     if (caption) {
         if (shown === 0) {
             caption.textContent = '';
         } else {
             let text = `Showing the ${shown} closest match${shown === 1 ? '' : 'es'}`;
-            if (typeof total === 'number' && total > serverReturned) {
+            if (typeof total === 'number' && total > shown) {
                 text += ` of ${total} found`;
             }
             caption.textContent = text + '.';
