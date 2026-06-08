@@ -238,7 +238,8 @@ Compare a VM SKU with alternatives in a region.
   "skuName": "Standard_D4s_v3",
   "location": "eastus",
   "tolerance": 20,
-  "minSimilarityScore": 60,
+  "minSimilarityScore": 0,
+  "maxResults": 50,
   "currencyCode": "USD",
   "weightCPU": 2.0,
   "weightMemory": 2.0,
@@ -250,6 +251,11 @@ Compare a VM SKU with alternatives in a region.
   "requireGPUMatch": false
 }
 ```
+
+> **Note:** `minSimilarityScore` is an optional floor (default `60`) and `maxResults`
+> optionally caps the response to the closest N matches (omit for no cap). The web UI
+> sends `minSimilarityScore: 0` + `maxResults: 50` so it always shows the closest 50
+> alternatives, sorted by score, instead of asking the user to pick a threshold.
 
 **Response:**
 ```json
@@ -274,7 +280,8 @@ Compare a VM SKU with alternatives in a region.
       "pricing": {...},
       "zones": "1, 2, 3"
     }
-  ]
+  ],
+  "totalMatches": 142
 }
 ```
 

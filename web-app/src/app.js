@@ -9,6 +9,15 @@ const ANALYTICS_USER_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
 // Maps priority dropdown values to numeric weights used by the comparison algorithm
 const PRIORITY_VALUES = { low: 0.5, normal: 1.5, high: 3.0 };
 
+// Results presentation: show the closest N matches (a cap, not a quota) with no
+// score threshold, so specialty/GPU/NVMe SKUs still surface their nearest options.
+// 50 keeps the list scannable while leaving the client-side vendor/generation
+// filters a healthy pool to refine within.
+const MAX_RESULTS = 50;
+// UI-only cutoff: if the best match scores below this, show a "no strong matches"
+// note. It does NOT filter any results.
+const STRONG_MATCH = 70;
+
 let appInsights = null;
 let analyticsUserId = null;
 let telemetryReady = false;
@@ -493,7 +502,6 @@ function populateSkuChoices(skus) {
 async function handleCompare() {
     const skuName = document.getElementById('skuName').value.trim();
     const location = document.getElementById('location').value;
-    const minSimilarityScore = parseInt(document.getElementById('minSimilarityScore').value);
     const currencyCode = document.getElementById('currencyCode').value;
 
     if (!skuName || !location) {
@@ -516,7 +524,8 @@ async function handleCompare() {
     const params = {
         skuName,
         location,
-        minSimilarityScore,
+        minSimilarityScore: 0,
+        maxResults: MAX_RESULTS,
         currencyCode,
         weightCPU: getPriorityWeight('weightCPU'),
         weightMemory: getPriorityWeight('weightMemory'),
@@ -537,7 +546,7 @@ async function handleCompare() {
         location,
         currencyCode
     }, {
-        minSimilarityScore
+        maxResults: MAX_RESULTS
     });
 
     try {
@@ -706,6 +715,18 @@ function formatMonthlyPriceSafe(pricing) {
 // Display Results
 function displayResults(data) {
     if (!data.alternatives || data.alternatives.length === 0) {
+        const hintEl = document.getElementById('noResultsHint');
+        if (hintEl) {
+            const nvme = document.getElementById('requireNVMeMatch').checked;
+            const gpu = document.getElementById('requireGPUMatch').checked;
+            if (nvme || gpu) {
+                const reqs = [nvme ? '"Require NVMe match"' : null, gpu ? '"Require GPU match"' : null]
+                    .filter(Boolean).join(' and ');
+                hintEl.textContent = `No alternatives matched the ${reqs} requirement in Advanced Options. Try turning that off to see the closest available options.`;
+            } else {
+                hintEl.textContent = 'Try adjusting your filters or choosing a different region.';
+            }
+        }
         noResults.classList.remove('hidden');
         resetExpansionState();
         renderedAlternatives = [];
@@ -1038,6 +1059,38 @@ function renderIndicator(indicator, fieldName) {
     return '';
 }
 
+// Update the results caption ("closest N of M") and the weak-match note.
+function updateResultsCaption(alternatives) {
+    const caption = document.getElementById('resultsCaption');
+    const note = document.getElementById('weakMatchNote');
+    const shown = alternatives.length;
+    const total = currentResults?.totalMatches;
+    const serverReturned = currentResults?.alternatives?.length ?? shown;
+
+    if (caption) {
+        if (shown === 0) {
+            caption.textContent = '';
+        } else {
+            let text = `Showing the ${shown} closest match${shown === 1 ? '' : 'es'}`;
+            if (typeof total === 'number' && total > serverReturned) {
+                text += ` of ${total} found`;
+            }
+            caption.textContent = text + '.';
+        }
+    }
+
+    if (note) {
+        const topScore = shown > 0 ? alternatives[0].similarityScore : null;
+        if (topScore != null && topScore < STRONG_MATCH) {
+            note.textContent = 'No strong matches for this SKU — these are the closest available alternatives. Check the match score on each card.';
+            note.classList.remove('hidden');
+        } else {
+            note.textContent = '';
+            note.classList.add('hidden');
+        }
+    }
+}
+
 // Display Alternatives as Cards
 function displayAlternatives(alternatives) {
     // Bump render version + abort any in-flight expand-all so late fetches can't write into the rebuilt DOM
@@ -1048,7 +1101,10 @@ function displayAlternatives(alternatives) {
     // Update results count badge
     const countBadge = document.getElementById('resultsCount');
     if (countBadge) countBadge.textContent = alternatives.length;
-    
+
+    // Caption + weak-match note: communicate the "closest N" framing without a threshold control
+    updateResultsCaption(alternatives);
+
     // Get target SKU for comparison
     const targetSku = currentResults?.targetSku;
 

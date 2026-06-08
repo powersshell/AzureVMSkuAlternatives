@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-06-08
+- **improvement:** Removed the confusing "Min Score" dropdown. The tool now always shows the 50 closest alternatives, sorted by match score, instead of asking you to guess a similarity threshold (which could return an empty list). Each card still shows its match score, a caption notes how many matches were found, and specialty SKUs (large GPU, high-memory, NVMe-required) now reliably surface their nearest options. When no strong match exists, an inline note explains the results are the closest available; when the "Require NVMe/GPU match" options exclude everything, the empty state suggests relaxing them.
+
 ## 2026-06-05
 - **fix:** Low-baseline and burstable SKUs (e.g. `Standard_B2s`) no longer return zero alternatives at the default minimum match score. Storage (IOPS/throughput) and network (bandwidth/NICs) dimensions are now scored asymmetrically — a candidate that meets or exceeds the target is treated as a full match instead of being penalized for "overshooting" — so an exact 2 vCPU / 4 GB twin now scores ~98 instead of ~79. Feature flags are likewise only penalized when the target has a capability the candidate lacks; extra capabilities are no longer counted against a candidate. The same fix was mirrored in the PowerShell script (`Compare-AzureVms.ps1`).
 

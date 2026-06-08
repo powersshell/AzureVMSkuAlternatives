@@ -9,8 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-06-05
-- **fix:** Low-baseline and burstable SKUs (e.g. `Standard_B2s`) no longer return zero alternatives at the default minimum match score. Storage and network dimensions are now scored asymmetrically so a candidate that meets or exceeds the target's IOPS/throughput/bandwidth isn't penalized for "overshooting", and extra feature flags no longer count against a candidate. Mirrored in the PowerShell script.
+### 2026-06-08
+- **improvement:** Removed the confusing "Min Score" dropdown. The tool now always shows the 50 closest alternatives, sorted by match score, instead of asking you to guess a threshold (which could return an empty list). Each card still shows its match score, specialty SKUs (large GPU, high-memory, NVMe-required) reliably surface their nearest options, and an inline note explains when the results are the closest available rather than strong matches.
 
 📄 [Full changelog →](CHANGELOG.md)
 
