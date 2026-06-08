@@ -48,6 +48,7 @@ from function_app import (
     calculate_price_diff,
     calculate_boolean_diff,
     calculate_similarity,
+    _asymmetric_score,
 )
 
 
@@ -473,3 +474,148 @@ class TestCalculateSimilarity:
         score = calculate_similarity(sku, sku, weights)
         # With 0 vCPUs and memory, only features will score
         assert score >= 0
+
+
+# ============================================================================
+# Asymmetric scoring tests (storage/network/features) + burstable regression
+# ============================================================================
+
+# Default UI weights used by the website
+DEFAULT_WEIGHTS = {
+    'weightCPU': 3.0, 'weightMemory': 3.0, 'weightGPU': 1.5,
+    'weightStorage': 1.5, 'weightNetwork': 0.5, 'weightFeatures': 0.5
+}
+
+
+class TestAsymmetricScore:
+
+    @pytest.mark.unit
+    def test_overshoot_not_penalized_when_factor_zero(self):
+        # Candidate exceeds target by 100%, but overshoot_factor=0 => full score
+        assert _asymmetric_score(100, 200, overshoot_factor=0.0) == pytest.approx(100.0)
+        assert _asymmetric_score(100, 1000, overshoot_factor=0.0) == pytest.approx(100.0)
+
+    @pytest.mark.unit
+    def test_overshoot_factor_one_is_symmetric(self):
+        # overshoot_factor=1.0 reproduces the original symmetric behavior
+        assert _asymmetric_score(100, 200, overshoot_factor=1.0) == pytest.approx(0.0)
+        assert _asymmetric_score(100, 150, overshoot_factor=1.0) == pytest.approx(50.0)
+
+    @pytest.mark.unit
+    def test_shortfall_always_penalized_full_rate(self):
+        # Falling short is penalized at full rate regardless of overshoot_factor
+        assert _asymmetric_score(100, 50, overshoot_factor=0.0) == pytest.approx(50.0)
+        assert _asymmetric_score(100, 50, overshoot_factor=1.0) == pytest.approx(50.0)
+        assert _asymmetric_score(100, 0, overshoot_factor=0.0) == pytest.approx(0.0)
+
+    @pytest.mark.unit
+    def test_exact_match_scores_full(self):
+        assert _asymmetric_score(100, 100, overshoot_factor=0.0) == pytest.approx(100.0)
+
+    @pytest.mark.unit
+    def test_zero_target_guard(self):
+        # No target capability to match against => not a penalty
+        assert _asymmetric_score(0, 5000, overshoot_factor=0.0) == pytest.approx(100.0)
+
+
+def _iso_sku(**overrides):
+    """A SKU with all dimensions neutralized so a single weight can be isolated."""
+    base = {
+        'vCPUs': 0, 'memoryGB': 0, 'gpuCount': 0,
+        'uncachedDiskIOPS': 0, 'maxNics': 0, 'networkBandwidthMbps': None,
+        'premiumIO': False, 'acceleratedNetworking': False,
+        'encryptionAtHost': False, 'ephemeralOSDisk': False,
+    }
+    base.update(overrides)
+    return base
+
+
+class TestSimilarityAsymmetry:
+
+    @pytest.mark.unit
+    def test_storage_overshoot_not_penalized(self):
+        weights = {**DEFAULT_WEIGHTS, 'weightStorage': 1.0,
+                   'weightCPU': 0, 'weightMemory': 0, 'weightGPU': 0,
+                   'weightNetwork': 0, 'weightFeatures': 0}
+        target = _iso_sku(uncachedDiskIOPS=1000)
+        faster = _iso_sku(uncachedDiskIOPS=5000)  # 5x the IOPS
+        assert calculate_similarity(target, faster, weights) == pytest.approx(100.0)
+
+    @pytest.mark.unit
+    def test_storage_shortfall_still_penalized(self):
+        weights = {**DEFAULT_WEIGHTS, 'weightStorage': 1.0,
+                   'weightCPU': 0, 'weightMemory': 0, 'weightGPU': 0,
+                   'weightNetwork': 0, 'weightFeatures': 0}
+        target = _iso_sku(uncachedDiskIOPS=1000)
+        slower = _iso_sku(uncachedDiskIOPS=500)  # half the IOPS
+        assert calculate_similarity(target, slower, weights) == pytest.approx(50.0)
+
+    @pytest.mark.unit
+    def test_network_overshoot_not_penalized(self):
+        weights = {**DEFAULT_WEIGHTS, 'weightNetwork': 1.0,
+                   'weightCPU': 0, 'weightMemory': 0, 'weightGPU': 0,
+                   'weightStorage': 0, 'weightFeatures': 0}
+        target = _iso_sku(networkBandwidthMbps=1000)
+        faster = _iso_sku(networkBandwidthMbps=10000)
+        assert calculate_similarity(target, faster, weights) == pytest.approx(100.0)
+
+    @pytest.mark.unit
+    def test_features_extra_capabilities_not_penalized(self):
+        weights = {**DEFAULT_WEIGHTS, 'weightFeatures': 1.0,
+                   'weightCPU': 0, 'weightMemory': 0, 'weightGPU': 0,
+                   'weightStorage': 0, 'weightNetwork': 0}
+        target = _iso_sku()  # target needs no features
+        loaded = _iso_sku(premiumIO=True, acceleratedNetworking=True,
+                          encryptionAtHost=True, ephemeralOSDisk=True)
+        assert calculate_similarity(target, loaded, weights) == pytest.approx(100.0)
+
+    @pytest.mark.unit
+    def test_features_missing_required_capability_penalized(self):
+        weights = {**DEFAULT_WEIGHTS, 'weightFeatures': 1.0,
+                   'weightCPU': 0, 'weightMemory': 0, 'weightGPU': 0,
+                   'weightStorage': 0, 'weightNetwork': 0}
+        target = _iso_sku(premiumIO=True)  # target requires premium IO
+        missing = _iso_sku(premiumIO=False)
+        assert calculate_similarity(target, missing, weights) == pytest.approx(0.0)
+
+
+class TestBurstableRegression:
+    """Regression for the Standard_B2s bug: low-baseline burstable targets
+    returned zero alternatives at the default threshold of 80 because exact
+    vCPU/memory twins with higher IOPS/bandwidth were scored as dissimilar."""
+
+    def _b2s_like(self):
+        # Burstable: low baseline IOPS and network bandwidth
+        return {
+            'vCPUs': 2, 'memoryGB': 4, 'gpuCount': 0,
+            'uncachedDiskIOPS': 1280, 'maxNics': 3, 'networkBandwidthMbps': 1280,
+            'premiumIO': True, 'acceleratedNetworking': False,
+            'encryptionAtHost': True, 'ephemeralOSDisk': False,
+        }
+
+    @pytest.mark.unit
+    def test_exact_twin_with_higher_io_passes_default_threshold(self):
+        target = self._b2s_like()
+        # Same vCPU/memory, but a sustained SKU with much higher IOPS/bandwidth
+        twin = {
+            'vCPUs': 2, 'memoryGB': 4, 'gpuCount': 0,
+            'uncachedDiskIOPS': 3200, 'maxNics': 2, 'networkBandwidthMbps': 5000,
+            'premiumIO': True, 'acceleratedNetworking': True,
+            'encryptionAtHost': True, 'ephemeralOSDisk': True,
+        }
+        score = calculate_similarity(target, twin, DEFAULT_WEIGHTS)
+        assert score >= 80, f"exact 2vCPU/4GB twin should clear the default threshold, got {score}"
+
+    @pytest.mark.unit
+    def test_genuine_downgrade_still_excluded(self):
+        # A SKU with half the memory should still score poorly (not a false positive)
+        target = self._b2s_like()
+        smaller = {
+            'vCPUs': 1, 'memoryGB': 2, 'gpuCount': 0,
+            'uncachedDiskIOPS': 3200, 'maxNics': 2, 'networkBandwidthMbps': 5000,
+            'premiumIO': True, 'acceleratedNetworking': True,
+            'encryptionAtHost': True, 'ephemeralOSDisk': True,
+        }
+        score = calculate_similarity(target, smaller, DEFAULT_WEIGHTS)
+        assert score < 80, f"half-size SKU should not clear the default threshold, got {score}"
+

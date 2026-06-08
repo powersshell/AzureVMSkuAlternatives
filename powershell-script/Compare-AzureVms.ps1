@@ -945,6 +945,20 @@ function Get-CapabilityDifference {
         $CompareValue
     )
 
+    # "Higher is better" performance capabilities: a candidate that meets or
+    # exceeds the target is not "worse", so overshoot is not penalized (only
+    # a shortfall is). Mirrors the web API's asymmetric storage/network scoring.
+    $higherIsBetter = @('UncachedDiskIOPS', 'UncachedDiskBytesPerSecond',
+                        'MaxNetworkInterfaces', 'ExpectedNetworkBandwidth', 'MaxDataDiskCount')
+    if ($CapabilityName -in $higherIsBetter) {
+        $t = 0.0; $c = 0.0
+        [void][double]::TryParse(('' + $TargetValue), [ref]$t)
+        [void][double]::TryParse(('' + $CompareValue), [ref]$c)
+        if ($t -le 0) { return 0.0 }      # no target requirement to meet
+        if ($c -ge $t) { return 0.0 }      # meets or exceeds target - not worse
+        return ($t - $c) / $t              # shortfall penalized at full rate
+    }
+
     # Handle null or missing values
     if ($null -eq $TargetValue -or $TargetValue -eq '' -or $TargetValue -eq '0' -or $null -eq $CompareValue -or $CompareValue -eq '' -or $CompareValue -eq '0') {
         # Special handling for NVMe - if target has NVMe and compare doesn't, it's a major difference
@@ -997,12 +1011,15 @@ function Get-CapabilityDifference {
         }
     }
 
-    # Handle boolean/True-False values
+    # Handle boolean/True-False values — only penalize when the target HAS the
+    # feature and the candidate lacks it; an extra capability is not "worse".
     if ($TargetValue -eq 'True' -or $TargetValue -eq 'False') {
         if ($TargetValue -eq $CompareValue) {
             return 0.0
+        } elseif ($TargetValue -eq 'True') {
+            return 1.0  # target needs it, candidate lacks it
         } else {
-            return 1.0
+            return 0.0  # target doesn't need it, candidate has extra - not worse
         }
     }
 
