@@ -60,6 +60,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         sku_name = req_body.get('skuName')
         location = req_body.get('location')
         min_similarity_score = req_body.get('minSimilarityScore', 60)
+        max_results = req_body.get('maxResults')
         currency_code = req_body.get('currencyCode', 'USD')
         weight_cpu = req_body.get('weightCPU', 2.0)
         weight_memory = req_body.get('weightMemory', 2.0)
@@ -208,7 +209,14 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         # Sort by similarity score
         alternatives.sort(key=lambda x: x['similarityScore'], reverse=True)
 
-        logging.info(f'Found {len(alternatives)} alternatives')
+        # Total number of candidates above the floor, before any top-N capping
+        total_matches = len(alternatives)
+
+        # Cap to the closest N matches when requested (None = no cap, for back-compat)
+        if isinstance(max_results, int) and max_results > 0:
+            alternatives = alternatives[:max_results]
+
+        logging.info(f'Found {total_matches} alternatives, returning {len(alternatives)}')
 
         # Supplement RI pricing for target and alternatives if missing from cache
         # Uses a single bulk API call instead of per-SKU fetches
@@ -295,11 +303,13 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         response_data = {
             'targetSku': target_sku_data,
             'alternatives': alternatives,
+            'totalMatches': total_matches,
             'dataLastUpdated': data_last_updated,
             'dataSource': data_source,
             'searchParameters': {
                 'location': location,
                 'minSimilarityScore': min_similarity_score,
+                'maxResults': max_results,
                 'weights': {
                     'cpu': weight_cpu,
                     'memory': weight_memory,
