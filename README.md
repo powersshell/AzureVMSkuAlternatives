@@ -10,7 +10,7 @@
 ## 📋 Recent Changes
 
 ### 2026-07-08
-- **improvement:** Static Web App **preview** environments (one per pull request) now load data automatically. CORS is handled in the Functions app itself and accepts every SWA preview origin, the production site, the Azure portal, and localhost — removing the manual per-PR allowlisting step that previously left fresh previews unable to fetch SKUs.
+- **fix:** Static Web App **preview** environments (one per pull request) now load data automatically, including the "Compare" and region-availability actions. Cross-origin CORS is allowed at the App Service platform level for all origins, so every SWA preview slot, the production site, the Azure portal, and localhost work with no manual per-PR allowlisting.
 
 📄 [Full changelog →](CHANGELOG.md)
 

@@ -123,11 +123,13 @@ resource functionsApp 'Microsoft.Web/sites@2023-01-01' = {
           value: appInsights.properties.ConnectionString
         }
       ]
-      // CORS is handled in application code (see with_cors in api/function_app.py).
-      // Keep this list empty -- a non-empty platform allowlist makes App Service
-      // strip the app-emitted Access-Control-Allow-Origin header.
+      // CORS: allow all origins. The API is anonymous, read-only, public data
+      // and is called cross-origin from the production SWA and a unique origin
+      // per pull-request preview slot. supportCredentials stays false for '*'.
       cors: {
-        allowedOrigins: []
+        allowedOrigins: [
+          '*'
+        ]
         supportCredentials: false
       }
       ftpsState: 'Disabled'

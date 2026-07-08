@@ -462,12 +462,18 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
         // Build happens via --build-remote flag during deployment
       ]
       
-      // CORS is handled in application code (see with_cors in api/function_app.py)
-      // so that every SWA preview origin is accepted automatically. This list
-      // MUST stay empty -- a non-empty platform allowlist makes App Service strip
-      // the app-emitted Access-Control-Allow-Origin header.
+      // CORS: allow all origins. The API is anonymous, read-only, public Azure
+      // pricing/spec data, and the frontend calls it cross-origin from the
+      // production SWA plus a unique origin for every pull-request preview slot.
+      // The Flex Consumption host's CORS middleware short-circuits browser
+      // preflight (OPTIONS) before any application code runs, so app-level
+      // dynamic CORS cannot answer preflight; a platform '*' allowlist is the
+      // only zero-touch way to make preflighted POST requests work from every
+      // preview origin. supportCredentials stays false, which is required for '*'.
       cors: {
-        allowedOrigins: []
+        allowedOrigins: [
+          '*'
+        ]
         supportCredentials: false
       }
       
