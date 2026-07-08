@@ -9,8 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-06-08
-- **improvement:** Removed the confusing "Min Score" dropdown. The tool now always shows the 50 closest alternatives, sorted by match score, instead of asking you to guess a threshold (which could return an empty list). Each card still shows its match score, specialty SKUs (large GPU, high-memory, NVMe-required) reliably surface their nearest options, and an inline note explains when the results are the closest available rather than strong matches.
+### 2026-07-08
+- **feature:** Richer VM spec fields — result cards now show an **ACU** (Azure Compute Unit) chip and an **NVMe** badge, and the detailed comparison adds **ACU**, **vCPUs per core**, **Trusted Launch**, **Confidential Computing**, and **RDMA / InfiniBand** rows. All new fields are also included in the CSV export. New capabilities populate for a region the next time its data is refreshed.
 
 📄 [Full changelog →](CHANGELOG.md)
 

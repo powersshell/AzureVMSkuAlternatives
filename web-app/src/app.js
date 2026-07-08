@@ -1147,6 +1147,15 @@ function displayAlternatives(alternatives) {
             ? `${alt.cpuVendor}${alt.cpuGeneration ? ' ' + alt.cpuGeneration : ''} (${alt.architecture || 'x64'})`
             : '';
 
+        // Richer spec highlights (I-D): ACU chip + NVMe badge, surfaced on the card
+        const caps = alt.capabilities || {};
+        const acuChip = caps.acu
+            ? `<div class="mini-spec" title="Azure Compute Unit — relative CPU performance"><div class="mini-spec-val">${caps.acu}</div><div class="mini-spec-lbl">ACU</div></div>`
+            : '';
+        const nvmeBadge = caps.nvme
+            ? `<span class="feature-badge nvme-badge" title="Supports the NVMe disk interface">NVMe</span>`
+            : '';
+
         // Region availability
         const regionAvail = renderRegionAvailCell(alt.name);
 
@@ -1159,7 +1168,7 @@ function displayAlternatives(alternatives) {
 
         card.innerHTML = `
             <div class="card-sku-info">
-                <div class="card-sku-name">${alt.name} ${renderRetirementBadge(alt)}</div>
+                <div class="card-sku-name">${alt.name} ${renderRetirementBadge(alt)}${nvmeBadge}</div>
                 <div class="card-sku-cpu">${cpuInfo}</div>
                 <div class="card-score-bar">
                     <div class="score-track"><div class="score-fill ${scoreClass}" style="width:${scorePercent}%"></div></div>
@@ -1169,6 +1178,7 @@ function displayAlternatives(alternatives) {
             <div class="card-specs">
                 <div class="mini-spec"><div class="mini-spec-val">${alt.vCPUs || '—'}</div><div class="mini-spec-lbl">vCPUs</div></div>
                 <div class="mini-spec"><div class="mini-spec-val">${alt.memoryGB ? alt.memoryGB + 'GB' : '—'}</div><div class="mini-spec-lbl">Memory</div></div>
+                ${acuChip}
                 ${renderZonesChip(alt.zones, targetSku?.zones)}
                 ${regionAvail}
             </div>
@@ -1470,7 +1480,11 @@ function renderDetailedComparison(data, targetSku, altSku) {
                     ${cpuPerfHtml}
                     ${renderNumericDiff('vCPUs', diff.compute.vCPUs)}
                     ${renderNumericDiff('Memory', diff.compute.memory)}
+                    ${diff.compute.acu && diff.compute.acu.target != null ? renderNumericDiff('ACU', diff.compute.acu) : ''}
+                    ${diff.compute.vCPUsPerCore && diff.compute.vCPUsPerCore.target != null ? renderNumericDiff('vCPUs / Core', diff.compute.vCPUsPerCore) : ''}
                     ${renderBooleanDiff(diff.compute.hyperVGen2)}
+                    ${diff.compute.trustedLaunch ? renderBooleanDiff(diff.compute.trustedLaunch) : ''}
+                    ${diff.compute.confidentialComputing ? renderBooleanDiff(diff.compute.confidentialComputing) : ''}
                 </div>
                 
                 <!-- Storage Section -->
@@ -1491,6 +1505,7 @@ function renderDetailedComparison(data, targetSku, altSku) {
                     ${diff.network.networkBandwidthMbps && diff.network.networkBandwidthMbps.target != null ? renderNumericDiff('Max Bandwidth', diff.network.networkBandwidthMbps) : ''}
                     ${renderNumericDiff('Max NICs', diff.network.maxNics)}
                     ${renderBooleanDiff(diff.network.acceleratedNetworking)}
+                    ${diff.network.rdma ? renderBooleanDiff(diff.network.rdma) : ''}
                 </div>
                 
                 <!-- Cost Section -->
@@ -1766,7 +1781,13 @@ function exportToCSV() {
         { key: 'ephemeralOSDisk', label: 'Ephemeral OS Disk', type: 'boolean' },
         { key: 'acceleratedNetworking', label: 'Accelerated Networking', type: 'boolean' },
         { key: 'encryptionAtHost', label: 'Encryption at Host', type: 'boolean' },
-        { key: 'nvme', label: 'NVMe', type: 'boolean' }
+        { key: 'nvme', label: 'NVMe', type: 'boolean' },
+        { key: 'acu', label: 'ACU', type: 'number', precision: 0 },
+        { key: 'vCPUsPerCore', label: 'vCPUs per Core', type: 'number', precision: 0 },
+        { key: 'diskControllerTypes', label: 'Disk Controller Types', type: 'string' },
+        { key: 'rdmaEnabled', label: 'RDMA Enabled', type: 'boolean' },
+        { key: 'confidentialComputingType', label: 'Confidential Computing Type', type: 'string' },
+        { key: 'trustedLaunch', label: 'Trusted Launch', type: 'boolean' }
     ];
 
     const summaryHeaders = [

@@ -960,6 +960,15 @@ def admin_refresh_region(req: func.HttpRequest) -> func.HttpResponse:
 # Helper Functions (shared across all functions)
 # ============================================================================
 
+def _derive_trusted_launch(capabilities: Dict) -> bool:
+    """Trusted Launch is supported when the SKU offers a Gen2 image and it is
+    not explicitly disabled. ARM exposes this via HyperVGenerations (must include
+    'V2') and an optional 'TrustedLaunchDisabled' capability."""
+    hyperv = capabilities.get('HyperVGenerations', '') or ''
+    disabled = str(capabilities.get('TrustedLaunchDisabled', 'False')).lower() == 'true'
+    return ('V2' in hyperv) and not disabled
+
+
 def extract_capabilities(sku: Dict) -> Dict:
     """Extract capabilities from a SKU"""
     capabilities = {}
@@ -983,7 +992,14 @@ def extract_capabilities(sku: Dict) -> Dict:
         'uncachedDiskBytesPerSecond': int(capabilities.get('UncachedDiskBytesPerSecond', 0)),
         'maxWriteAcceleratorDisks': int(capabilities.get('MaxWriteAcceleratorDisksAllowed', 0)),
         'osVhdSizeMB': int(capabilities.get('OSVhdSizeMB', 0)),
-        'hyperVGenerations': capabilities.get('HyperVGenerations', '')
+        'hyperVGenerations': capabilities.get('HyperVGenerations', ''),
+        # Richer spec fields (I-D)
+        'acu': int(capabilities.get('ACUs', 0)),
+        'vCPUsPerCore': int(capabilities.get('vCPUsPerCore', 0)),
+        'diskControllerTypes': capabilities.get('DiskControllerTypes', '') or '',
+        'rdmaEnabled': capabilities.get('RdmaEnabled') == 'True',
+        'confidentialComputingType': capabilities.get('ConfidentialComputingType', '') or '',
+        'trustedLaunch': _derive_trusted_launch(capabilities)
     }
 
 
@@ -1276,7 +1292,13 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         {'name': 'EphemeralOSDiskSupported', 'value': 'True' if entity['ephemeralOSDisk'] else 'False'},
                         {'name': 'NvmeDiskSizeInMiB', 'value': '1' if entity.get('nvme', False) else '0'},
                         {'name': 'OSVhdSizeMB', 'value': str(entity.get('osVhdSizeMB', 0))},
-                        {'name': 'HyperVGenerations', 'value': entity.get('hyperVGenerations', '')}
+                        {'name': 'HyperVGenerations', 'value': entity.get('hyperVGenerations', '')},
+                        {'name': 'ACUs', 'value': str(entity.get('acu', 0))},
+                        {'name': 'vCPUsPerCore', 'value': str(entity.get('vCPUsPerCore', 0))},
+                        {'name': 'DiskControllerTypes', 'value': entity.get('diskControllerTypes', '') or ''},
+                        {'name': 'RdmaEnabled', 'value': 'True' if entity.get('rdmaEnabled', False) else 'False'},
+                        {'name': 'ConfidentialComputingType', 'value': entity.get('confidentialComputingType', '') or ''},
+                        {'name': 'TrustedLaunchDisabled', 'value': 'False' if entity.get('trustedLaunch', False) else 'True'}
                     ],
                     'locationInfo': [{
                         'location': location,
@@ -2067,6 +2089,12 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'cpuVendor': cpu_vendor,
                 'osVhdSizeMB': capabilities['osVhdSizeMB'],
                 'hyperVGenerations': capabilities['hyperVGenerations'],
+                'acu': capabilities['acu'],
+                'vCPUsPerCore': capabilities['vCPUsPerCore'],
+                'diskControllerTypes': capabilities['diskControllerTypes'],
+                'rdmaEnabled': capabilities['rdmaEnabled'],
+                'confidentialComputingType': capabilities['confidentialComputingType'],
+                'trustedLaunch': capabilities['trustedLaunch'],
                 'hourlyPriceUSD': pricing['hourlyPrice'] if pricing else None,
                 'monthlyPriceUSD': pricing['monthlyPrice'] if pricing else None,
                 'hourlyPriceUSDWindows': pricing.get('hourlyPriceWindows') if pricing else None,
@@ -2470,7 +2498,14 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
         'nvme': int(capabilities.get('NvmeDiskSizeInMiB', 0)) > 0,
         'architecture': capabilities.get('CpuArchitectureType', 'x64'),
         'osVhdSizeMB': int(capabilities.get('OSVhdSizeMB', 0)),
-        'hyperVGenerations': capabilities.get('HyperVGenerations', '')
+        'hyperVGenerations': capabilities.get('HyperVGenerations', ''),
+        # Richer spec fields (I-D)
+        'acu': int(capabilities.get('ACUs', 0)),
+        'vCPUsPerCore': int(capabilities.get('vCPUsPerCore', 0)),
+        'diskControllerTypes': capabilities.get('DiskControllerTypes', '') or '',
+        'rdmaEnabled': capabilities.get('RdmaEnabled', '').lower() == 'true',
+        'confidentialComputingType': capabilities.get('ConfidentialComputingType', '') or '',
+        'trustedLaunch': _derive_trusted_launch(capabilities)
     }
 
 
@@ -2524,9 +2559,16 @@ def extract_capabilities_for_diff(sku: dict) -> dict:
     caps['networkBandwidthMbps'] = sku.get('networkBandwidthMbps')
     caps['acceleratedNetworking'] = sku.get('acceleratedNetworking', False)
     caps['hyperVGen2'] = 'V2' in (sku.get('hyperVGenerations') or '')
+    # Richer spec fields (I-D)
+    caps['acu'] = sku.get('acu')
+    caps['vCPUsPerCore'] = sku.get('vCPUsPerCore')
+    caps['diskControllerTypes'] = sku.get('diskControllerTypes') or ''
+    caps['rdmaEnabled'] = sku.get('rdmaEnabled', False)
+    caps['confidentialComputingType'] = sku.get('confidentialComputingType') or ''
+    caps['trustedLaunch'] = sku.get('trustedLaunch', False)
     
     # Ensure numeric fields are numbers, not strings (Table Storage may return strings)
-    for key in ['maxDataDisks', 'uncachedDiskIOPS', 'uncachedDiskThroughput', 'maxNics', 'networkBandwidthMbps', 'osVhdSizeMB']:
+    for key in ['maxDataDisks', 'uncachedDiskIOPS', 'uncachedDiskThroughput', 'maxNics', 'networkBandwidthMbps', 'osVhdSizeMB', 'acu', 'vCPUsPerCore']:
         if caps.get(key) is None:
             caps[key] = None
         elif not isinstance(caps[key], (int, float)):
@@ -2672,10 +2714,30 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
             alternative_sku.get('memoryGB'),
             'GB'
         ),
+        'acu': calculate_numeric_diff(
+            target_caps.get('acu'),
+            alt_caps.get('acu'),
+            'ACU'
+        ),
+        'vCPUsPerCore': calculate_numeric_diff(
+            target_caps.get('vCPUsPerCore'),
+            alt_caps.get('vCPUsPerCore'),
+            'vCPU/core'
+        ),
         'hyperVGen2': calculate_boolean_diff(
             target_caps.get('hyperVGen2', False),
             alt_caps.get('hyperVGen2', False),
             'Hyper-V Gen 2 Supported'
+        ),
+        'trustedLaunch': calculate_boolean_diff(
+            target_caps.get('trustedLaunch', False),
+            alt_caps.get('trustedLaunch', False),
+            'Trusted Launch'
+        ),
+        'confidentialComputing': calculate_boolean_diff(
+            bool(target_caps.get('confidentialComputingType')),
+            bool(alt_caps.get('confidentialComputingType')),
+            'Confidential Computing'
         )
     }
     
@@ -2812,6 +2874,11 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
             target_caps.get('acceleratedNetworking', False),
             alt_caps.get('acceleratedNetworking', False),
             'Accelerated Networking'
+        ),
+        'rdma': calculate_boolean_diff(
+            target_caps.get('rdmaEnabled', False),
+            alt_caps.get('rdmaEnabled', False),
+            'RDMA / InfiniBand'
         )
     }
     
