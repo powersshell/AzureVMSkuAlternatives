@@ -56,7 +56,7 @@ Before final handoff for web UI/site changes, run and report:
 1. `git --no-pager status --short`
 2. push to remote branch (usually `main`)
 3. `gh run list ... "Deploy to Azure Static Web Apps"` status
-4. PR preview environments accept CORS automatically (handled in app code) — see section 7.
+4. PR preview environments accept CORS automatically (platform `allowedOrigins: '*'`) — see section 7.
 
 If deployment is still running, explicitly say so.
 
@@ -81,33 +81,37 @@ When docs and code conflict, treat runtime code and workflows as source of truth
 - Current `web-app/package.json` scripts are deployment-focused (`deploy`, `clean`) and do not provide lint/test scripts.
 - For verification, use available checks (e.g., Functions health endpoint, workflow status) rather than inventing absent test commands.
 
-### 7) PR preview CORS — now automatic (no manual allowlisting)
+### 7) PR preview CORS — automatic via platform `allowedOrigins: '*'`
 The frontend (`web-app/src/app.js`) calls the Functions API **cross-origin** at
 `https://vmsku-api-functions-flex.azurewebsites.net/api` (the SWA rewrite can't do the POST flow).
 
-**CORS is handled in application code**, not the App Service platform allowlist. See
-`with_cors` / `_match_cors_origin` in `web-app/api/function_app.py`: an origin regex accepts the
-Azure portal, the production SWA, **every** SWA preview slot
-(`https://black-sea-0784c5d0f-<PR#>.<region>.1.azurestaticapps.net`), and localhost. Each
-browser-facing route is decorated with `@with_cors` and includes `OPTIONS` in its `methods` so the
-runtime answers the preflight. This means **new PR previews work with no manual step** — the old
-per-PR `az functionapp cors add` is no longer required.
+**CORS is handled by the App Service platform allowlist set to `*`** (allow all origins), NOT in
+application code. This is deliberate: the API is anonymous, read-only, public Azure pricing/spec
+data, and on **Flex Consumption** the host's CORS middleware **short-circuits every browser
+preflight (`OPTIONS`) before any application code runs**. That means app-level dynamic CORS
+(a `with_cors` decorator, an origin regex, etc.) can add headers to simple GETs but can **never**
+answer the preflight for a preflighted POST — so `compare_vms` and `check_region_availability`
+(POST + `application/json`) would fail cross-origin. A platform `*` allowlist is the only
+zero-touch way to make preflight succeed for **every** origin, including all PR preview slots.
+`supportCredentials` stays `false`, which is required for `*`.
 
 Notes:
-- The Bicep `cors.allowedOrigins` in `web-app/infra/functions-app-flex.bicep` is intentionally **empty**.
-  It MUST stay empty: on Flex Consumption a non-empty platform allowlist makes the host emit a
-  **second** `Access-Control-Allow-Origin` header (a duplicate, which browsers reject) for listed
-  origins and short-circuit their OPTIONS preflight — bypassing the app logic and breaking prod.
-- Because a normal push to `main` runs only the **code** deploy (the Bicep infra job is gated behind
-  manual `workflow_dispatch` with `deploy_infrastructure=true`), `deploy-functions.yml` includes a
-  step that **clears the platform CORS allowlist on every code deploy** (idempotent), plus a step
-  that **verifies** the prod origin and a sample preview origin each receive exactly one allow-origin
-  header. This keeps the live platform config matching the app-level design without a full infra deploy.
-- If the Static Web App hostname ever changes, update the regex in `function_app.py` (or set the
-  `CORS_ALLOWED_ORIGIN_REGEX` app setting to a full override) — do NOT re-add origins to the Bicep list.
-- Verify a preview origin is accepted:
+- The Bicep `cors.allowedOrigins` in `web-app/infra/functions-app-flex.bicep` (and the legacy
+  `functions-app.bicep`) is `['*']` — the source of truth.
+- Do **not** re-introduce app-level CORS (no `Access-Control-Allow-Origin` set in
+  `function_app.py`): with platform `*`, the host already adds the header, so an app-added one
+  would create a **duplicate** `Access-Control-Allow-Origin` that browsers reject.
+- Because a normal push to `main` runs only the **code** deploy (the Bicep infra job is gated
+  behind manual `workflow_dispatch` with `deploy_infrastructure=true`), `deploy-functions.yml`
+  includes an idempotent step that **sets the platform CORS allowlist to `*` on every code deploy**,
+  plus a **verify** step that checks both a simple GET *and* an `OPTIONS` preflight on the POST
+  `compare_vms` endpoint return an `Access-Control-Allow-Origin` header (the preflight check is what
+  catches the Flex short-circuit regression). This keeps the live config correct without a full
+  infra deploy.
+- Verify a preview origin works (simple GET and POST preflight):
   `Invoke-WebRequest 'https://vmsku-api-functions-flex.azurewebsites.net/api/skus?location=eastus2' -Headers @{Origin='<preview-origin>'} -UseBasicParsing`
-  (this change must be deployed to prod — i.e. merged to `main` — before it affects live previews).
+  and an `OPTIONS` preflight against `/api/compare_vms` with `Access-Control-Request-Method: POST`
+  must return an `Access-Control-Allow-Origin` header.
 
 ## Practical editing guidance for this repo
 
