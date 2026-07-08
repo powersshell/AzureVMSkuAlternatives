@@ -56,7 +56,7 @@ Before final handoff for web UI/site changes, run and report:
 1. `git --no-pager status --short`
 2. push to remote branch (usually `main`)
 3. `gh run list ... "Deploy to Azure Static Web Apps"` status
-4. If a **PR preview** environment was created, allowlist its origin for CORS — see section 7.
+4. PR preview environments accept CORS automatically (handled in app code) — see section 7.
 
 If deployment is still running, explicitly say so.
 
@@ -81,26 +81,33 @@ When docs and code conflict, treat runtime code and workflows as source of truth
 - Current `web-app/package.json` scripts are deployment-focused (`deploy`, `clean`) and do not provide lint/test scripts.
 - For verification, use available checks (e.g., Functions health endpoint, workflow status) rather than inventing absent test commands.
 
-### 7) PR preview CORS allowlisting (required for every new PR)
+### 7) PR preview CORS — now automatic (no manual allowlisting)
 The frontend (`web-app/src/app.js`) calls the Functions API **cross-origin** at
 `https://vmsku-api-functions-flex.azurewebsites.net/api` (the SWA rewrite can't do the POST flow).
-The Function App CORS allowlist is an **explicit list**, and each new PR gets a **unique** SWA
-preview origin, so SKUs fail to load on a fresh PR preview until that origin is allowlisted.
 
-Whenever you open a PR that produces a SWA preview environment, allowlist its origin:
-1. Get the preview URL from the deploy run log (look for `Visit your site at:`):
-   `gh run view <run-id> --log | Select-String 'Visit your site at'`
-   The origin pattern is `https://black-sea-0784c5d0f-<PR#>.eastus2.1.azurestaticapps.net`.
-2. Add it to the live Function App CORS (takes effect immediately, no redeploy):
-   `az functionapp cors add --name vmsku-api-functions-flex --resource-group rg-vmsku-alternatives --allowed-origins "<preview-origin>"`
-3. Verify the API returns the matching `Access-Control-Allow-Origin` and real data:
-   `Invoke-WebRequest 'https://vmsku-api-functions-flex.azurewebsites.net/api/skus?location=eastus2' -Headers @{Origin='<preview-origin>'} -UseBasicParsing`
+**CORS is handled in application code**, not the App Service platform allowlist. See
+`with_cors` / `_match_cors_origin` in `web-app/api/function_app.py`: an origin regex accepts the
+Azure portal, the production SWA, **every** SWA preview slot
+(`https://black-sea-0784c5d0f-<PR#>.<region>.1.azurestaticapps.net`), and localhost. Each
+browser-facing route is decorated with `@with_cors` and includes `OPTIONS` in its `methods` so the
+runtime answers the preflight. This means **new PR previews work with no manual step** — the old
+per-PR `az functionapp cors add` is no longer required.
 
 Notes:
-- The Bicep source of truth is `web-app/infra/functions-app-flex.bicep` (`cors.allowedOrigins`,
-  ~line 466). The `az` CLI add is the established quick fix and does **not** persist to Bicep;
-  add a matching `// SWA preview (PR #<n>)` entry there only if asked to make it durable.
-- Origins can be pruned when a PR is closed/merged: `az functionapp cors remove ... --allowed-origins "<origin>"`.
+- The Bicep `cors.allowedOrigins` in `web-app/infra/functions-app-flex.bicep` is intentionally **empty**.
+  It MUST stay empty: on Flex Consumption a non-empty platform allowlist makes the host emit a
+  **second** `Access-Control-Allow-Origin` header (a duplicate, which browsers reject) for listed
+  origins and short-circuit their OPTIONS preflight — bypassing the app logic and breaking prod.
+- Because a normal push to `main` runs only the **code** deploy (the Bicep infra job is gated behind
+  manual `workflow_dispatch` with `deploy_infrastructure=true`), `deploy-functions.yml` includes a
+  step that **clears the platform CORS allowlist on every code deploy** (idempotent), plus a step
+  that **verifies** the prod origin and a sample preview origin each receive exactly one allow-origin
+  header. This keeps the live platform config matching the app-level design without a full infra deploy.
+- If the Static Web App hostname ever changes, update the regex in `function_app.py` (or set the
+  `CORS_ALLOWED_ORIGIN_REGEX` app setting to a full override) — do NOT re-add origins to the Bicep list.
+- Verify a preview origin is accepted:
+  `Invoke-WebRequest 'https://vmsku-api-functions-flex.azurewebsites.net/api/skus?location=eastus2' -Headers @{Origin='<preview-origin>'} -UseBasicParsing`
+  (this change must be deployed to prod — i.e. merged to `main` — before it affects live previews).
 
 ## Practical editing guidance for this repo
 
