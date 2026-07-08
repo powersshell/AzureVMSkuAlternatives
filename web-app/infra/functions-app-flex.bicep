@@ -462,13 +462,12 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
         // Build happens via --build-remote flag during deployment
       ]
       
-      // CORS settings for Static Web App
+      // CORS is handled in application code (see with_cors in api/function_app.py)
+      // so that every SWA preview origin is accepted automatically. This list
+      // MUST stay empty -- a non-empty platform allowlist makes App Service strip
+      // the app-emitted Access-Control-Allow-Origin header.
       cors: {
-        allowedOrigins: [
-          'https://portal.azure.com'
-          'https://black-sea-0784c5d0f.1.azurestaticapps.net'  // Static Web App (production)
-          'https://black-sea-0784c5d0f-1.eastus2.1.azurestaticapps.net' // SWA preview (PR #1)
-        ]
+        allowedOrigins: []
         supportCredentials: false
       }
       

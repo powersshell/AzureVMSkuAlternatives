@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import re
+import functools
 import requests
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
@@ -21,9 +22,86 @@ app = func.FunctionApp()
 
 
 # ============================================================================
+# CORS handling (app-level, dynamic)
+#
+# CORS is handled here in code rather than via the App Service platform CORS
+# allowlist so that every Static Web App *preview* environment (which gets a
+# unique origin per pull request) is accepted automatically, with no manual
+# `az functionapp cors add` step and no elevated RBAC required.
+#
+# IMPORTANT: App Service strips app-emitted CORS headers whenever the platform
+# CORS allowlist (Bicep `cors.allowedOrigins`) is non-empty. For these headers
+# to reach the browser, that list MUST be left empty -- see
+# web-app/infra/functions-app-flex.bicep.
+# ============================================================================
+
+# Matches: the Azure portal, the production SWA origin, any SWA preview slot for
+# this app (black-sea-0784c5d0f-<PR#>.eastus2.1.azurestaticapps.net), and
+# localhost for local development. Override via the CORS_ALLOWED_ORIGIN_REGEX
+# app setting (a full regex) if the Static Web App hostname ever changes.
+_DEFAULT_CORS_ORIGIN_REGEX = (
+    r'^https?://('
+    r'portal\.azure\.com'
+    r'|black-sea-0784c5d0f(-\d+)?\.([a-z0-9]+\.)?1\.azurestaticapps\.net'
+    r'|localhost(:\d+)?'
+    r'|127\.0\.0\.1(:\d+)?'
+    r')$'
+)
+
+_CORS_ORIGIN_RE = re.compile(
+    os.environ.get('CORS_ALLOWED_ORIGIN_REGEX', _DEFAULT_CORS_ORIGIN_REGEX)
+)
+
+_CORS_ALLOW_METHODS = 'GET, POST, OPTIONS'
+_CORS_ALLOW_HEADERS = 'Content-Type, Authorization, x-functions-key'
+_CORS_MAX_AGE = '3600'
+
+
+def _match_cors_origin(origin: Optional[str]) -> Optional[str]:
+    """Return ``origin`` if it is allowed to make cross-origin calls, else ``None``."""
+    if origin and _CORS_ORIGIN_RE.match(origin):
+        return origin
+    return None
+
+
+def _cors_headers(req: func.HttpRequest) -> Dict[str, str]:
+    """Build CORS response headers for the request's ``Origin`` (empty if not allowed)."""
+    origin = _match_cors_origin(req.headers.get('Origin'))
+    if not origin:
+        return {}
+    return {
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Methods': _CORS_ALLOW_METHODS,
+        'Access-Control-Allow-Headers': _CORS_ALLOW_HEADERS,
+        'Access-Control-Max-Age': _CORS_MAX_AGE,
+        'Vary': 'Origin',
+    }
+
+
+def with_cors(handler):
+    """Decorator: answer CORS preflight (``OPTIONS``) and add CORS headers to responses.
+
+    Routes using this decorator MUST include ``OPTIONS`` in their ``methods`` so the
+    browser preflight request reaches the handler (the platform no longer answers it).
+    """
+    @functools.wraps(handler)
+    def wrapper(req: func.HttpRequest) -> func.HttpResponse:
+        cors = _cors_headers(req)
+        if req.method == 'OPTIONS':
+            return func.HttpResponse(status_code=204, headers=cors)
+        resp = handler(req)
+        for key, value in cors.items():
+            resp.headers[key] = value
+        return resp
+
+    return wrapper
+
+
+# ============================================================================
 # HTTP Route: /compare_vms - Compare VM SKUs
 # ============================================================================
-@app.route(route="compare_vms", methods=["GET", "POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="compare_vms", methods=["GET", "POST", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
+@with_cors
 def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
     """
     Azure Function to compare VM SKUs (Python)
@@ -343,7 +421,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
 # ============================================================================
 # HTTP Route: /health - Health check endpoint
 # ============================================================================
-@app.route(route="health", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="health", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
+@with_cors
 def health(req: func.HttpRequest) -> func.HttpResponse:
     """
     Health check endpoint for Azure Functions (Python)
@@ -368,7 +447,8 @@ def health(req: func.HttpRequest) -> func.HttpResponse:
 # ============================================================================
 # HTTP Route: /telemetry_config - Frontend telemetry bootstrap (anonymous only)
 # ============================================================================
-@app.route(route="telemetry_config", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="telemetry_config", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
+@with_cors
 def telemetry_config(req: func.HttpRequest) -> func.HttpResponse:
     """
     Returns minimal frontend telemetry configuration.
@@ -391,7 +471,8 @@ def telemetry_config(req: func.HttpRequest) -> func.HttpResponse:
 # ============================================================================
 # HTTP Route: /compare_details - Get detailed comparison between two SKUs
 # ============================================================================
-@app.route(route="compare_details", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="compare_details", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
+@with_cors
 def compare_details(req: func.HttpRequest) -> func.HttpResponse:
     """
     Get detailed comparison between two specific SKUs.
@@ -517,7 +598,8 @@ def compare_details(req: func.HttpRequest) -> func.HttpResponse:
 # ============================================================================
 # HTTP Route: /check_region_availability - Check SKU availability in a region
 # ============================================================================
-@app.route(route="check_region_availability", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="check_region_availability", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
+@with_cors
 def check_region_availability(req: func.HttpRequest) -> func.HttpResponse:
     """
     Check whether a list of VM SKUs are available in a specified region.
@@ -684,7 +766,8 @@ def get_sku_from_cache(sku_name: str, location: str) -> dict:
 # ============================================================================
 # HTTP Route: /skus - List available VM SKUs from cache
 # ============================================================================
-@app.route(route="skus", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(route="skus", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.ANONYMOUS)
+@with_cors
 def list_skus(req: func.HttpRequest) -> func.HttpResponse:
     """
     Azure Function to list available VM SKUs from cache

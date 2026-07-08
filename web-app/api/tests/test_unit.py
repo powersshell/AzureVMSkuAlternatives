@@ -49,6 +49,9 @@ from function_app import (
     calculate_boolean_diff,
     calculate_similarity,
     _asymmetric_score,
+    _match_cors_origin,
+    _cors_headers,
+    with_cors,
 )
 
 
@@ -618,4 +621,125 @@ class TestBurstableRegression:
         }
         score = calculate_similarity(target, smaller, DEFAULT_WEIGHTS)
         assert score < 80, f"half-size SKU should not clear the default threshold, got {score}"
+
+
+# ============================================================================
+# Dynamic CORS tests (app-level allowlist for SWA preview slots)
+# ============================================================================
+
+
+class _FakeReq:
+    """Minimal stand-in for func.HttpRequest under the mocked azure SDK."""
+
+    def __init__(self, method, origin=None):
+        self.method = method
+        self.headers = {"Origin": origin} if origin else {}
+
+
+class _FakeResp:
+    """Response stub whose headers dict the with_cors wrapper mutates."""
+
+    def __init__(self):
+        self.headers = {}
+
+
+PROD_ORIGIN = "https://black-sea-0784c5d0f.1.azurestaticapps.net"
+PREVIEW_ORIGIN = "https://black-sea-0784c5d0f-8.eastus2.1.azurestaticapps.net"
+
+
+class TestMatchCorsOrigin:
+
+    @pytest.mark.unit
+    def test_production_swa_allowed(self):
+        assert _match_cors_origin(PROD_ORIGIN) == PROD_ORIGIN
+
+    @pytest.mark.unit
+    def test_any_preview_slot_allowed(self):
+        # Every PR gets a unique preview origin -- all must be accepted.
+        for pr in (1, 8, 42, 12345):
+            origin = f"https://black-sea-0784c5d0f-{pr}.eastus2.1.azurestaticapps.net"
+            assert _match_cors_origin(origin) == origin
+
+    @pytest.mark.unit
+    def test_preview_in_other_region_allowed(self):
+        assert _match_cors_origin("https://black-sea-0784c5d0f-3.westus2.1.azurestaticapps.net")
+
+    @pytest.mark.unit
+    def test_portal_and_localhost_allowed(self):
+        assert _match_cors_origin("https://portal.azure.com")
+        assert _match_cors_origin("http://localhost:4280")
+        assert _match_cors_origin("http://127.0.0.1:5500")
+
+    @pytest.mark.unit
+    def test_suffix_attack_rejected(self):
+        assert _match_cors_origin(PROD_ORIGIN + ".evil.com") is None
+
+    @pytest.mark.unit
+    def test_prefix_attack_rejected(self):
+        assert _match_cors_origin("https://evil-black-sea-0784c5d0f.1.azurestaticapps.net") is None
+
+    @pytest.mark.unit
+    def test_unknown_origin_and_none_rejected(self):
+        assert _match_cors_origin("https://notallowed.com") is None
+        assert _match_cors_origin("") is None
+        assert _match_cors_origin(None) is None
+
+
+class TestCorsHeaders:
+
+    @pytest.mark.unit
+    def test_allowed_origin_echoed_with_vary(self):
+        headers = _cors_headers(_FakeReq("GET", PREVIEW_ORIGIN))
+        assert headers["Access-Control-Allow-Origin"] == PREVIEW_ORIGIN
+        assert headers["Vary"] == "Origin"
+        assert "OPTIONS" in headers["Access-Control-Allow-Methods"]
+
+    @pytest.mark.unit
+    def test_disallowed_origin_yields_no_headers(self):
+        assert _cors_headers(_FakeReq("GET", "https://evil.example.com")) == {}
+
+    @pytest.mark.unit
+    def test_missing_origin_yields_no_headers(self):
+        assert _cors_headers(_FakeReq("GET")) == {}
+
+
+class TestWithCorsDecorator:
+
+    @pytest.mark.unit
+    def test_preflight_short_circuits_without_calling_handler(self):
+        called = {"hit": False}
+
+        @with_cors
+        def handler(req):
+            called["hit"] = True
+            return _FakeResp()
+
+        handler(_FakeReq("OPTIONS", PREVIEW_ORIGIN))
+        assert called["hit"] is False, "OPTIONS preflight must not invoke the handler"
+
+    @pytest.mark.unit
+    def test_headers_injected_on_normal_response(self):
+        @with_cors
+        def handler(req):
+            return _FakeResp()
+
+        resp = handler(_FakeReq("GET", PREVIEW_ORIGIN))
+        assert resp.headers["Access-Control-Allow-Origin"] == PREVIEW_ORIGIN
+
+    @pytest.mark.unit
+    def test_no_headers_added_for_disallowed_origin(self):
+        @with_cors
+        def handler(req):
+            return _FakeResp()
+
+        resp = handler(_FakeReq("GET", "https://evil.example.com"))
+        assert "Access-Control-Allow-Origin" not in resp.headers
+
+    @pytest.mark.unit
+    def test_wrapper_preserves_handler_name(self):
+        @with_cors
+        def my_handler(req):
+            return _FakeResp()
+
+        assert my_handler.__name__ == "my_handler"
 

@@ -123,11 +123,11 @@ resource functionsApp 'Microsoft.Web/sites@2023-01-01' = {
           value: appInsights.properties.ConnectionString
         }
       ]
+      // CORS is handled in application code (see with_cors in api/function_app.py).
+      // Keep this list empty -- a non-empty platform allowlist makes App Service
+      // strip the app-emitted Access-Control-Allow-Origin header.
       cors: {
-        allowedOrigins: [
-          'https://black-sea-0784c5d0f.1.azurestaticapps.net'
-          'http://localhost:4280'
-        ]
+        allowedOrigins: []
         supportCredentials: false
       }
       ftpsState: 'Disabled'

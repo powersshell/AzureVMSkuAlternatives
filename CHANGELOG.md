@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-07-08
+- **improvement:** Static Web App **preview** environments (one per pull request) now load data automatically. CORS is handled in the Functions app itself and accepts every SWA preview origin, the production site, the Azure portal, and localhost — removing the manual per-PR allowlisting step that previously left fresh previews unable to fetch SKUs.
+
 ## 2026-06-08
 - **improvement:** Removed the confusing "Min Score" dropdown. The tool now always shows the 50 closest alternatives, sorted by match score, instead of asking you to guess a similarity threshold (which could return an empty list). Each card still shows its match score, a caption notes how many matches were found, and specialty SKUs (large GPU, high-memory, NVMe-required) now reliably surface their nearest options. When no strong match exists, an inline note explains the results are the closest available; when the "Require NVMe/GPU match" options exclude everything, the empty state suggests relaxing them.
 
