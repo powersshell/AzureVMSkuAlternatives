@@ -95,8 +95,14 @@ per-PR `az functionapp cors add` is no longer required.
 
 Notes:
 - The Bicep `cors.allowedOrigins` in `web-app/infra/functions-app-flex.bicep` is intentionally **empty**.
-  It MUST stay empty: a non-empty platform allowlist makes App Service strip the app-emitted
-  `Access-Control-Allow-Origin` header, which would break every preview origin.
+  It MUST stay empty: on Flex Consumption a non-empty platform allowlist makes the host emit a
+  **second** `Access-Control-Allow-Origin` header (a duplicate, which browsers reject) for listed
+  origins and short-circuit their OPTIONS preflight — bypassing the app logic and breaking prod.
+- Because a normal push to `main` runs only the **code** deploy (the Bicep infra job is gated behind
+  manual `workflow_dispatch` with `deploy_infrastructure=true`), `deploy-functions.yml` includes a
+  step that **clears the platform CORS allowlist on every code deploy** (idempotent), plus a step
+  that **verifies** the prod origin and a sample preview origin each receive exactly one allow-origin
+  header. This keeps the live platform config matching the app-level design without a full infra deploy.
 - If the Static Web App hostname ever changes, update the regex in `function_app.py` (or set the
   `CORS_ALLOWED_ORIGIN_REGEX` app setting to a full override) — do NOT re-add origins to the Bicep list.
 - Verify a preview origin is accepted:

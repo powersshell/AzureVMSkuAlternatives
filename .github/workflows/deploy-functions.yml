@@ -180,6 +180,33 @@ jobs:
             && echo "✅ Function triggers synced" \
             || echo "⚠️  Trigger sync returned an error — app may still be initializing"
 
+      - name: 'Clear platform CORS allowlist (app handles CORS)'
+        shell: bash
+        run: |
+          echo "🧹 Ensuring the App Service platform CORS allowlist is empty..."
+          # CORS is handled in application code (see with_cors in api/function_app.py) so
+          # that every SWA preview origin is accepted automatically. The platform allowlist
+          # MUST stay empty: on Flex Consumption a non-empty list makes the host add a SECOND
+          # Access-Control-Allow-Origin header (duplicate -> browsers reject) for listed
+          # origins and short-circuit their OPTIONS preflight, bypassing the app logic.
+          # This step is idempotent and runs on every code deploy (the Bicep infra job only
+          # runs on manual dispatch), so the platform config always matches the app design.
+          CURRENT=$(az functionapp cors show \
+            --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query "allowedOrigins" -o tsv)
+          if [ -n "$CURRENT" ]; then
+            echo "Removing existing platform origins: $CURRENT"
+            az functionapp cors remove \
+              --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --allowed-origins $CURRENT \
+              && echo "✅ Platform CORS allowlist cleared" \
+              || echo "⚠️  Could not clear platform CORS allowlist"
+          else
+            echo "✅ Platform CORS allowlist already empty"
+          fi
+
       - name: 'Wait for deployment to complete'
         run: |
           echo "⏳ Waiting 30 seconds for Function App to initialize..."
@@ -206,6 +233,31 @@ jobs:
           echo "⚠️ Health endpoint not responding after 5 attempts"
           echo "This is not necessarily an error - the Function App may still be starting up"
           exit 0
+
+      - name: 'Verify CORS (prod + sample preview origin)'
+        shell: bash
+        run: |
+          echo "🧪 Verifying dynamic CORS on the live API..."
+          API="https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api/health"
+          PROD="https://black-sea-0784c5d0f.1.azurestaticapps.net"
+          PREVIEW="https://black-sea-0784c5d0f-9999.eastus2.1.azurestaticapps.net"
+          FAIL=0
+          for ORIGIN in "$PROD" "$PREVIEW"; do
+            # Count Access-Control-Allow-Origin headers on an actual GET
+            HDRS=$(curl -s -D - -o /dev/null -H "Origin: $ORIGIN" "$API")
+            COUNT=$(printf '%s\n' "$HDRS" | grep -ci '^access-control-allow-origin:')
+            VALUE=$(printf '%s\n' "$HDRS" | grep -i '^access-control-allow-origin:' | head -1 | tr -d '\r')
+            echo "Origin $ORIGIN -> ACAO count=$COUNT ($VALUE)"
+            if [ "$COUNT" != "1" ]; then
+              echo "❌ Expected exactly one Access-Control-Allow-Origin for $ORIGIN, got $COUNT"
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" != "0" ]; then
+            echo "❌ CORS verification failed — investigate before relying on preview environments."
+            exit 1
+          fi
+          echo "✅ CORS verified: prod and preview origins each receive exactly one allow-origin header."
 
   # Verification job
   verify-deployment:
