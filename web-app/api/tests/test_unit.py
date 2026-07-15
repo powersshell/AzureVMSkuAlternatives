@@ -41,9 +41,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from function_app import (
     _compute_windows_ri,
     _pricing_has_ri,
+    _derive_trusted_launch,
     detect_cpu_vendor,
     extract_capabilities,
     extract_capabilities_for_cache,
+    extract_capabilities_for_diff,
     calculate_numeric_diff,
     calculate_price_diff,
     calculate_boolean_diff,
@@ -233,6 +235,13 @@ class TestExtractCapabilities:
         assert result['gpuCount'] == 0
         assert result['nvme'] is False
         assert result['uncachedDiskIOPS'] == 12800
+        # Richer spec fields (I-D)
+        assert result['acu'] == 195
+        assert result['vCPUsPerCore'] == 2
+        assert result['diskControllerTypes'] == 'SCSI, NVMe'
+        assert result['rdmaEnabled'] is False
+        assert result['confidentialComputingType'] == ''
+        assert result['trustedLaunch'] is True
 
     @pytest.mark.unit
     def test_missing_capabilities(self):
@@ -261,6 +270,12 @@ class TestExtractCapabilitiesForCache:
         assert result['maxNics'] == 4
         assert result['premiumIO'] is True
         assert result['architecture'] == 'x64'
+        # Richer spec fields (I-D)
+        assert result['acu'] == 195
+        assert result['vCPUsPerCore'] == 2
+        assert result['diskControllerTypes'] == 'SCSI, NVMe'
+        assert result['rdmaEnabled'] is False
+        assert result['trustedLaunch'] is True
 
     @pytest.mark.unit
     def test_defaults_on_empty(self):
@@ -269,6 +284,74 @@ class TestExtractCapabilitiesForCache:
         assert result['vCPUs'] == 0
         assert result['architecture'] == 'x64'
         assert result['premiumIO'] is False
+        assert result['acu'] == 0
+        assert result['vCPUsPerCore'] == 0
+        assert result['diskControllerTypes'] == ''
+        assert result['rdmaEnabled'] is False
+        assert result['confidentialComputingType'] == ''
+        assert result['trustedLaunch'] is False
+
+
+# ============================================================================
+# Richer spec fields (I-D)
+# ============================================================================
+
+class TestTrustedLaunchDerivation:
+
+    @pytest.mark.unit
+    def test_gen2_not_disabled_is_supported(self):
+        assert _derive_trusted_launch({'HyperVGenerations': 'V1,V2'}) is True
+
+    @pytest.mark.unit
+    def test_gen2_explicitly_disabled(self):
+        assert _derive_trusted_launch(
+            {'HyperVGenerations': 'V1,V2', 'TrustedLaunchDisabled': 'True'}
+        ) is False
+
+    @pytest.mark.unit
+    def test_gen1_only_not_supported(self):
+        assert _derive_trusted_launch({'HyperVGenerations': 'V1'}) is False
+
+    @pytest.mark.unit
+    def test_missing_hyperv_not_supported(self):
+        assert _derive_trusted_launch({}) is False
+
+
+class TestExtractCapabilitiesForDiffRichSpecs:
+
+    @pytest.mark.unit
+    def test_reads_new_flat_fields(self, sample_cached_sku):
+        caps = extract_capabilities_for_diff(sample_cached_sku)
+        assert caps['acu'] == 195
+        assert caps['vCPUsPerCore'] == 2
+        assert caps['diskControllerTypes'] == 'SCSI, NVMe'
+        assert caps['rdmaEnabled'] is False
+        assert caps['confidentialComputingType'] == ''
+        assert caps['trustedLaunch'] is True
+
+    @pytest.mark.unit
+    def test_missing_new_fields_default_safely(self):
+        caps = extract_capabilities_for_diff({'name': 'Standard_B1s'})
+        assert caps['acu'] is None
+        assert caps['vCPUsPerCore'] is None
+        assert caps['diskControllerTypes'] == ''
+        assert caps['rdmaEnabled'] is False
+        assert caps['trustedLaunch'] is False
+
+    @pytest.mark.unit
+    def test_cache_roundtrip_preserves_trusted_launch(self, sample_sku_capabilities):
+        """Live parse -> reconstructed-cache parse must agree on trustedLaunch."""
+        live = extract_capabilities(sample_sku_capabilities)
+        # Simulate the cache reconstruction: store trustedLaunch bool, re-emit
+        # TrustedLaunchDisabled inverse + HyperVGenerations, then re-parse.
+        reconstructed = extract_capabilities({
+            'capabilities': [
+                {'name': 'HyperVGenerations', 'value': 'V1,V2'},
+                {'name': 'TrustedLaunchDisabled',
+                 'value': 'False' if live['trustedLaunch'] else 'True'},
+            ]
+        })
+        assert reconstructed['trustedLaunch'] == live['trustedLaunch']
 
 
 # ============================================================================

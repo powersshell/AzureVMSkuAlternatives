@@ -96,6 +96,12 @@ def sample_sku_capabilities():
             {'name': 'OSVhdSizeMB', 'value': '1047552'},
             {'name': 'HyperVGenerations', 'value': 'V1,V2'},
             {'name': 'CpuArchitectureType', 'value': 'x64'},
+            {'name': 'ACUs', 'value': '195'},
+            {'name': 'vCPUsPerCore', 'value': '2'},
+            {'name': 'DiskControllerTypes', 'value': 'SCSI, NVMe'},
+            {'name': 'RdmaEnabled', 'value': 'False'},
+            {'name': 'ConfidentialComputingType', 'value': ''},
+            {'name': 'TrustedLaunchDisabled', 'value': 'False'},
         ]
     }
 
@@ -144,6 +150,12 @@ def sample_cached_sku():
         'uncachedDiskBytesPerSecond': 290000000,
         'osVhdSizeMB': 1047552,
         'hyperVGenerations': 'V1,V2',
+        'acu': 195,
+        'vCPUsPerCore': 2,
+        'diskControllerTypes': 'SCSI, NVMe',
+        'rdmaEnabled': False,
+        'confidentialComputingType': '',
+        'trustedLaunch': True,
         'hourlyPriceUSD': 0.384,
         'monthlyPriceUSD': 280.32,
         'hourlyPriceWindowsUSD': 0.752,

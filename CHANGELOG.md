@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-07-08
+- **feature:** Richer VM spec fields, inspired by capability coverage seen in a related internal "Compute-Compare" project. Result cards now surface an **ACU** (Azure Compute Unit) chip and an **NVMe** badge, and the detailed comparison view adds **ACU**, **vCPUs per core**, **Trusted Launch**, **Confidential Computing**, and **RDMA / InfiniBand** rows. All new fields are also included in the CSV export. New capabilities are populated for a region the next time its data is refreshed.
 - **fix:** Static Web App **preview** environments (one per pull request) now load data automatically, including the "Compare" and region-availability actions. Cross-origin CORS is allowed at the App Service platform level for all origins, so every SWA preview slot, the production site, the Azure portal, and localhost work with no manual per-PR allowlisting. (An earlier same-day attempt to handle CORS in the Functions app code could not answer the browser preflight for POST requests on Flex Consumption, which broke the cross-origin Compare call; this platform-level fix resolves that.)
 
 ## 2026-06-08
