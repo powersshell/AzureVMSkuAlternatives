@@ -462,12 +462,17 @@ resource functionsApp 'Microsoft.Web/sites@2024-04-01' = {
         // Build happens via --build-remote flag during deployment
       ]
       
-      // CORS settings for Static Web App
+      // CORS: allow all origins. The API is anonymous, read-only, public Azure
+      // pricing/spec data, and the frontend calls it cross-origin from the
+      // production SWA plus a unique origin for every pull-request preview slot.
+      // The Flex Consumption host's CORS middleware short-circuits browser
+      // preflight (OPTIONS) before any application code runs, so app-level
+      // dynamic CORS cannot answer preflight; a platform '*' allowlist is the
+      // only zero-touch way to make preflighted POST requests work from every
+      // preview origin. supportCredentials stays false, which is required for '*'.
       cors: {
         allowedOrigins: [
-          'https://portal.azure.com'
-          'https://black-sea-0784c5d0f.1.azurestaticapps.net'  // Static Web App (production)
-          'https://black-sea-0784c5d0f-1.eastus2.1.azurestaticapps.net' // SWA preview (PR #1)
+          '*'
         ]
         supportCredentials: false
       }

@@ -180,6 +180,42 @@ jobs:
             && echo "✅ Function triggers synced" \
             || echo "⚠️  Trigger sync returned an error — app may still be initializing"
 
+      - name: 'Ensure platform CORS allows all origins'
+        shell: bash
+        run: |
+          echo "🌐 Ensuring the App Service platform CORS allowlist is '*'..."
+          # The API is anonymous, read-only, public Azure pricing/spec data. The frontend
+          # calls it cross-origin from the production SWA plus a UNIQUE origin for every
+          # pull-request preview slot. On Flex Consumption the host's CORS middleware
+          # short-circuits browser preflight (OPTIONS) before any application code runs, so
+          # app-level CORS cannot answer preflight -> preflighted POSTs (compare_vms,
+          # check_region_availability) fail. A platform '*' allowlist is the only zero-touch
+          # way to make preflight succeed from every origin, including all previews.
+          # This step is idempotent and runs on every code deploy (the Bicep infra job only
+          # runs on manual dispatch), so the platform config always matches the design.
+          CURRENT=$(az functionapp cors show \
+            --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query "allowedOrigins" -o tsv)
+          if [ "$CURRENT" == "*" ]; then
+            echo "✅ Platform CORS already set to '*'"
+          else
+            # Remove any existing explicit origins first ('*' cannot coexist with others).
+            if [ -n "$CURRENT" ]; then
+              echo "Removing existing platform origins: $CURRENT"
+              az functionapp cors remove \
+                --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --allowed-origins $CURRENT || echo "⚠️  Could not remove existing origins"
+            fi
+            az functionapp cors add \
+              --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --allowed-origins '*' \
+              && echo "✅ Platform CORS set to '*'" \
+              || { echo "❌ Could not set platform CORS to '*'"; exit 1; }
+          fi
+
       - name: 'Wait for deployment to complete'
         run: |
           echo "⏳ Waiting 30 seconds for Function App to initialize..."
@@ -206,6 +242,51 @@ jobs:
           echo "⚠️ Health endpoint not responding after 5 attempts"
           echo "This is not necessarily an error - the Function App may still be starting up"
           exit 0
+
+      - name: 'Verify CORS (GET + POST preflight)'
+        shell: bash
+        run: |
+          echo "🧪 Verifying platform CORS on the live API..."
+          BASE="https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api"
+          PROD="https://black-sea-0784c5d0f.1.azurestaticapps.net"
+          PREVIEW="https://black-sea-0784c5d0f-9999.eastus2.1.azurestaticapps.net"
+          FAIL=0
+
+          # 1. Simple GET must return exactly one Access-Control-Allow-Origin.
+          for ORIGIN in "$PROD" "$PREVIEW"; do
+            HDRS=$(curl -s -D - -o /dev/null -H "Origin: $ORIGIN" "$BASE/health")
+            COUNT=$(printf '%s\n' "$HDRS" | grep -ci '^access-control-allow-origin:')
+            VALUE=$(printf '%s\n' "$HDRS" | grep -i '^access-control-allow-origin:' | head -1 | tr -d '\r')
+            echo "GET  $ORIGIN -> ACAO count=$COUNT ($VALUE)"
+            if [ "$COUNT" != "1" ]; then
+              echo "❌ Expected exactly one Access-Control-Allow-Origin for GET from $ORIGIN, got $COUNT"
+              FAIL=1
+            fi
+          done
+
+          # 2. OPTIONS preflight for the POST compare endpoint MUST return an
+          #    Access-Control-Allow-Origin header. (Missing this is what broke
+          #    cross-origin POST on Flex Consumption previously.)
+          for ORIGIN in "$PROD" "$PREVIEW"; do
+            HDRS=$(curl -s -D - -o /dev/null -X OPTIONS \
+              -H "Origin: $ORIGIN" \
+              -H "Access-Control-Request-Method: POST" \
+              -H "Access-Control-Request-Headers: content-type" \
+              "$BASE/compare_vms")
+            COUNT=$(printf '%s\n' "$HDRS" | grep -ci '^access-control-allow-origin:')
+            VALUE=$(printf '%s\n' "$HDRS" | grep -i '^access-control-allow-origin:' | head -1 | tr -d '\r')
+            echo "OPTIONS(preflight) $ORIGIN -> ACAO count=$COUNT ($VALUE)"
+            if [ "$COUNT" -lt "1" ]; then
+              echo "❌ Preflight for $ORIGIN returned no Access-Control-Allow-Origin — cross-origin POST will fail."
+              FAIL=1
+            fi
+          done
+
+          if [ "$FAIL" != "0" ]; then
+            echo "❌ CORS verification failed — investigate before relying on preview environments."
+            exit 1
+          fi
+          echo "✅ CORS verified: GET and POST-preflight succeed for prod and preview origins."
 
   # Verification job
   verify-deployment:

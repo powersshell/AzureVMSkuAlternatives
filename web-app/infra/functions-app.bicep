@@ -123,10 +123,12 @@ resource functionsApp 'Microsoft.Web/sites@2023-01-01' = {
           value: appInsights.properties.ConnectionString
         }
       ]
+      // CORS: allow all origins. The API is anonymous, read-only, public data
+      // and is called cross-origin from the production SWA and a unique origin
+      // per pull-request preview slot. supportCredentials stays false for '*'.
       cors: {
         allowedOrigins: [
-          'https://black-sea-0784c5d0f.1.azurestaticapps.net'
-          'http://localhost:4280'
+          '*'
         ]
         supportCredentials: false
       }
