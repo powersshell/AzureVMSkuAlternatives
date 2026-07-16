@@ -2,6 +2,7 @@
 
 ## 2026-07-16
 - **feature:** New **"Where is this cheapest?"** cross-region price comparison. From the source SKU panel, open a dialog that lists the selected VM's pay-as-you-go price across every Azure region where it's offered, sorted cheapest-first with the cheapest region highlighted and your current region flagged. Shows hourly and monthly prices, the percentage and monthly-dollar premium versus the cheapest region, and the maximum monthly savings. Respects the selected currency and Linux/Windows pricing toggle.
+- **improvement:** The **"Where is this cheapest?"** action is now also available on every recommended alternative — each result card has a 🌍 button to the left of its price that opens the same cross-region price comparison for that SKU.
 
 ## 2026-07-08
 - **feature:** Richer VM spec fields, inspired by capability coverage seen in a related internal "Compute-Compare" project. Result cards now surface an **ACU** (Azure Compute Unit) chip and an **NVMe** badge, and the detailed comparison view adds **ACU**, **vCPUs per core**, **Trusted Launch**, **Confidential Computing**, and **RDMA / InfiniBand** rows. All new fields are also included in the CSV export. New capabilities are populated for a region the next time its data is refreshed.
