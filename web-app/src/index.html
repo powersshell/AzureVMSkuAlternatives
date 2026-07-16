@@ -49,6 +49,16 @@
         ⚠️ <strong>Experimental preview:</strong> Treat results as guidance only. Validate compatibility, regional availability, and current pricing before production decisions.
     </div>
 
+    <!-- Mode Tabs -->
+    <div class="mode-tabs" role="tablist" aria-label="Tool mode">
+        <button id="tabCompare" class="mode-tab active" role="tab" aria-selected="true" type="button" onclick="switchMode('compare')">
+            <span class="mode-tab-icon" aria-hidden="true">🔍</span> Find alternatives
+        </button>
+        <button id="tabBrowse" class="mode-tab" role="tab" aria-selected="false" type="button" onclick="switchMode('browse')">
+            <span class="mode-tab-icon" aria-hidden="true">📋</span> Browse all VMs
+        </button>
+    </div>
+
     <!-- Configuration Bar -->
     <div class="config-bar">
         <div class="config-row" id="configRow">
@@ -93,7 +103,7 @@
                 </select>
                 <small id="regionHint" class="region-hint">👇 Start here — pick a region to load its VM SKUs</small>
             </div>
-            <div class="config-field config-field-grow downstream-field">
+            <div class="config-field config-field-grow downstream-field compare-only">
                 <label for="skuName"><span class="step-badge">2</span> Source SKU</label>
                 <select id="skuName" required disabled>
                     <option value="">Select a region first...</option>
@@ -118,7 +128,7 @@
                     <option value="BRL">BRL</option>
                 </select>
             </div>
-            <button id="compareBtn" class="compare-btn downstream-field">
+            <button id="compareBtn" class="compare-btn downstream-field compare-only">
                 <span class="step-badge step-badge-on-dark">3</span>
                 <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
                     <path d="M10 3L10 17M10 17L6 13M10 17L14 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -128,7 +138,7 @@
         </div>
 
         <!-- Advanced Options -->
-        <details class="advanced-options">
+        <details class="advanced-options compare-only">
             <summary>Advanced Options</summary>
             <div class="advanced-grid">
                 <div class="adv-field">
@@ -190,7 +200,7 @@
     </div>
 
     <!-- Main Content Grid (two panels) -->
-    <div class="content-grid">
+    <div class="content-grid" id="contentGrid">
         <!-- Left Panel: Source SKU Info -->
         <aside class="source-panel">
             <div class="source-panel-inner">
@@ -339,7 +349,90 @@
         </section>
     </div>
 
-    <!-- Cross-region price comparison modal (I-E: "Where is this cheapest?") -->
+    <!-- Browse / Grid View (I-F) -->
+    <section id="gridView" class="grid-view hidden" aria-label="Browse all VMs">
+        <div class="grid-controls">
+            <div class="grid-search-row">
+                <input type="search" id="gridSearch" class="grid-search" placeholder="Search by name or family…" autocomplete="off" aria-label="Search VM sizes">
+                <span id="gridStatus" class="grid-status"></span>
+            </div>
+            <div class="grid-filter-row">
+                <div class="grid-filter">
+                    <details class="grid-family-dd" id="gridFamilyDd">
+                        <summary id="gridFamilySummary">All families</summary>
+                        <div class="grid-family-list" id="gridFamilyList"></div>
+                    </details>
+                </div>
+                <div class="grid-filter grid-range">
+                    <label>vCPUs</label>
+                    <input type="number" id="gridVcpuMin" min="0" step="1" placeholder="min" aria-label="Minimum vCPUs">
+                    <span class="grid-range-sep">–</span>
+                    <input type="number" id="gridVcpuMax" min="0" step="1" placeholder="max" aria-label="Maximum vCPUs">
+                </div>
+                <div class="grid-filter grid-range">
+                    <label>RAM (GB)</label>
+                    <input type="number" id="gridRamMin" min="0" step="1" placeholder="min" aria-label="Minimum RAM">
+                    <span class="grid-range-sep">–</span>
+                    <input type="number" id="gridRamMax" min="0" step="1" placeholder="max" aria-label="Maximum RAM">
+                </div>
+                <label class="grid-check"><input type="checkbox" id="gridGpuOnly"> GPU only</label>
+                <div class="grid-vendor">
+                    <label class="grid-check"><input type="checkbox" id="gridVendorIntel" checked> Intel</label>
+                    <label class="grid-check"><input type="checkbox" id="gridVendorAMD" checked> AMD</label>
+                    <label class="grid-check"><input type="checkbox" id="gridVendorARM" checked> ARM</label>
+                </div>
+                <button type="button" id="gridResetFilters" class="grid-reset-btn">Reset filters</button>
+            </div>
+            <div class="grid-price-row">
+                <div class="pricing-model-toggle">
+                    <button id="btn-grid-payg" class="btn-pricing active" type="button" onclick="setPricingModel('payg')">PAYG</button>
+                    <button id="btn-grid-ri1year" class="btn-pricing" type="button" onclick="setPricingModel('ri1year')">1yr RI</button>
+                    <button id="btn-grid-ri3year" class="btn-pricing" type="button" onclick="setPricingModel('ri3year')">3yr RI</button>
+                </div>
+                <div class="os-pricing-toggle">
+                    <button id="btn-grid-linux" class="btn-os active" type="button" onclick="setPricingOS('linux')">Linux</button>
+                    <button id="btn-grid-windows" class="btn-os" type="button" onclick="setPricingOS('windows')">Windows</button>
+                </div>
+                <div class="grid-export">
+                    <button id="gridExportCsvBtn" class="export-btn" type="button" title="Export filtered grid to CSV">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M14 10v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-2M8 2v8m0 0l3-3M8 10L5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                        CSV
+                    </button>
+                    <button id="gridExportXlsxBtn" class="export-btn" type="button" title="Export filtered grid to Excel (.xlsx)">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M14 10v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-2M8 2v8m0 0l3-3M8 10L5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                        Excel
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="gridLoading" class="grid-loading hidden">
+            <div class="spinner"></div>
+            <p>Loading VM sizes…</p>
+        </div>
+        <div id="gridEmpty" class="grid-empty hidden"></div>
+
+        <div class="grid-table-wrap" id="gridTableWrap">
+            <table class="grid-table" id="gridTable">
+                <thead>
+                    <tr>
+                        <th class="sortable" data-sort="name">Name</th>
+                        <th class="sortable" data-sort="family">Family</th>
+                        <th class="sortable num" data-sort="vCPUs">vCPUs</th>
+                        <th class="sortable num" data-sort="memoryGB">RAM (GB)</th>
+                        <th class="sortable num" data-sort="gpuCount">GPU</th>
+                        <th class="sortable num" data-sort="acu">ACU</th>
+                        <th class="sortable num" data-sort="hourly">Hourly</th>
+                        <th class="sortable num" data-sort="monthly">Monthly</th>
+                        <th class="grid-actions-col">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="gridTableBody"></tbody>
+            </table>
+        </div>
+        <div class="grid-pagination" id="gridPagination"></div>
+    </section>
+
     <div id="regionPriceModal" class="region-price-modal hidden" role="dialog" aria-modal="true" aria-labelledby="regionPriceModalTitle">
         <div class="region-price-backdrop" id="regionPriceBackdrop"></div>
         <div class="region-price-dialog">

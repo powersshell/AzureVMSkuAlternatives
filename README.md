@@ -10,6 +10,7 @@
 ## 📋 Recent Changes
 
 ### 2026-07-16
+- **feature:** New **Browse all VMs** mode — a top-level tab switches between "Find alternatives" (the compare tool) and a browsable, sortable, searchable grid of **every** VM size in the selected region. Filter by family, vCPU/RAM range, GPU-only, and CPU vendor; sort any column (including live price); page through results; and export the filtered grid to CSV/Excel. Each row can jump to **Find alternatives** for that SKU or open **Where is this cheapest?**. Backed by a new `/api/grid` endpoint.
 - **feature:** New **Excel (.xlsx) export** alongside CSV — a three-sheet workbook (Comparison Info, Summary, Specifications) with prices and numeric specs written as real numbers so they sort and sum natively in Excel.
 - **feature:** New **"Where is this cheapest?"** cross-region price comparison — from the source SKU panel, open a dialog listing the selected VM's pay-as-you-go price across every Azure region where it's offered, sorted cheapest-first with the cheapest region highlighted and your current region flagged. Shows hourly/monthly prices, the premium versus the cheapest region, and the maximum monthly savings. Respects the selected currency and Linux/Windows toggle.
 - **improvement:** The **"Where is this cheapest?"** action is now also available on every recommended alternative — each result card has a 🌍 button to the left of its price that opens the same cross-region comparison for that SKU.
