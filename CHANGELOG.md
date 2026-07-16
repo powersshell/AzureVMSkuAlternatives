@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-07-16
+- **feature:** New **"Where is this cheapest?"** cross-region price comparison. From the source SKU panel, open a dialog that lists the selected VM's pay-as-you-go price across every Azure region where it's offered, sorted cheapest-first with the cheapest region highlighted and your current region flagged. Shows hourly and monthly prices, the percentage and monthly-dollar premium versus the cheapest region, and the maximum monthly savings. Respects the selected currency and Linux/Windows pricing toggle.
+
 ## 2026-07-08
 - **feature:** Richer VM spec fields, inspired by capability coverage seen in a related internal "Compute-Compare" project. Result cards now surface an **ACU** (Azure Compute Unit) chip and an **NVMe** badge, and the detailed comparison view adds **ACU**, **vCPUs per core**, **Trusted Launch**, **Confidential Computing**, and **RDMA / InfiniBand** rows. All new fields are also included in the CSV export. New capabilities are populated for a region the next time its data is refreshed.
 - **fix:** Static Web App **preview** environments (one per pull request) now load data automatically, including the "Compare" and region-availability actions. Cross-origin CORS is allowed at the App Service platform level for all origins, so every SWA preview slot, the production site, the Azure portal, and localhost work with no manual per-PR allowlisting. (An earlier same-day attempt to handle CORS in the Functions app code could not answer the browser preflight for POST requests on Flex Consumption, which broke the cross-origin Compare call; this platform-level fix resolves that.)

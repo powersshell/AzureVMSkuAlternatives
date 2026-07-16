@@ -341,6 +341,20 @@
         </section>
     </div>
 
+    <!-- Cross-region price comparison modal (I-E: "Where is this cheapest?") -->
+    <div id="regionPriceModal" class="region-price-modal hidden" role="dialog" aria-modal="true" aria-labelledby="regionPriceModalTitle">
+        <div class="region-price-backdrop" id="regionPriceBackdrop"></div>
+        <div class="region-price-dialog">
+            <div class="region-price-header">
+                <h3 id="regionPriceModalTitle">Where is this cheapest?</h3>
+                <button type="button" class="region-price-close" id="regionPriceClose" aria-label="Close">✕</button>
+            </div>
+            <div class="region-price-body" id="regionPriceBody">
+                <!-- Populated by app.js -->
+            </div>
+        </div>
+    </div>
+
     <!-- Choices.js library for searchable dropdowns -->
     <script src="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/scripts/choices.min.js"
             integrity="sha384-9r5e85TmdjVjyjYzZAV3TG5A6tcrmD7JjNBGfT2r1wp9txUPttent/DMiMuOwRNG"
