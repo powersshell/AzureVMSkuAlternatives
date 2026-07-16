@@ -13,6 +13,7 @@
 - **feature:** New **"Where is this cheapest?"** cross-region price comparison — from the source SKU panel, open a dialog listing the selected VM's pay-as-you-go price across every Azure region where it's offered, sorted cheapest-first with the cheapest region highlighted and your current region flagged. Shows hourly/monthly prices, the premium versus the cheapest region, and the maximum monthly savings. Respects the selected currency and Linux/Windows toggle.
 - **improvement:** The **"Where is this cheapest?"** action is now also available on every recommended alternative — each result card has a 🌍 button to the left of its price that opens the same cross-region comparison for that SKU.
 - **improvement:** Removed the redundant **CPU Vendor** filter from the source-SKU search area — vendor filtering now lives only on the **Alternatives** results, where it's most useful.
+- **improvement:** The detailed comparison view now explains missing **ACU** values (Azure only publishes ACU for certain — mostly older/mid-generation — VM series), showing "ACU: not published by Azure for this size" instead of silently omitting the row.
 
 📄 [Full changelog →](CHANGELOG.md)
 

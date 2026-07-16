@@ -963,6 +963,11 @@ body {
 .diff-item.same {
     color: var(--text-muted);
 }
+.diff-item.acu-unavailable {
+    font-style: italic;
+    opacity: 0.85;
+    cursor: help;
+}
 .diff-item .delta,
 .diff-item .diff-pct {
     display: block;

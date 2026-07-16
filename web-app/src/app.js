@@ -1587,7 +1587,7 @@ function renderDetailedComparison(data, targetSku, altSku) {
                     ${cpuPerfHtml}
                     ${renderNumericDiff('vCPUs', diff.compute.vCPUs)}
                     ${renderNumericDiff('Memory', diff.compute.memory)}
-                    ${diff.compute.acu && diff.compute.acu.target != null ? renderNumericDiff('ACU', diff.compute.acu) : ''}
+                    ${diff.compute.acu && diff.compute.acu.target != null ? renderNumericDiff('ACU', diff.compute.acu) : renderAcuUnavailable()}
                     ${diff.compute.vCPUsPerCore && diff.compute.vCPUsPerCore.target != null ? renderNumericDiff('vCPUs / Core', diff.compute.vCPUsPerCore) : ''}
                     ${renderBooleanDiff(diff.compute.hyperVGen2)}
                     ${diff.compute.trustedLaunch ? renderBooleanDiff(diff.compute.trustedLaunch) : ''}
@@ -1663,6 +1663,10 @@ function renderCpuPerfComparison(targetSku, altSku) {
         return `<div class="diff-item same">● CPU Perf: ${aGen || 'Unknown'} (score: ${aScore})</div>`;
     }
     return `<div class="diff-item same">● CPU Perf: Target ${tGen || 'Unknown'} (score: ${tScore}) — alternative: N/A</div>`;
+}
+
+function renderAcuUnavailable() {
+    return `<div class="diff-item same acu-unavailable" title="Azure only publishes ACU (Azure Compute Unit) values for certain VM series — mostly older/mid generations. Most newer sizes (e.g. v6/v7, Bsv2, Esv5) do not publish an ACU, so none is shown here.">● ACU: not published by Azure for this size</div>`;
 }
 
 function renderNumericDiff(label, diff) {
