@@ -1154,3 +1154,154 @@ body {
         gap: 8px;
     }
 }
+
+/* ---------------------------------------------------------------------------
+   Cross-region price comparison (I-E: "Where is this cheapest?")
+   --------------------------------------------------------------------------- */
+.where-cheapest-btn {
+    margin-top: 14px;
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--blue-start);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+.where-cheapest-btn:hover { background: #106ebe; }
+
+body.modal-open { overflow: hidden; }
+
+.region-price-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.region-price-modal.hidden { display: none; }
+
+.region-price-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.region-price-dialog {
+    position: relative;
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    width: min(720px, 100%);
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.region-price-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+.region-price-header h3 { font-size: 1.1rem; color: var(--text-primary); }
+
+.region-price-close {
+    background: none;
+    border: none;
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+}
+.region-price-close:hover { background: var(--border-light); color: var(--text-primary); }
+
+.region-price-body {
+    padding: 18px 20px;
+    overflow-y: auto;
+}
+
+.region-price-loading,
+.region-price-error,
+.region-price-empty {
+    text-align: center;
+    padding: 30px 10px;
+    color: var(--text-secondary);
+}
+.region-price-error-detail { font-size: 0.8rem; color: var(--text-muted); margin-top: 6px; }
+
+.region-price-summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.region-price-summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 12px;
+    background: var(--border-light);
+    border-radius: var(--radius-sm);
+}
+.rp-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); }
+.rp-value { font-size: 0.9rem; font-weight: 600; color: var(--text-primary); }
+.rp-cheapest { color: var(--success); }
+.rp-savings { color: var(--success); }
+
+.region-price-note {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+}
+
+.region-price-table-wrap { overflow-x: auto; }
+.region-price-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.86rem;
+}
+.region-price-table th {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-secondary);
+    font-weight: 600;
+    white-space: nowrap;
+}
+.region-price-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-primary);
+}
+.region-price-table .rp-region small { color: var(--text-muted); font-weight: 400; }
+.region-price-table .rp-hourly,
+.region-price-table .rp-monthly { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.region-price-table .rp-delta { color: var(--text-secondary); white-space: nowrap; }
+
+.rp-row-cheapest { background: rgba(16, 124, 16, 0.08); }
+.rp-row-cheapest td { font-weight: 600; }
+
+.rp-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    vertical-align: middle;
+}
+.rp-badge-cheapest { background: var(--success); color: #fff; }
+.rp-badge-current { background: var(--blue-start); color: #fff; }
+
+@media (max-width: 600px) {
+    .region-price-summary { grid-template-columns: 1fr; }
+}

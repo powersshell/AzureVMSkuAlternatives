@@ -51,6 +51,8 @@ from function_app import (
     calculate_boolean_diff,
     calculate_similarity,
     _asymmetric_score,
+    select_region_prices,
+    _is_payg_item,
 )
 
 
@@ -701,4 +703,90 @@ class TestBurstableRegression:
         }
         score = calculate_similarity(target, smaller, DEFAULT_WEIGHTS)
         assert score < 80, f"half-size SKU should not clear the default threshold, got {score}"
+
+
+class TestSelectRegionPrices:
+    """Unit tests for I-E cross-region price selection (select_region_prices)."""
+
+    def _item(self, region, price, product='Virtual Machines Dv5 Series',
+              sku_meter='D2s v5', itype='Consumption', currency='USD',
+              location='East US'):
+        return {
+            'armRegionName': region,
+            'unitPrice': price,
+            'productName': product,
+            'skuName': sku_meter,
+            'type': itype,
+            'currencyCode': currency,
+            'location': location,
+        }
+
+    @pytest.mark.unit
+    def test_groups_by_region(self):
+        items = [
+            self._item('eastus', 0.096),
+            self._item('westus', 0.108),
+        ]
+        result = select_region_prices(items, 'linux')
+        assert set(result.keys()) == {'eastus', 'westus'}
+        assert result['eastus']['hourlyPrice'] == pytest.approx(0.096)
+        assert result['eastus']['monthlyPrice'] == pytest.approx(0.096 * 730, rel=1e-6)
+
+    @pytest.mark.unit
+    def test_linux_excludes_windows_meter(self):
+        items = [
+            self._item('eastus', 0.20, product='Virtual Machines Dv5 Series Windows'),
+            self._item('eastus', 0.096, product='Virtual Machines Dv5 Series'),
+        ]
+        result = select_region_prices(items, 'linux')
+        assert result['eastus']['hourlyPrice'] == pytest.approx(0.096)
+
+    @pytest.mark.unit
+    def test_windows_selects_windows_meter(self):
+        items = [
+            self._item('eastus', 0.20, product='Virtual Machines Dv5 Series Windows'),
+            self._item('eastus', 0.096, product='Virtual Machines Dv5 Series'),
+        ]
+        result = select_region_prices(items, 'windows')
+        assert result['eastus']['hourlyPrice'] == pytest.approx(0.20)
+
+    @pytest.mark.unit
+    def test_excludes_spot_and_low_priority(self):
+        items = [
+            self._item('eastus', 0.03, sku_meter='D2s v5 Spot'),
+            self._item('eastus', 0.02, sku_meter='D2s v5 Low Priority'),
+            self._item('eastus', 0.096, sku_meter='D2s v5'),
+        ]
+        result = select_region_prices(items, 'linux')
+        assert result['eastus']['hourlyPrice'] == pytest.approx(0.096)
+
+    @pytest.mark.unit
+    def test_excludes_dedicated_host(self):
+        items = [
+            self._item('eastus', 5.0, product='Virtual Machines Dv5 Series DedicatedHost'),
+            self._item('eastus', 0.096, product='Virtual Machines Dv5 Series'),
+        ]
+        result = select_region_prices(items, 'linux')
+        assert result['eastus']['hourlyPrice'] == pytest.approx(0.096)
+
+    @pytest.mark.unit
+    def test_skips_zero_and_none_prices(self):
+        items = [
+            self._item('eastus', 0),
+            self._item('westus', None),
+            self._item('centralus', 0.10),
+        ]
+        result = select_region_prices(items, 'linux')
+        assert set(result.keys()) == {'centralus'}
+
+    @pytest.mark.unit
+    def test_empty_input(self):
+        assert select_region_prices([], 'linux') == {}
+
+    @pytest.mark.unit
+    def test_is_payg_item_flags(self):
+        assert _is_payg_item(self._item('eastus', 0.1)) is True
+        assert _is_payg_item(self._item('eastus', 0.1, sku_meter='D2s v5 Spot')) is False
+        assert _is_payg_item(self._item('eastus', 0.1, itype='Reservation')) is False
+
 

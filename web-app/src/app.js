@@ -927,6 +927,9 @@ function displayTargetSku(targetSku) {
             </div>
             ` : ''}
         </div>
+        <button type="button" id="whereCheapestBtn" class="where-cheapest-btn" onclick="showRegionPriceComparison('${targetSku.name}')">
+            🌍 Where is this cheapest?
+        </button>
     `;
     targetSkuInfo.innerHTML = html;
 
@@ -948,6 +951,142 @@ function displayTargetSku(targetSku) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Cross-region price comparison (I-E: "Where is this cheapest?")
+// ---------------------------------------------------------------------------
+async function showRegionPriceComparison(skuName) {
+    const modal = document.getElementById('regionPriceModal');
+    const body = document.getElementById('regionPriceBody');
+    const title = document.getElementById('regionPriceModalTitle');
+    if (!modal || !body) return;
+
+    const currency = document.getElementById('currencyCode')?.value || 'USD';
+    const os = currentPricingOS === 'windows' ? 'windows' : 'linux';
+    const osLabel = os === 'windows' ? 'Windows' : 'Linux';
+    const currentRegion = document.getElementById('location')?.value || '';
+
+    title.textContent = `Where is ${skuName} cheapest?`;
+    body.innerHTML = '<div class="region-price-loading"><div class="spinner"></div><p>Fetching regional prices…</p></div>';
+    modal.classList.remove('hidden');
+    document.body.classList.add('modal-open');
+
+    try {
+        const url = `${API_BASE_URL}/compare_regions?skuName=${encodeURIComponent(skuName)}&currency=${encodeURIComponent(currency)}&os=${encodeURIComponent(os)}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Request failed (${response.status})`);
+        }
+        const data = await response.json();
+        renderRegionPriceComparison(data, osLabel, currentRegion);
+    } catch (err) {
+        body.innerHTML = `<div class="region-price-error"><p>⚠️ Couldn't load regional pricing.</p><p class="region-price-error-detail">${escapeHtml(err.message)}</p></div>`;
+    }
+}
+
+function renderRegionPriceComparison(data, osLabel, currentRegion) {
+    const body = document.getElementById('regionPriceBody');
+    if (!body) return;
+
+    if (!data.regions || data.regions.length === 0) {
+        body.innerHTML = `<div class="region-price-empty"><p>${escapeHtml(data.message || 'No pay-as-you-go pricing found for this SKU across regions.')}</p></div>`;
+        return;
+    }
+
+    const currency = data.currency || 'USD';
+    const cheapest = data.cheapest;
+    const savings = data.maxMonthlySavings;
+
+    const summary = `
+        <div class="region-price-summary">
+            <div class="region-price-summary-item">
+                <span class="rp-label">Cheapest region</span>
+                <span class="rp-value rp-cheapest">${escapeHtml(cheapest.location)} <small>(${escapeHtml(cheapest.region)})</small></span>
+            </div>
+            <div class="region-price-summary-item">
+                <span class="rp-label">From</span>
+                <span class="rp-value">${formatHourlyCurrency(cheapest.hourlyPrice, currency)}/hr · ${formatCurrency(cheapest.monthlyPrice, currency)}/mo</span>
+            </div>
+            <div class="region-price-summary-item">
+                <span class="rp-label">Max monthly savings</span>
+                <span class="rp-value rp-savings">${formatCurrency(savings, currency)}/mo</span>
+            </div>
+        </div>
+        <p class="region-price-note">${osLabel} pay-as-you-go pricing across ${data.regionCount} region${data.regionCount === 1 ? '' : 's'}. Prices are guidance — validate before production decisions.</p>
+    `;
+
+    const rows = data.regions.map(r => {
+        const isCheapest = r.region === cheapest.region;
+        const isCurrent = currentRegion && r.region === currentRegion;
+        const rowClass = [
+            isCheapest ? 'rp-row-cheapest' : '',
+            isCurrent ? 'rp-row-current' : ''
+        ].filter(Boolean).join(' ');
+        const badges = [
+            isCheapest ? '<span class="rp-badge rp-badge-cheapest">Cheapest</span>' : '',
+            isCurrent ? '<span class="rp-badge rp-badge-current">Current</span>' : ''
+        ].filter(Boolean).join(' ');
+        const deltaText = isCheapest
+            ? '—'
+            : `+${r.pctAboveCheapest}% · +${formatCurrency(r.monthlyVsCheapest, currency)}/mo`;
+        return `
+            <tr class="${rowClass}">
+                <td class="rp-region">${escapeHtml(r.location)} <small>${escapeHtml(r.region)}</small> ${badges}</td>
+                <td class="rp-hourly">${formatHourlyCurrency(r.hourlyPrice, currency)}</td>
+                <td class="rp-monthly">${formatCurrency(r.monthlyPrice, currency)}</td>
+                <td class="rp-delta">${deltaText}</td>
+            </tr>
+        `;
+    }).join('');
+
+    body.innerHTML = `
+        ${summary}
+        <div class="region-price-table-wrap">
+            <table class="region-price-table">
+                <thead>
+                    <tr>
+                        <th>Region</th>
+                        <th>Hourly</th>
+                        <th>Monthly</th>
+                        <th>vs. cheapest</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+function closeRegionPriceModal() {
+    const modal = document.getElementById('regionPriceModal');
+    if (modal) modal.classList.add('hidden');
+    document.body.classList.remove('modal-open');
+}
+
+function escapeHtml(value) {
+    const str = value === null || value === undefined ? '' : String(value);
+    return str.replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
+}
+
+// Wire up modal close handlers once the DOM is ready.
+(function initRegionPriceModal() {
+    function bind() {
+        const closeBtn = document.getElementById('regionPriceClose');
+        const backdrop = document.getElementById('regionPriceBackdrop');
+        if (closeBtn) closeBtn.addEventListener('click', closeRegionPriceModal);
+        if (backdrop) backdrop.addEventListener('click', closeRegionPriceModal);
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') closeRegionPriceModal();
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bind);
+    } else {
+        bind();
+    }
+})();
 
 // Format CPU performance display for table cells
 function formatCpuPerf(sku) {

@@ -31,6 +31,7 @@
 - Frontend is static HTML/CSS/JS in `web-app/src` and calls a direct Functions host URL from `src/app.js` (`API_BASE_URL`) because SWA rewrite does not support the required POST flow.
 - API is Python Azure Functions v2 programming model in a single file: `web-app/api/function_app.py` with key routes:
   - `/api/compare_vms` (GET/POST)
+  - `/api/compare_regions` (GET) — cross-region price comparison for one SKU
   - `/api/skus`
   - `/api/compare_details`
   - `/api/health`

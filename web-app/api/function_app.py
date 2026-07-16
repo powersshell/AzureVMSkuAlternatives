@@ -625,6 +625,197 @@ def check_region_availability(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 
+# ============================================================================
+# HTTP Route: /compare_regions - Cross-region price comparison for one SKU
+# (I-E: "Where is this cheapest?")
+# ============================================================================
+def _fetch_all_region_pricing(sku_name: str, currency_code: str = 'USD') -> List[Dict]:
+    """Fetch every region's Consumption pricing item for a single SKU in one query.
+
+    Uses the Azure Retail Prices API with no ``armRegionName`` filter, so all regions
+    where the SKU is offered come back (paginated).
+    """
+    api_url = 'https://prices.azure.com/api/retail/prices'
+    filter_str = (
+        "serviceName eq 'Virtual Machines' "
+        f"and armSkuName eq '{sku_name}' "
+        "and type eq 'Consumption'"
+    )
+    url = f"{api_url}?currencyCode={currency_code}&$filter={filter_str}"
+
+    items: List[Dict] = []
+    pages = 0
+    while url and pages < 50:
+        response = requests.get(url, headers={'Accept': 'application/json'}, timeout=15)
+        if not response.ok:
+            logging.warning(f'Region pricing fetch for {sku_name} returned {response.status_code}')
+            break
+        data = response.json()
+        items.extend(data.get('Items', []))
+        url = data.get('NextPageLink')
+        pages += 1
+    return items
+
+
+def _is_payg_item(item: Dict) -> bool:
+    """True for a real pay-as-you-go Consumption meter (not Spot/Low Priority/host/cloud)."""
+    product_name = (item.get('productName') or '').lower()
+    sku_meter = item.get('skuName') or ''
+    return (
+        item.get('type') == 'Consumption'
+        and 'dedicatedhost' not in product_name
+        and 'cloud' not in product_name
+        and 'Spot' not in sku_meter
+        and 'Low Priority' not in sku_meter
+    )
+
+
+def select_region_prices(items: List[Dict], os_type: str = 'linux') -> Dict[str, Dict]:
+    """Group retail-price ``items`` by region and pick the PAYG price per region.
+
+    Returns ``{region: {region, location, hourlyPrice, monthlyPrice, currency}}``.
+    ``os_type`` selects Linux (default) or Windows meters. Regions with no valid
+    non-zero PAYG price are omitted.
+    """
+    want_windows = os_type == 'windows'
+
+    by_region: Dict[str, List[Dict]] = {}
+    for item in items:
+        region = item.get('armRegionName')
+        if region:
+            by_region.setdefault(region, []).append(item)
+
+    result: Dict[str, Dict] = {}
+    for region, region_items in by_region.items():
+        payg = [i for i in region_items if _is_payg_item(i)]
+        if not payg:
+            continue
+
+        if want_windows:
+            chosen = next(
+                (i for i in payg if 'windows' in (i.get('productName') or '').lower()),
+                None,
+            )
+        else:
+            chosen = next(
+                (i for i in payg if 'windows' not in (i.get('productName') or '').lower()),
+                None,
+            )
+        # Fall back to any PAYG meter if the requested OS wasn't found.
+        if not chosen:
+            chosen = payg[0]
+
+        hourly = chosen.get('unitPrice')
+        if hourly is None or hourly <= 0:
+            continue
+
+        result[region] = {
+            'region': region,
+            'location': chosen.get('location') or region,
+            'hourlyPrice': round(hourly, 4),
+            'monthlyPrice': round(hourly * 730, 2),
+            'currency': chosen.get('currencyCode', 'USD'),
+        }
+
+    return result
+
+
+@app.route(route="compare_regions", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def compare_regions(req: func.HttpRequest) -> func.HttpResponse:
+    """Cross-region price comparison for a single SKU ("where is this cheapest?").
+
+    Query Parameters:
+    - skuName: ARM SKU name (e.g. 'Standard_D8s_v5') (required)
+    - currency: ISO currency code (default 'USD')
+    - os: 'linux' (default) or 'windows'
+    """
+    logging.info('Processing compare_regions request')
+
+    sku_name = req.params.get('skuName') or req.params.get('sku')
+    currency_code = (req.params.get('currency') or 'USD').upper()
+    os_type = (req.params.get('os') or 'linux').lower()
+
+    if not sku_name:
+        return func.HttpResponse(
+            json.dumps({'error': 'skuName parameter is required'}),
+            mimetype='application/json',
+            status_code=400,
+        )
+
+    # Validate skuName strictly: it is interpolated into the OData filter string.
+    if not re.match(r'^[A-Za-z][A-Za-z0-9_]+$', sku_name):
+        return func.HttpResponse(
+            json.dumps({'error': 'Invalid skuName format'}),
+            mimetype='application/json',
+            status_code=400,
+        )
+
+    if not re.match(r'^[A-Za-z]{3}$', currency_code):
+        return func.HttpResponse(
+            json.dumps({'error': 'Invalid currency code'}),
+            mimetype='application/json',
+            status_code=400,
+        )
+
+    if os_type not in ('linux', 'windows'):
+        os_type = 'linux'
+
+    try:
+        items = _fetch_all_region_pricing(sku_name, currency_code)
+        region_prices = select_region_prices(items, os_type)
+        regions = sorted(region_prices.values(), key=lambda r: r['hourlyPrice'])
+
+        if not regions:
+            return func.HttpResponse(
+                json.dumps({
+                    'skuName': sku_name,
+                    'os': os_type,
+                    'currency': currency_code,
+                    'regionCount': 0,
+                    'regions': [],
+                    'message': 'No pay-as-you-go pricing found for this SKU across regions.',
+                }),
+                mimetype='application/json',
+                status_code=200,
+            )
+
+        cheapest = regions[0]
+        most_expensive = regions[-1]
+        cheapest_hourly = cheapest['hourlyPrice']
+
+        for region in regions:
+            region['monthlyVsCheapest'] = round(region['monthlyPrice'] - cheapest['monthlyPrice'], 2)
+            region['pctAboveCheapest'] = (
+                round((region['hourlyPrice'] - cheapest_hourly) / cheapest_hourly * 100, 1)
+                if cheapest_hourly else 0
+            )
+
+        response_data = {
+            'skuName': sku_name,
+            'os': os_type,
+            'currency': regions[0]['currency'],
+            'regionCount': len(regions),
+            'cheapest': cheapest,
+            'mostExpensive': most_expensive,
+            'maxMonthlySavings': round(most_expensive['monthlyPrice'] - cheapest['monthlyPrice'], 2),
+            'regions': regions,
+        }
+
+        return func.HttpResponse(
+            json.dumps(response_data),
+            mimetype='application/json',
+            status_code=200,
+        )
+
+    except Exception as e:
+        logging.error(f'Error in compare_regions: {str(e)}')
+        return func.HttpResponse(
+            json.dumps({'error': f'Internal server error: {str(e)}'}),
+            mimetype='application/json',
+            status_code=500,
+        )
+
+
 def get_sku_from_cache(sku_name: str, location: str) -> dict:
     """Get single SKU details from cache."""
     try:
