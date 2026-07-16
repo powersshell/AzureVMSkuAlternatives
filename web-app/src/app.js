@@ -167,6 +167,7 @@ const resultsTableBody = document.getElementById('resultsTableBody');
 const targetSkuInfo = document.getElementById('targetSkuInfo');
 const noResults = document.getElementById('noResults');
 const exportBtn = document.getElementById('exportBtn');
+const exportXlsxBtn = document.getElementById('exportXlsxBtn');
 
 // Getting-started / onboarding elements
 const regionField = document.getElementById('regionField');
@@ -213,6 +214,7 @@ const ALL_REGIONS = Array.from(document.getElementById('location').options)
 compareBtn.addEventListener('click', handleCompare);
 dismissErrorBtn.addEventListener('click', hideError);
 exportBtn.addEventListener('click', exportToCSV);
+if (exportXlsxBtn) exportXlsxBtn.addEventListener('click', exportToXLSX);
 
 // Initialize dropdown functionality on page load
 document.addEventListener('DOMContentLoaded', () => {
@@ -1860,16 +1862,10 @@ function formatDeltaValue(targetValue, altValue, precision = 0) {
     return precision > 0 ? delta.toFixed(precision) : String(Math.round(delta));
 }
 
-// Export to CSV
-function exportToCSV() {
-    if (!currentResults || !currentResults.alternatives || currentResults.alternatives.length === 0) {
-        trackEvent('export_csv_failed', {
-            reason: 'no_data'
-        });
-        showError('No data to export');
-        return;
-    }
-
+// Build a shared comparison export model used by both CSV and XLSX export so the
+// two formats never drift. Returns the metadata, split summary/spec tables, and a
+// combined flat table (headers + rows) that matches the historical CSV layout.
+function buildComparisonExportModel() {
     const discount = getDiscountMultiplier();
     const discountNote = discount < 1.0 ? ` (${((1 - discount) * 100).toFixed(1)}% discount applied)` : '';
 
@@ -1938,7 +1934,9 @@ function exportToCSV() {
 
     const headers = [...summaryHeaders, ...capabilityHeaders];
 
-    const rows = currentResults.alternatives.map((alt, index) => {
+    const summaryRows = [];
+    const capabilityRows = [];
+    const combinedRows = currentResults.alternatives.map((alt, index) => {
         const altCaps = alt.capabilities || {};
         const summaryRow = [
             index + 1,
@@ -1981,19 +1979,71 @@ function exportToCSV() {
             return formatCapabilityValue(altValue, col.type, col.precision ?? 0);
         });
 
+        summaryRows.push(summaryRow);
+        capabilityRows.push(capabilityRow);
         return [...summaryRow, ...capabilityRow];
     });
 
+    const currency = currentResults.alternatives[0]?.pricing?.currency || document.getElementById('currencyCode')?.value || 'N/A';
+    const pricingOs = (typeof currentPricingOS !== 'undefined' && currentPricingOS) ? currentPricingOS : 'linux';
+    const meta = [
+        ['Azure VM SKU Comparison', ''],
+        ['Generated', new Date().toISOString()],
+        ['Target SKU', targetSku.name || 'N/A'],
+        ['Location', exportLocation],
+        ['Currency', currency],
+        ['Displayed pricing OS', pricingOs.charAt(0).toUpperCase() + pricingOs.slice(1)],
+        ['Discount applied', discount < 1.0 ? `${((1 - discount) * 100).toFixed(1)}%` : 'None'],
+        ['Alternatives', String(currentResults.alternatives.length)],
+        ['Region availability column', regionAvailabilityData ? regionAvailabilityData.region : 'N/A']
+    ];
+
+    return {
+        targetSku,
+        exportLocation,
+        summaryHeaders,
+        capabilityHeaders,
+        headers,
+        summaryRows,
+        capabilityRows,
+        combinedRows,
+        meta
+    };
+}
+
+// Coerce a formatted string cell into a real number for Excel where it makes sense,
+// so prices/specs are numeric (sortable/summable). Non-numeric text is left as-is.
+function coerceExportCell(value) {
+    if (typeof value === 'number') return value;
+    if (value === null || value === undefined || value === '' || value === 'N/A') return value;
+    const trimmed = String(value).trim();
+    if (trimmed === '' || !/^-?\d+(\.\d+)?$/.test(trimmed)) return value;
+    const numeric = Number(trimmed);
+    return Number.isFinite(numeric) ? numeric : value;
+}
+
+// Export to CSV
+function exportToCSV() {
+    if (!currentResults || !currentResults.alternatives || currentResults.alternatives.length === 0) {
+        trackEvent('export_csv_failed', {
+            reason: 'no_data'
+        });
+        showError('No data to export');
+        return;
+    }
+
+    const model = buildComparisonExportModel();
+
     const csvContent = [
-        headers.map(escapeCsvCell).join(','),
-        ...rows.map(row => row.map(escapeCsvCell).join(','))
+        model.headers.map(escapeCsvCell).join(','),
+        ...model.combinedRows.map(row => row.map(escapeCsvCell).join(','))
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
 
-    const targetName = targetSku.name || 'target-sku';
+    const targetName = model.targetSku.name || 'target-sku';
     link.setAttribute('href', url);
     link.setAttribute('download', `azure-vm-comparison-${targetName}-${new Date().toISOString().split('T')[0]}.csv`);
     link.style.visibility = 'hidden';
@@ -2002,10 +2052,64 @@ function exportToCSV() {
     document.body.removeChild(link);
 
     trackEvent('export_csv_clicked', {
-        location: exportLocation,
+        location: model.exportLocation,
         targetSku: targetName
     }, {
-        exportedRows: rows.length
+        exportedRows: model.combinedRows.length
+    });
+}
+
+// Export to a formatted multi-sheet Excel workbook (Comparison Info + Summary + Specifications)
+function exportToXLSX() {
+    if (!currentResults || !currentResults.alternatives || currentResults.alternatives.length === 0) {
+        trackEvent('export_xlsx_failed', { reason: 'no_data' });
+        showError('No data to export');
+        return;
+    }
+
+    if (typeof XLSX === 'undefined') {
+        trackEvent('export_xlsx_failed', { reason: 'library_unavailable' });
+        showError('Excel export is unavailable right now. Please try CSV, or reload the page and retry.');
+        return;
+    }
+
+    const model = buildComparisonExportModel();
+    const colWidth = header => ({ wch: Math.min(Math.max(String(header).length + 2, 10), 44) });
+
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Comparison Info (metadata)
+    const infoWs = XLSX.utils.aoa_to_sheet(model.meta);
+    infoWs['!cols'] = [{ wch: 26 }, { wch: 44 }];
+    XLSX.utils.book_append_sheet(wb, infoWs, 'Comparison Info');
+
+    // Sheet 2: Summary (ranking + pricing)
+    const summaryAoa = [model.summaryHeaders, ...model.summaryRows.map(r => r.map(coerceExportCell))];
+    const summaryWs = XLSX.utils.aoa_to_sheet(summaryAoa);
+    summaryWs['!cols'] = model.summaryHeaders.map(colWidth);
+    summaryWs['!freeze'] = { xSplit: 0, ySplit: 1 };
+    XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
+
+    // Sheet 3: Specifications (per-SKU capabilities, keyed by Rank + SKU Name)
+    const specHeaders = ['Rank', 'SKU Name', ...model.capabilityHeaders];
+    const specAoa = [
+        specHeaders,
+        ...model.capabilityRows.map((capRow, i) => [i + 1, model.summaryRows[i][3], ...capRow.map(coerceExportCell)])
+    ];
+    const specWs = XLSX.utils.aoa_to_sheet(specAoa);
+    specWs['!cols'] = specHeaders.map(colWidth);
+    specWs['!freeze'] = { xSplit: 0, ySplit: 1 };
+    XLSX.utils.book_append_sheet(wb, specWs, 'Specifications');
+
+    const targetName = model.targetSku.name || 'target-sku';
+    const filename = `azure-vm-comparison-${targetName}-${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, filename);
+
+    trackEvent('export_xlsx_clicked', {
+        location: model.exportLocation,
+        targetSku: targetName
+    }, {
+        exportedRows: model.combinedRows.length
     });
 }
 
