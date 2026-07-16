@@ -2372,7 +2372,7 @@ function switchMode(mode) {
 async function loadGrid() {
     const region = document.getElementById('location').value;
     const currency = document.getElementById('currencyCode').value || 'USD';
-    if (!region) { showGridEmpty('👆 Pick a region above to browse its VM sizes.'); return; }
+    if (!region) { showGridEmpty('👆 Pick a region above to browse its VM sizes.'); updateBrowseCount(null); return; }
 
     const loading = document.getElementById('gridLoading');
     const empty = document.getElementById('gridEmpty');
@@ -2395,6 +2395,7 @@ async function loadGrid() {
         gridPage = 1;
         gridSelectedFamilies.clear();
         renderGridFacets();
+        updateBrowseCount(gridRows.length);
         trackEvent('grid_loaded', { region, currency: gridCurrencyLoaded }, { skuCount: gridRows.length });
         loading.classList.add('hidden');
         if (gridRows.length === 0) {
@@ -2407,8 +2408,22 @@ async function loadGrid() {
     } catch (err) {
         gridRows = [];
         gridRegionLoaded = null;
+        updateBrowseCount(null);
         loading.classList.add('hidden');
         showGridEmpty(`⚠️ Couldn't load VM sizes: ${escapeHtml(err.message)}`);
+    }
+}
+
+// Show the region's total VM-size count as a badge on the Browse tab (null hides it)
+function updateBrowseCount(count) {
+    const badge = document.getElementById('browseCount');
+    if (!badge) return;
+    if (count == null || count <= 0) {
+        badge.hidden = true;
+        badge.textContent = '';
+    } else {
+        badge.textContent = count.toLocaleString();
+        badge.hidden = false;
     }
 }
 

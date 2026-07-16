@@ -52,10 +52,18 @@
     <!-- Mode Tabs -->
     <div class="mode-tabs" role="tablist" aria-label="Tool mode">
         <button id="tabCompare" class="mode-tab active" role="tab" aria-selected="true" type="button" onclick="switchMode('compare')">
-            <span class="mode-tab-icon" aria-hidden="true">🔍</span> Find alternatives
+            <span class="mode-tab-icon" aria-hidden="true">🔍</span>
+            <span class="mode-tab-text">
+                <span class="mode-tab-title">Find alternatives</span>
+                <span class="mode-tab-sub">Compare a known VM size</span>
+            </span>
         </button>
         <button id="tabBrowse" class="mode-tab" role="tab" aria-selected="false" type="button" onclick="switchMode('browse')">
-            <span class="mode-tab-icon" aria-hidden="true">📋</span> Browse all VMs
+            <span class="mode-tab-icon" aria-hidden="true">📋</span>
+            <span class="mode-tab-text">
+                <span class="mode-tab-title">Browse all VMs <span class="mode-tab-badge" id="browseCount" hidden></span></span>
+                <span class="mode-tab-sub">Explore every size in a region</span>
+            </span>
         </button>
     </div>
 
