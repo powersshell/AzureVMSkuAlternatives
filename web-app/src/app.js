@@ -1321,7 +1321,7 @@ function displayAlternatives(alternatives) {
                 ${renderZonesChip(alt.zones, targetSku?.zones)}
                 ${regionAvail}
             </div>
-            <button type="button" class="card-cheapest-btn" title="Where is this cheapest?" aria-label="Where is ${alt.name} cheapest?" onclick="event.stopPropagation(); showRegionPriceComparison('${alt.name}')">🌍</button>
+            <button type="button" class="card-cheapest-btn" title="Where is this cheapest?" aria-label="Where is ${alt.name} cheapest?" onclick="event.stopPropagation(); showRegionPriceComparison('${alt.name}')"><span class="card-cheapest-icon">🌍</span><span class="card-cheapest-label">Where is this Cheapest?</span></button>
             <div class="card-price">
                 <div class="card-price-hourly">${formatHourlyPriceSafe(alt.pricing)}</div>
                 <div class="card-price-monthly">${formatMonthlyPriceSafe(alt.pricing)}/mo</div>

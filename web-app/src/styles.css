@@ -784,18 +784,26 @@ body {
 /* Card - "Where is this cheapest?" button (left of price) */
 .card-cheapest-btn {
     justify-self: end;
-    width: 34px;
-    height: 34px;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
-    line-height: 1;
+    gap: 2px;
+    width: 72px;
+    padding: 6px 4px;
+    line-height: 1.1;
     background: #f5f8fc;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.card-cheapest-icon { font-size: 16px; line-height: 1; }
+.card-cheapest-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--blue-start);
+    text-align: center;
 }
 .card-cheapest-btn:hover {
     background: #e8f1fb;
@@ -1178,14 +1186,10 @@ body {
     .card-cheapest-btn {
         justify-self: stretch;
         width: 100%;
+        flex-direction: row;
+        gap: 8px;
     }
-    .card-cheapest-btn::after {
-        content: "Where is this cheapest?";
-        font-size: 13px;
-        font-weight: 600;
-        margin-left: 8px;
-        color: var(--blue-start);
-    }
+    .card-cheapest-label { font-size: 13px; }
 }
 
 /* ---------------------------------------------------------------------------
