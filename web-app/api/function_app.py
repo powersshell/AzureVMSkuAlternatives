@@ -962,6 +962,169 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 
+def _grid_price_or_none(value):
+    """Return None for missing/zero pricing values; preserve real prices."""
+    if value is None or value == '':
+        return None
+    try:
+        if float(value) == 0:
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def _grid_family(name: str) -> str:
+    """Derive a display family from a VM SKU name."""
+    family = _get_series_prefix(name)
+    if family:
+        return family
+    match = re.match(r'^(?:Standard_|Basic_)?([A-Za-z]+)[0-9]*([a-z]*)_v(\d+)', name or '', re.IGNORECASE)
+    if match:
+        return f"{match.group(1)}{match.group(2)}v{match.group(3)}"
+    return ''
+
+
+def build_grid_row(entity: Dict, pricing_override: Optional[Dict] = None) -> Dict:
+    """
+    Build a rich VM grid row from a cached Table entity.
+    pricing_override uses fetch_bulk_region_pricing keys for non-USD currencies.
+    """
+    name = entity.get('name', '')
+    zones = entity.get('availabilityZones') or ''
+    pricing = pricing_override or {}
+
+    def price(override_key: str, entity_key: str):
+        if pricing_override is not None and override_key in pricing:
+            return _grid_price_or_none(pricing.get(override_key))
+        return _grid_price_or_none(entity.get(entity_key))
+
+    row = {
+        'name': name,
+        'family': _grid_family(name),
+        'vCPUs': entity.get('vCPUs', 0),
+        'memoryGB': entity.get('memoryGB', 0),
+        'gpuCount': entity.get('gpuCount', 0),
+        'gpuType': entity.get('gpuType', ''),
+        'acu': entity.get('acu', 0),
+        'vCPUsPerCore': entity.get('vCPUsPerCore', 0),
+        'nvme': bool(entity.get('nvme', False)),
+        'cpuVendor': entity.get('cpuVendor', 'Intel'),
+        'architecture': entity.get('architecture', 'x64'),
+        'maxNics': entity.get('maxNics', 0),
+        'maxDataDisks': entity.get('maxDataDisks', 0),
+        'uncachedDiskIOPS': entity.get('uncachedDiskIOPS', 0),
+        'rdmaEnabled': bool(entity.get('rdmaEnabled', False)),
+        'confidentialComputingType': entity.get('confidentialComputingType', ''),
+        'trustedLaunch': bool(entity.get('trustedLaunch', False)),
+        'availabilityZones': [zone.strip() for zone in zones.split(',') if zone.strip()],
+        'cpuPerfScore': entity.get('cpuPerfScore'),
+        'cpuGeneration': entity.get('cpuGeneration'),
+        'hourlyLinux': price('hourlyPrice', 'hourlyPriceUSD'),
+        'monthlyLinux': price('monthlyPrice', 'monthlyPriceUSD'),
+        'hourlyWindows': price('hourlyPriceWindows', 'hourlyPriceUSDWindows'),
+        'monthlyWindows': price('monthlyPriceWindows', 'monthlyPriceUSDWindows'),
+        'ri1YearHourlyLinux': price('ri1YearHourly', 'ri1YearHourlyUSD'),
+        'ri1YearMonthlyLinux': price('ri1YearMonthly', 'ri1YearMonthlyUSD'),
+        'ri3YearHourlyLinux': price('ri3YearHourly', 'ri3YearHourlyUSD'),
+        'ri3YearMonthlyLinux': price('ri3YearMonthly', 'ri3YearMonthlyUSD'),
+        'ri1YearHourlyWindows': price('ri1YearHourlyWindows', 'ri1YearHourlyUSDWindows'),
+        'ri1YearMonthlyWindows': price('ri1YearMonthlyWindows', 'ri1YearMonthlyUSDWindows'),
+        'ri3YearHourlyWindows': price('ri3YearHourlyWindows', 'ri3YearHourlyUSDWindows'),
+        'ri3YearMonthlyWindows': price('ri3YearMonthlyWindows', 'ri3YearMonthlyUSDWindows'),
+    }
+    _enrich_cpu_perf(row, name)
+    retirement_info = _get_retirement_info(name)
+    if retirement_info:
+        row.update(retirement_info)
+    return row
+
+
+# ============================================================================
+# HTTP Route: /grid - Rich VM SKU grid data from cache
+# ============================================================================
+@app.route(route="grid", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def grid(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Azure Function to list all VM SKUs for a region with specs and pricing.
+    Used by the Browse all VMs grid for client-side filtering and sorting.
+    """
+    logging.info('Processing VM grid request')
+
+    location = req.params.get('location')
+    currency = req.params.get('currency', 'USD')
+
+    if not location:
+        return func.HttpResponse(
+            json.dumps({'error': 'location parameter is required'}),
+            mimetype='application/json',
+            status_code=400
+        )
+
+    if not currency or not re.match(r'^[A-Za-z]{3}$', currency):
+        return func.HttpResponse(
+            json.dumps({'error': 'currency parameter must be a 3-letter code'}),
+            mimetype='application/json',
+            status_code=400
+        )
+    currency = currency.upper()
+
+    storage_account_name = os.environ.get('SKU_CACHE_STORAGE_ACCOUNT')
+
+    if not storage_account_name:
+        return func.HttpResponse(
+            json.dumps({'error': 'SKU cache not configured'}),
+            mimetype='application/json',
+            status_code=500
+        )
+
+    try:
+        credential = DefaultAzureCredential()
+        table_service = TableServiceClient(
+            endpoint=f"https://{storage_account_name}.table.core.windows.net",
+            credential=credential
+        )
+
+        table_client = table_service.get_table_client("vmskus")
+        query_filter = f"PartitionKey eq '{location}'"
+        entities = table_client.query_entities(query_filter=query_filter)
+
+        pricing_by_sku = {}
+        if currency != 'USD':
+            pricing_by_sku = fetch_bulk_region_pricing(location, currency)
+
+        skus = []
+        for entity in entities:
+            pricing_override = pricing_by_sku.get(entity.get('name')) if currency != 'USD' else None
+            skus.append(build_grid_row(entity, pricing_override=pricing_override))
+
+        skus.sort(key=lambda x: (x['vCPUs'], x['memoryGB']))
+
+        response_data = {
+            'location': location,
+            'currency': currency,
+            'count': len(skus),
+            'skus': skus
+        }
+
+        return func.HttpResponse(
+            json.dumps(response_data),
+            mimetype='application/json',
+            status_code=200
+        )
+
+    except Exception as e:
+        logging.error(f'Error building VM grid: {e}')
+        return func.HttpResponse(
+            json.dumps({
+                'error': 'Failed to retrieve VM grid',
+                'details': str(e)
+            }),
+            mimetype='application/json',
+            status_code=500
+        )
+
+
 # ============================================================================
 # Timer Trigger: refresh_sku_cache - Daily SKU cache refresh
 # ============================================================================

@@ -53,7 +53,82 @@ from function_app import (
     _asymmetric_score,
     select_region_prices,
     _is_payg_item,
+    build_grid_row,
 )
+
+
+# ============================================================================
+# build_grid_row tests
+# ============================================================================
+
+class TestBuildGridRow:
+
+    @pytest.mark.unit
+    def test_family_derivation(self):
+        assert build_grid_row({'name': 'Standard_D2s_v5'})['family'] == 'Dsv5'
+        assert build_grid_row({'name': 'Standard_E96-24ads_v6'})['family'] == 'Eadsv6'
+
+    @pytest.mark.unit
+    def test_nvme_and_gpu_fields_pass_through(self):
+        row = build_grid_row({
+            'name': 'Standard_NC24ads_A100_v4',
+            'nvme': True,
+            'gpuCount': 1,
+            'gpuType': 'A100',
+        })
+
+        assert row['nvme'] is True
+        assert row['gpuCount'] == 1
+        assert row['gpuType'] == 'A100'
+
+    @pytest.mark.unit
+    def test_zero_and_missing_prices_are_none(self):
+        row = build_grid_row({
+            'name': 'Standard_D2s_v5',
+            'hourlyPriceUSD': 0,
+            'monthlyPriceUSD': 0.0,
+        })
+
+        assert row['hourlyLinux'] is None
+        assert row['monthlyLinux'] is None
+        assert row['hourlyWindows'] is None
+
+    @pytest.mark.unit
+    def test_pricing_override_takes_precedence(self):
+        row = build_grid_row(
+            {
+                'name': 'Standard_D2s_v5',
+                'hourlyPriceUSD': 0.1,
+                'monthlyPriceUSD': 73.0,
+                'hourlyPriceUSDWindows': 0.2,
+                'ri1YearHourlyUSD': 0.05,
+            },
+            pricing_override={
+                'hourlyPrice': 0.15,
+                'monthlyPrice': 109.5,
+                'hourlyPriceWindows': 0.25,
+                'ri1YearHourly': 0.07,
+            }
+        )
+
+        assert row['hourlyLinux'] == 0.15
+        assert row['monthlyLinux'] == 109.5
+        assert row['hourlyWindows'] == 0.25
+        assert row['ri1YearHourlyLinux'] == 0.07
+
+    @pytest.mark.unit
+    def test_availability_zones_list(self):
+        row = build_grid_row({
+            'name': 'Standard_D2s_v5',
+            'availabilityZones': '1,2, 3',
+        })
+        empty_row = build_grid_row({
+            'name': 'Standard_D2s_v5',
+            'availabilityZones': '',
+        })
+
+        assert row['availabilityZones'] == ['1', '2', '3']
+        assert empty_row['availabilityZones'] == []
 
 
 # ============================================================================
@@ -788,5 +863,4 @@ class TestSelectRegionPrices:
         assert _is_payg_item(self._item('eastus', 0.1)) is True
         assert _is_payg_item(self._item('eastus', 0.1, sku_meter='D2s v5 Spot')) is False
         assert _is_payg_item(self._item('eastus', 0.1, itype='Reservation')) is False
-
 

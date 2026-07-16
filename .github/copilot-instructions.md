@@ -33,6 +33,7 @@
   - `/api/compare_vms` (GET/POST)
   - `/api/compare_regions` (GET) — cross-region price comparison for one SKU
   - `/api/skus`
+  - `/api/grid` (GET) — all VM sizes for a region with specs + pricing (Browse/Grid view)
   - `/api/compare_details`
   - `/api/health`
 - Infra is Bicep-first under `web-app/infra` with:
