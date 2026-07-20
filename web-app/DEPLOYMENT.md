@@ -84,14 +84,14 @@ AZURE_STATIC_WEB_APPS_API_TOKEN=<your-token-here>
 ```bash
 az group create \
   --name rg-vmsku-alternatives \
-  --location eastus2
+  --location centralus
 ```
 
 #### Step 2: Deploy Bicep Template
 ```bash
 az deployment sub create \
   --name vmsku-deployment \
-  --location eastus2 \
+  --location centralus \
   --template-file infra/deploy.bicep \
   --parameters infra/deploy.parameters.json
 ```
