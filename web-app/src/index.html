@@ -273,6 +273,7 @@
                     <div class="results-controls">
                         <div class="pricing-model-toggle">
                             <button id="btn-payg" class="btn-pricing active" onclick="setPricingModel('payg')">PAYG</button>
+                            <button id="btn-spot" class="btn-pricing" onclick="setPricingModel('spot')" title="Linux Spot pricing (variable, evictable)">Spot</button>
                             <button id="btn-ri1year" class="btn-pricing" onclick="setPricingModel('ri1year')">1yr RI</button>
                             <button id="btn-ri3year" class="btn-pricing" onclick="setPricingModel('ri3year')">3yr RI</button>
                         </div>
@@ -394,6 +395,7 @@
             <div class="grid-price-row">
                 <div class="pricing-model-toggle">
                     <button id="btn-grid-payg" class="btn-pricing active" type="button" onclick="setPricingModel('payg')">PAYG</button>
+                    <button id="btn-grid-spot" class="btn-pricing" type="button" onclick="setPricingModel('spot')" title="Linux Spot pricing (variable, evictable)">Spot</button>
                     <button id="btn-grid-ri1year" class="btn-pricing" type="button" onclick="setPricingModel('ri1year')">1yr RI</button>
                     <button id="btn-grid-ri3year" class="btn-pricing" type="button" onclick="setPricingModel('ri3year')">3yr RI</button>
                 </div>
@@ -449,6 +451,19 @@
                 <button type="button" class="region-price-close" id="regionPriceClose" aria-label="Close">✕</button>
             </div>
             <div class="region-price-body" id="regionPriceBody">
+                <!-- Populated by app.js -->
+            </div>
+        </div>
+    </div>
+
+    <div id="priceHistoryModal" class="region-price-modal hidden" role="dialog" aria-modal="true" aria-labelledby="priceHistoryModalTitle">
+        <div class="region-price-backdrop" id="priceHistoryBackdrop"></div>
+        <div class="region-price-dialog">
+            <div class="region-price-header">
+                <h3 id="priceHistoryModalTitle">Price history</h3>
+                <button type="button" class="region-price-close" id="priceHistoryClose" aria-label="Close">✕</button>
+            </div>
+            <div class="region-price-body" id="priceHistoryBody">
                 <!-- Populated by app.js -->
             </div>
         </div>
