@@ -1414,9 +1414,13 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
 
 
 # ============================================================================
-# HTTP Route: /admin/refresh-region - Manual cache refresh for a region
+# HTTP Route: /refresh-region - Manual cache refresh for a region
+# NOTE: The route intentionally does NOT start with "admin/". The Azure
+# Functions host reserves the "admin" route prefix for its built-in
+# management API and silently refuses to register HTTP functions under it
+# (the function shows in ARM metadata but returns 404 at runtime).
 # ============================================================================
-@app.route(route="admin/refresh-region", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+@app.route(route="refresh-region", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
 def admin_refresh_region(req: func.HttpRequest) -> func.HttpResponse:
     """
     Manually trigger a cache refresh for a specific region.
