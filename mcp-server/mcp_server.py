@@ -29,7 +29,7 @@ import httpx
 from fastmcp import FastMCP
 
 # The deployed Azure Functions API — no auth required
-API_BASE = "https://vmsku-api-functions-flex.azurewebsites.net/api"
+API_BASE = "https://vmsku-api-func-cus.azurewebsites.net/api"
 
 # Azure Functions Flex Consumption can have a cold start of 3-5s on first call
 HTTP_TIMEOUT = 60.0

@@ -41,7 +41,7 @@ def api_base_url():
     """Base URL for the live API. Defaults to the deployed Functions app."""
     return os.environ.get(
         'API_BASE_URL',
-        'https://vmsku-api-functions-flex.azurewebsites.net/api'
+        'https://vmsku-api-func-cus.azurewebsites.net/api'
     )
 
 

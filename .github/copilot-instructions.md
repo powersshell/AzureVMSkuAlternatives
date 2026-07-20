@@ -86,7 +86,7 @@ When docs and code conflict, treat runtime code and workflows as source of truth
 
 ### 7) PR preview CORS — automatic via platform `allowedOrigins: '*'`
 The frontend (`web-app/src/app.js`) calls the Functions API **cross-origin** at
-`https://vmsku-api-functions-flex.azurewebsites.net/api` (the SWA rewrite can't do the POST flow).
+`https://vmsku-api-func-cus.azurewebsites.net/api` (the SWA rewrite can't do the POST flow).
 
 **CORS is handled by the App Service platform allowlist set to `*`** (allow all origins), NOT in
 application code. This is deliberate: the API is anonymous, read-only, public Azure pricing/spec
@@ -112,7 +112,7 @@ Notes:
   catches the Flex short-circuit regression). This keeps the live config correct without a full
   infra deploy.
 - Verify a preview origin works (simple GET and POST preflight):
-  `Invoke-WebRequest 'https://vmsku-api-functions-flex.azurewebsites.net/api/skus?location=eastus2' -Headers @{Origin='<preview-origin>'} -UseBasicParsing`
+  `Invoke-WebRequest 'https://vmsku-api-func-cus.azurewebsites.net/api/skus?location=eastus2' -Headers @{Origin='<preview-origin>'} -UseBasicParsing`
   and an `OPTIONS` preflight against `/api/compare_vms` with `Access-Control-Request-Method: POST`
   must return an `Access-Control-Allow-Origin` header.
 

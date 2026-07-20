@@ -3,7 +3,7 @@
 
 param(
     [string]$ResourceGroup = "rg-vmsku-alternatives",
-    [string]$FunctionAppName = "vmsku-api-functions-flex"
+    [string]$FunctionAppName = "vmsku-api-func-cus"
 )
 
 Write-Host "═══════════════════════════════════════════════════════" -ForegroundColor Cyan

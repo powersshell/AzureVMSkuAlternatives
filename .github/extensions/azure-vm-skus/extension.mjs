@@ -1,6 +1,6 @@
 import { joinSession } from "@github/copilot-sdk/extension";
 
-const API_BASE = "https://vmsku-api-functions-flex.azurewebsites.net/api";
+const API_BASE = "https://vmsku-api-func-cus.azurewebsites.net/api";
 const TIMEOUT_MS = 60_000;
 
 async function apiFetch(path, options = {}) {

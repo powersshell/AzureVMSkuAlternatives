@@ -141,7 +141,7 @@ Azure Container App (vmsku-mcp-server)
         │  HTTPS
         ▼
 Azure Functions API
-  vmsku-api-functions-flex.azurewebsites.net/api
+  vmsku-api-func-cus.azurewebsites.net/api
         │
         ▼
 Azure Table Storage (SKU cache) + Azure Retail Pricing API

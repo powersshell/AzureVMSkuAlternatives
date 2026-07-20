@@ -1,6 +1,6 @@
 // API Configuration
 // Direct connection to Flex Consumption Function App (Static Web App rewrite doesn't support POST)
-const API_BASE_URL = 'https://vmsku-api-functions-flex.azurewebsites.net/api';
+const API_BASE_URL = 'https://vmsku-api-func-cus.azurewebsites.net/api';
 const TELEMETRY_CONFIG_ENDPOINT = `${API_BASE_URL}/telemetry_config`;
 const ANALYTICS_USER_KEY = 'vmsku_anonymous_user_id';
 const ANALYTICS_USER_KEY_CREATED_AT = 'vmsku_anonymous_user_id_created_at';

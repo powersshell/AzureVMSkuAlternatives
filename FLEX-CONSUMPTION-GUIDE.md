@@ -121,7 +121,7 @@ Network Rules:
 
 ### Function App
 ```
-Name: vmsku-api-functions-flex
+Name: vmsku-api-func-cus
 Plan: Flex Consumption (FC1)
 Runtime: Python 3.11
 OS: Linux
@@ -160,7 +160,7 @@ Storage Connection (Keyless):
 
 ```powershell
 # Deploy infrastructure
-.\Deploy-Flex-Functions.ps1 -ResourceGroupName "rg-vmsku-alternatives" -FunctionsAppName "vmsku-api-functions-flex"
+.\Deploy-Flex-Functions.ps1 -ResourceGroupName "rg-vmsku-alternatives" -FunctionsAppName "vmsku-api-func-cus"
 
 # Infrastructure only (skip code deployment)
 .\Deploy-Flex-Functions.ps1 -SkipDeployment
@@ -183,13 +183,13 @@ Storage Connection (Keyless):
 2. Sign in to Azure (Ctrl+Shift+P → Azure: Sign In)
 3. Right-click `web-app/api` folder
 4. Select "Deploy to Function App..."
-5. Choose `vmsku-api-functions-flex`
+5. Choose `vmsku-api-func-cus`
 6. VS Code uses your Azure AD credentials (no keys needed)
 
 **Option 2: Azure Functions Core Tools**
 ```bash
 cd web-app/api
-func azure functionapp publish vmsku-api-functions-flex --python
+func azure functionapp publish vmsku-api-func-cus --python
 ```
 
 **Option 3: GitHub Actions (CI/CD)**
@@ -202,7 +202,7 @@ func azure functionapp publish vmsku-api-functions-flex --python
     
 - uses: Azure/functions-action@v1
   with:
-    app-name: vmsku-api-functions-flex
+    app-name: vmsku-api-func-cus
     package: ./web-app/api
 ```
 
@@ -211,10 +211,10 @@ func azure functionapp publish vmsku-api-functions-flex --python
 ### Verify Infrastructure
 ```powershell
 # Check Function App
-az functionapp show --name vmsku-api-functions-flex --resource-group rg-vmsku-alternatives
+az functionapp show --name vmsku-api-func-cus --resource-group rg-vmsku-alternatives
 
 # Check VNet integration
-az functionapp vnet-integration list --name vmsku-api-functions-flex --resource-group rg-vmsku-alternatives
+az functionapp vnet-integration list --name vmsku-api-func-cus --resource-group rg-vmsku-alternatives
 
 # Check private endpoints
 az network private-endpoint list --resource-group rg-vmsku-alternatives
@@ -226,10 +226,10 @@ az storage account show --name <storage-name> --resource-group rg-vmsku-alternat
 ### Test Function Endpoints
 ```powershell
 # Health check
-curl https://vmsku-api-functions-flex.azurewebsites.net/api/health
+curl https://vmsku-api-func-cus.azurewebsites.net/api/health
 
 # Compare VMs
-curl "https://vmsku-api-functions-flex.azurewebsites.net/api/compare_vms?currentVmSize=Standard_D2s_v3&region=eastus"
+curl "https://vmsku-api-func-cus.azurewebsites.net/api/compare_vms?currentVmSize=Standard_D2s_v3&region=eastus"
 ```
 
 ### Check Application Insights

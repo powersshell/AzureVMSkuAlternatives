@@ -3,7 +3,7 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "functionsAppName": {
-      "value": "vmsku-api-functions-flex"
+      "value": "vmsku-api-func-cus"
     },
     "location": {
       "value": "centralus"

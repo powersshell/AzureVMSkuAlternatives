@@ -190,10 +190,10 @@ Run manually via GitHub UI:
 
 ```bash
 # Health check
-curl https://vmsku-api-functions-flex.azurewebsites.net/api/health
+curl https://vmsku-api-func-cus.azurewebsites.net/api/health
 
 # Compare VMs
-curl "https://vmsku-api-functions-flex.azurewebsites.net/api/compare_vms?currentVmSize=Standard_D2s_v3&region=eastus"
+curl "https://vmsku-api-func-cus.azurewebsites.net/api/compare_vms?currentVmSize=Standard_D2s_v3&region=eastus"
 ```
 
 ## Troubleshooting

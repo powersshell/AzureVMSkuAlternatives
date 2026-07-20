@@ -24,7 +24,7 @@ on:
         default: ''
 
 env:
-  AZURE_FUNCTIONAPP_NAME: 'vmsku-api-functions-flex'
+  AZURE_FUNCTIONAPP_NAME: 'vmsku-api-func-cus'
   AZURE_FUNCTIONAPP_PACKAGE_PATH: 'web-app/api'
   PYTHON_VERSION: '3.11'
   RESOURCE_GROUP: 'rg-vmsku-alternatives'
