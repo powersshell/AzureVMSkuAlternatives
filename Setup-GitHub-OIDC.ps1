@@ -132,23 +132,27 @@ if ($LASTEXITCODE -eq 0) {
     }
 }
 
-# User Access Administrator role at SUBSCRIPTION scope (assign RBAC roles, incl. the
-# subscription-scoped Reader assignment for the managed identity in deploy.bicep)
-Write-Host "   Assigning User Access Administrator role at subscription scope..." -ForegroundColor White
+# Role Based Access Control Administrator at SUBSCRIPTION scope (least-privilege role that
+# can CREATE role assignments — needed for the subscription-scoped Reader assignment for the
+# managed identity in deploy.bicep and the storage data-plane role assignments in
+# functions-app-flex.bicep). This is intentionally NARROWER than User Access Administrator:
+# it can only manage roleAssignments (no deny assignments, no broad Microsoft.Authorization/*).
+# Optionally tighten further with --condition to restrict assignable roles (see README).
+Write-Host "   Assigning Role Based Access Control Administrator role at subscription scope..." -ForegroundColor White
 
 $roleAssignment = az role assignment create `
-    --role "User Access Administrator" `
+    --role "Role Based Access Control Administrator" `
     --assignee $servicePrincipalId `
     --scope $subScope `
     --output json 2>&1
 
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "   ✅ User Access Administrator role assigned" -ForegroundColor Green
+    Write-Host "   ✅ Role Based Access Control Administrator role assigned" -ForegroundColor Green
 } else {
     if ($roleAssignment -like "*already exists*") {
-        Write-Host "   ℹ️  User Access Administrator role already assigned" -ForegroundColor Yellow
+        Write-Host "   ℹ️  Role Based Access Control Administrator role already assigned" -ForegroundColor Yellow
     } else {
-        Write-Host "   ❌ Failed to assign User Access Administrator role" -ForegroundColor Red
+        Write-Host "   ❌ Failed to assign Role Based Access Control Administrator role" -ForegroundColor Red
         Write-Host "   Error: $roleAssignment" -ForegroundColor Red
     }
 }
@@ -206,7 +210,7 @@ Write-Host "  Issuer: https://token.actions.githubusercontent.com`n" -Foreground
 
 Write-Host "Azure Permissions:" -ForegroundColor White
 Write-Host "  ✅ Contributor on subscription" -ForegroundColor Green
-Write-Host "  ✅ User Access Administrator on subscription" -ForegroundColor Green
+Write-Host "  ✅ Role Based Access Control Administrator on subscription" -ForegroundColor Green
 Write-Host "  ✅ Reader on subscription`n" -ForegroundColor Green
 
 Write-Host "Next Steps:" -ForegroundColor Yellow
@@ -254,8 +258,10 @@ Audiences: api://AzureADTokenExchange
 ## Azure Role Assignments
 # Subscription scope is required: deploy.bicep is subscription-scoped (creates the RG and
 # assigns a subscription-scoped Reader role to the Function App managed identity).
+# Role Based Access Control Administrator is used instead of User Access Administrator as the
+# least-privilege role that can still create the role assignments the Bicep requires.
 - Contributor on /subscriptions/$subscriptionId
-- User Access Administrator on /subscriptions/$subscriptionId
+- Role Based Access Control Administrator on /subscriptions/$subscriptionId
 - Reader on /subscriptions/$subscriptionId
 "@
 
