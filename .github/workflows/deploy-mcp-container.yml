@@ -15,6 +15,11 @@ on:
         required: false
         type: boolean
         default: false
+      location:
+        description: 'Azure region for the MCP Container App (decoupled from the API; use a region with Container Apps capacity)'
+        required: false
+        type: string
+        default: 'eastus2'
 
 env:
   REGISTRY: ghcr.io
@@ -89,6 +94,7 @@ jobs:
           template: ./web-app/infra/modules/container-app-mcp.bicep
           parameters: >
             containerImage=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            location=${{ github.event.inputs.location || 'eastus2' }}
           failOnStdErr: false
 
       - name: Get MCP endpoint URL
