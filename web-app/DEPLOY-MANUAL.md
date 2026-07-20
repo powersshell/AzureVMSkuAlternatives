@@ -14,11 +14,11 @@ Add these two secrets:
 
 **Secret 1:**
 - Name: `AZURE_STATIC_WEB_APPS_API_TOKEN`
-- Value: `bb18181120161d5f889a641c667d99d3d345cc83e2e55cb34885414b322ee7e001-349f170d-5f2f-4086-9abc-a622e14c1efa00f01030784c5d0f`
+- Value: `<YOUR_SWA_DEPLOYMENT_TOKEN>`  <!-- Static Web App > Manage deployment token -->
 
 **Secret 2:**
 - Name: `AZURE_SUBSCRIPTION_ID`
-- Value: `e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7`
+- Value: `<YOUR_SUBSCRIPTION_ID>`
 
 ### Step 2: Push to GitHub
 
@@ -48,7 +48,7 @@ npm install -g @azure/static-web-apps-cli
 
 # Deploy
 cd C:\Azure\AzureVMSkuAlternatives\web-app
-swa deploy --app-location ./src --api-location ./api --deployment-token bb18181120161d5f889a641c667d99d3d345cc83e2e55cb34885414b322ee7e001-349f170d-5f2f-4086-9abc-a622e14c1efa00f01030784c5d0f
+swa deploy --app-location ./src --api-location ./api --deployment-token <YOUR_SWA_DEPLOYMENT_TOKEN>
 ```
 
 ---
@@ -84,5 +84,5 @@ Test the comparison tool with:
 **Issue:** API returns errors
 - **Solution:** Configure subscription ID in app settings:
   ```bash
-  az staticwebapp appsettings set --name vmsku-alternatives-webapp --resource-group rg-vmsku-alternatives --setting-names AZURE_SUBSCRIPTION_ID="e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7"
+  az staticwebapp appsettings set --name vmsku-alternatives-webapp --resource-group rg-vmsku-alternatives --setting-names AZURE_SUBSCRIPTION_ID="<YOUR_SUBSCRIPTION_ID>"
   ```

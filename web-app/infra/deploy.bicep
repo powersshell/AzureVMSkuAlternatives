@@ -5,7 +5,7 @@ targetScope = 'subscription'
 param resourceGroupName string = 'rg-vmsku-alternatives'
 
 @description('Location for all resources')
-param location string = 'eastus2'
+param location string = 'centralus'
 
 @description('Name of the Static Web App')
 param staticWebAppName string = 'vmsku-alternatives-webapp'

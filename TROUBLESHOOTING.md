@@ -204,9 +204,9 @@ Click **"New repository secret"** and add **exactly as shown**:
 
 | Secret Name | Value |
 |-------------|-------|
-| `AZURE_CLIENT_ID` | `f8a64527-aad0-4015-acae-513733a8c0f7` |
-| `AZURE_TENANT_ID` | `ec509388-6a83-4654-aaa8-9f078119b26d` |
-| `AZURE_SUBSCRIPTION_ID` | `e5ff2526-4548-4b13-b2fd-0f82ef7cd9e7` |
+| `AZURE_CLIENT_ID` | `<YOUR_CLIENT_ID>` |
+| `AZURE_TENANT_ID` | `<YOUR_TENANT_ID>` |
+| `AZURE_SUBSCRIPTION_ID` | `<YOUR_SUBSCRIPTION_ID>` |
 
 **Important:**
 - ✅ Names are **case-sensitive** - must match exactly

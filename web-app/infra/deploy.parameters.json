@@ -6,7 +6,7 @@
       "value": "rg-vmsku-alternatives"
     },
     "location": {
-      "value": "eastus2"
+      "value": "centralus"
     },
     "staticWebAppName": {
       "value": "vmsku-alternatives-webapp"
