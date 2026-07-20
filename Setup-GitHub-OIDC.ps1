@@ -105,14 +105,20 @@ Write-Host "   ✅ Federated credential configured" -ForegroundColor Green
 # Assign Azure permissions
 Write-Host "`n5. Assigning Azure permissions..." -ForegroundColor Cyan
 
-# Contributor role at resource group scope (can deploy resources and functions)
-Write-Host "   Assigning Contributor role at resource group scope..." -ForegroundColor White
-$rgScope = "/subscriptions/$subscriptionId/resourceGroups/$ResourceGroupName"
+# Contributor role at SUBSCRIPTION scope
+# NOTE: deploy.bicep is a subscription-scoped template (targetScope='subscription') that
+# CREATES the resource group and assigns a subscription-scoped Reader role to the Function
+# App managed identity. Creating an RG, submitting a subscription-scoped deployment, and
+# creating subscription-scoped role assignments all require rights at the SUBSCRIPTION
+# scope — RG-scoped Contributor/UAA is not sufficient and fails with ResourceGroupNotFound.
+$subScope = "/subscriptions/$subscriptionId"
+
+Write-Host "   Assigning Contributor role at subscription scope..." -ForegroundColor White
 
 $roleAssignment = az role assignment create `
     --role "Contributor" `
     --assignee $servicePrincipalId `
-    --scope $rgScope `
+    --scope $subScope `
     --output json 2>&1
 
 if ($LASTEXITCODE -eq 0) {
@@ -126,13 +132,14 @@ if ($LASTEXITCODE -eq 0) {
     }
 }
 
-# User Access Administrator role at resource group scope (can assign RBAC roles)
-Write-Host "   Assigning User Access Administrator role at resource group scope..." -ForegroundColor White
+# User Access Administrator role at SUBSCRIPTION scope (assign RBAC roles, incl. the
+# subscription-scoped Reader assignment for the managed identity in deploy.bicep)
+Write-Host "   Assigning User Access Administrator role at subscription scope..." -ForegroundColor White
 
 $roleAssignment = az role assignment create `
     --role "User Access Administrator" `
     --assignee $servicePrincipalId `
-    --scope $rgScope `
+    --scope $subScope `
     --output json 2>&1
 
 if ($LASTEXITCODE -eq 0) {
@@ -148,7 +155,6 @@ if ($LASTEXITCODE -eq 0) {
 
 # Reader role at subscription scope (for reading VM SKUs)
 Write-Host "   Assigning Reader role at subscription scope..." -ForegroundColor White
-$subScope = "/subscriptions/$subscriptionId"
 
 $roleAssignment = az role assignment create `
     --role "Reader" `
@@ -199,7 +205,8 @@ Write-Host "  Branch: main" -ForegroundColor Gray
 Write-Host "  Issuer: https://token.actions.githubusercontent.com`n" -ForegroundColor Gray
 
 Write-Host "Azure Permissions:" -ForegroundColor White
-Write-Host "  ✅ Contributor on $ResourceGroupName" -ForegroundColor Green
+Write-Host "  ✅ Contributor on subscription" -ForegroundColor Green
+Write-Host "  ✅ User Access Administrator on subscription" -ForegroundColor Green
 Write-Host "  ✅ Reader on subscription`n" -ForegroundColor Green
 
 Write-Host "Next Steps:" -ForegroundColor Yellow
@@ -245,7 +252,10 @@ Subject: repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/main
 Audiences: api://AzureADTokenExchange
 
 ## Azure Role Assignments
-- Contributor on /subscriptions/$subscriptionId/resourceGroups/$ResourceGroupName
+# Subscription scope is required: deploy.bicep is subscription-scoped (creates the RG and
+# assigns a subscription-scoped Reader role to the Function App managed identity).
+- Contributor on /subscriptions/$subscriptionId
+- User Access Administrator on /subscriptions/$subscriptionId
 - Reader on /subscriptions/$subscriptionId
 "@
 
