@@ -40,12 +40,6 @@ param tags object = {
 @description('Container image for the MCP server (e.g. ghcr.io/owner/repo:latest). Leave empty to skip MCP deployment.')
 param mcpContainerImage string = ''
 
-@description('Entra ID Application (client) ID for MCP server Easy Auth. Required when mcpContainerImage is set.')
-param mcpEntraClientId string = ''
-
-@description('Entra ID Tenant ID for MCP server Easy Auth. Required when mcpContainerImage is set.')
-param mcpEntraTenantId string = ''
-
 // Create resource group
 resource resourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = {
   name: resourceGroupName
@@ -66,8 +60,6 @@ module mainInfra 'main.bicep' = {
     repositoryToken: repositoryToken
     tags: tags
     mcpContainerImage: mcpContainerImage
-    mcpEntraClientId: mcpEntraClientId
-    mcpEntraTenantId: mcpEntraTenantId
   }
 }
 
@@ -93,11 +85,14 @@ output staticWebAppUrl string = mainInfra.outputs.staticWebAppUrl
 @description('Static Web App resource ID')
 output staticWebAppId string = mainInfra.outputs.staticWebAppId
 
-@description('Application Insights Instrumentation Key')
-output appInsightsInstrumentationKey string = mainInfra.outputs.appInsightsInstrumentationKey
+@description('Static Web App name')
+output staticWebAppName string = mainInfra.outputs.staticWebAppName
 
-@description('Application Insights Connection String')
-output appInsightsConnectionString string = mainInfra.outputs.appInsightsConnectionString
+@description('Log Analytics Workspace name')
+output logAnalyticsWorkspaceName string = mainInfra.outputs.logAnalyticsWorkspaceName
+
+@description('Application Insights resource ID')
+output appInsightsId string = mainInfra.outputs.appInsightsId
 
 @description('Managed Identity Principal ID')
 output identityPrincipalId string = sku == 'Standard' ? mainInfra.outputs.identityPrincipalId : ''

@@ -35,12 +35,6 @@
     },
     "mcpContainerImage": {
       "value": ""
-    },
-    "mcpEntraClientId": {
-      "value": ""
-    },
-    "mcpEntraTenantId": {
-      "value": ""
     }
   }
 }
