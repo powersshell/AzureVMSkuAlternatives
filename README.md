@@ -9,15 +9,9 @@
 
 ## 📋 Recent Changes
 
-### 2026-07-16
-- **improvement:** Redesigned the **mode switcher** ("Find alternatives" / "Browse all VMs") into two prominent, high-contrast **cards** — each with an icon, bold title, and a one-line description — and added a live **count badge** on **Browse all VMs** showing how many VM sizes exist in the selected region.
-- **fix:** **Browse all VMs** results are now fully scrollable on desktop — the results table scrolls within the page (with column headers pinned) so every row is reachable, and pagination stays visible at the bottom.
-- **feature:** New **Browse all VMs** mode — a top-level tab switches between "Find alternatives" (the compare tool) and a browsable, sortable, searchable grid of **every** VM size in the selected region. Filter by family, vCPU/RAM range, GPU-only, and CPU vendor; sort any column (including live price); page through results; and export the filtered grid to CSV/Excel. Each row can jump to **Find alternatives** for that SKU or open **Where is this cheapest?**. Backed by a new `/api/grid` endpoint.
-- **feature:** New **Excel (.xlsx) export** alongside CSV — a three-sheet workbook (Comparison Info, Summary, Specifications) with prices and numeric specs written as real numbers so they sort and sum natively in Excel.
-- **feature:** New **"Where is this cheapest?"** cross-region price comparison — from the source SKU panel, open a dialog listing the selected VM's pay-as-you-go price across every Azure region where it's offered, sorted cheapest-first with the cheapest region highlighted and your current region flagged. Shows hourly/monthly prices, the premium versus the cheapest region, and the maximum monthly savings. Respects the selected currency and Linux/Windows toggle.
-- **improvement:** The **"Where is this cheapest?"** action is now also available on every recommended alternative — each result card has a 🌍 button to the left of its price that opens the same cross-region comparison for that SKU.
-- **improvement:** Removed the redundant **CPU Vendor** filter from the source-SKU search area — vendor filtering now lives only on the **Alternatives** results, where it's most useful.
-- **improvement:** The detailed comparison view now handles missing **ACU** values correctly (Azure only publishes ACU for certain — mostly older/mid-generation — VM series). Instead of a misleading zero-based delta, it shows "ACU: not published by Azure for at least one of these sizes" when either size lacks a published ACU.
+### 2026-07-20
+- **feature:** New **Spot** option on the pricing toggle (with Pay-as-you-go and reserved) on both alternatives cards and the Browse grid — showing the deeply discounted Linux Spot price for interruptible workloads. When Spot is selected the OS toggle locks to Linux, sizes without a Spot price show "N/A", and Spot columns are included in CSV/Excel exports.
+- **feature:** New **price history** — daily snapshots of each size's Linux/Windows/Spot price. Cards show an inline **sparkline** and a **% change badge** (green = price fell, red = rose), and a 📈 button opens a **Price history** dialog with a multi-line chart, date axis, and summary stats (first, last, % change, min, max). Prices shown in USD; history accrues going forward via a new `/api/history` endpoint.
 
 📄 [Full changelog →](CHANGELOG.md)
 

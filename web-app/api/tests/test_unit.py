@@ -54,6 +54,11 @@ from function_app import (
     select_region_prices,
     _is_payg_item,
     build_grid_row,
+    _price_changed,
+    record_price_history,
+    prune_price_history,
+    _history_summary,
+    _build_history_series,
 )
 
 
@@ -863,4 +868,204 @@ class TestSelectRegionPrices:
         assert _is_payg_item(self._item('eastus', 0.1)) is True
         assert _is_payg_item(self._item('eastus', 0.1, sku_meter='D2s v5 Spot')) is False
         assert _is_payg_item(self._item('eastus', 0.1, itype='Reservation')) is False
+
+
+# ============================================================================
+# I-A Spot price mapping (build_grid_row)
+# ============================================================================
+
+class TestSpotGridMapping:
+
+    @pytest.mark.unit
+    def test_spot_fields_from_entity(self):
+        row = build_grid_row({
+            'name': 'Standard_D2s_v5',
+            'spotHourlyPriceUSD': 0.012,
+            'spotMonthlyPriceUSD': 8.76,
+        })
+        assert row['spotHourlyLinux'] == 0.012
+        assert row['spotMonthlyLinux'] == 8.76
+
+    @pytest.mark.unit
+    def test_spot_zero_is_none(self):
+        row = build_grid_row({
+            'name': 'Standard_D2s_v5',
+            'spotHourlyPriceUSD': 0,
+            'spotMonthlyPriceUSD': 0.0,
+        })
+        assert row['spotHourlyLinux'] is None
+        assert row['spotMonthlyLinux'] is None
+
+    @pytest.mark.unit
+    def test_spot_override_takes_precedence(self):
+        row = build_grid_row(
+            {'name': 'Standard_D2s_v5', 'spotHourlyPriceUSD': 0.012},
+            pricing_override={'spotHourly': 0.02, 'spotMonthly': 14.6},
+        )
+        assert row['spotHourlyLinux'] == 0.02
+        assert row['spotMonthlyLinux'] == 14.6
+
+
+# ============================================================================
+# I-G Price history helpers
+# ============================================================================
+
+class FakeHistoryClient:
+    """In-memory stand-in for a Table Storage client used by history helpers."""
+
+    def __init__(self, rows=None):
+        # rows: list of dicts with PartitionKey/RowKey/...
+        self.rows = list(rows or [])
+
+    def upsert_entity(self, entity):
+        for i, r in enumerate(self.rows):
+            if r['PartitionKey'] == entity['PartitionKey'] and r['RowKey'] == entity['RowKey']:
+                self.rows[i] = dict(entity)
+                return
+        self.rows.append(dict(entity))
+
+    def delete_entity(self, partition_key=None, row_key=None):
+        self.rows = [r for r in self.rows
+                     if not (r['PartitionKey'] == partition_key and r['RowKey'] == row_key)]
+
+    def query_entities(self, query_filter=None, select=None):
+        # Support the two filter shapes used by the code under test.
+        if query_filter and query_filter.startswith('PartitionKey eq '):
+            pk = query_filter.split("'", 2)[1]
+            return [dict(r) for r in self.rows if r['PartitionKey'] == pk]
+        if query_filter and query_filter.startswith('RowKey lt '):
+            cutoff = query_filter.split("'", 2)[1]
+            return [dict(r) for r in self.rows if r['RowKey'] < cutoff]
+        return [dict(r) for r in self.rows]
+
+
+class TestPriceChanged:
+
+    @pytest.mark.unit
+    def test_both_none_no_change(self):
+        assert _price_changed(None, None) is False
+
+    @pytest.mark.unit
+    def test_none_to_value_is_change(self):
+        assert _price_changed(None, 0.1) is True
+        assert _price_changed(0.1, None) is True
+
+    @pytest.mark.unit
+    def test_equal_within_6dp_no_change(self):
+        assert _price_changed(0.1234567, 0.1234569) is False
+
+    @pytest.mark.unit
+    def test_differ_beyond_6dp_is_change(self):
+        assert _price_changed(0.100000, 0.100002) is True
+
+
+class TestRecordPriceHistory:
+
+    @pytest.mark.unit
+    def test_writes_changed_and_skips_unchanged(self):
+        client = FakeHistoryClient()
+        entities = [
+            {'RowKey': 'Standard_D2s_v5', 'hourlyPriceUSD': 0.11,
+             'hourlyPriceUSDWindows': 0.20, 'spotHourlyPriceUSD': 0.02},
+            {'RowKey': 'Standard_D4s_v5', 'hourlyPriceUSD': 0.22},
+        ]
+        existing = {
+            'Standard_D2s_v5': (0.10, 0.20, 0.02),  # linux changed
+            'Standard_D4s_v5': (0.22, None, None),  # unchanged
+        }
+        written = record_price_history(client, 'eastus', entities, existing)
+        assert written == 1
+        assert len(client.rows) == 1
+        row = client.rows[0]
+        assert row['PartitionKey'] == 'eastus|Standard_D2s_v5'
+        assert row['hourlyLinuxUSD'] == 0.11
+        assert row['hourlyWindowsUSD'] == 0.20
+        assert row['hourlySpotUSD'] == 0.02
+
+    @pytest.mark.unit
+    def test_new_sku_without_baseline_is_written(self):
+        client = FakeHistoryClient()
+        entities = [{'RowKey': 'Standard_D2s_v5', 'hourlyPriceUSD': 0.11}]
+        written = record_price_history(client, 'eastus', entities, {})
+        assert written == 1
+        assert 'hourlyWindowsUSD' not in client.rows[0]  # None omitted
+
+    @pytest.mark.unit
+    def test_skips_entity_with_no_linux_price(self):
+        client = FakeHistoryClient()
+        entities = [{'RowKey': 'Standard_D2s_v5', 'hourlyPriceUSD': None}]
+        assert record_price_history(client, 'eastus', entities, {}) == 0
+        assert client.rows == []
+
+
+class TestPrunePriceHistory:
+
+    @pytest.mark.unit
+    def test_keeps_newest_pre_cutoff_anchor(self):
+        # retention_days=0 -> cutoff = today; everything before today is "stale"
+        pk = 'eastus|Standard_D2s_v5'
+        client = FakeHistoryClient([
+            {'PartitionKey': pk, 'RowKey': '2020-01-01', 'hourlyLinuxUSD': 0.10},
+            {'PartitionKey': pk, 'RowKey': '2020-06-01', 'hourlyLinuxUSD': 0.11},
+            {'PartitionKey': pk, 'RowKey': '2020-12-01', 'hourlyLinuxUSD': 0.12},
+        ])
+        deleted = prune_price_history(client, retention_days=0)
+        assert deleted == 2
+        remaining = [r['RowKey'] for r in client.rows]
+        assert remaining == ['2020-12-01']  # newest pre-cutoff anchor kept
+
+
+class TestHistorySummary:
+
+    @pytest.mark.unit
+    def test_summary_stats(self):
+        s = _history_summary([0.10, 0.12, None, 0.08])
+        assert s['first'] == 0.10
+        assert s['last'] == 0.08
+        assert s['min'] == 0.08
+        assert s['max'] == 0.12
+        assert s['pctChange'] == -20.0
+
+    @pytest.mark.unit
+    def test_summary_none_when_empty(self):
+        assert _history_summary([None, None]) is None
+
+
+class TestBuildHistorySeries:
+
+    @pytest.mark.unit
+    def test_appends_current_price_and_sorts(self):
+        pk = 'eastus|Standard_D2s_v5'
+        client = FakeHistoryClient([
+            {'PartitionKey': pk, 'RowKey': '2026-01-01', 'hourlyLinuxUSD': 0.10},
+            {'PartitionKey': pk, 'RowKey': '2026-03-01', 'hourlyLinuxUSD': 0.11},
+        ])
+        entity = {'hourlyPriceUSD': 0.12, 'pricingLastUpdated': '2026-06-01T00:00:00Z'}
+        result = _build_history_series(client, entity, 'eastus', 'Standard_D2s_v5')
+        dates = [p['date'] for p in result['points']]
+        assert dates == ['2026-01-01', '2026-03-01', '2026-06-01']
+        assert result['points'][-1]['hourlyLinux'] == 0.12
+        assert result['summary']['last'] == 0.12
+
+    @pytest.mark.unit
+    def test_same_date_current_replaces_last_point(self):
+        pk = 'eastus|Standard_D2s_v5'
+        client = FakeHistoryClient([
+            {'PartitionKey': pk, 'RowKey': '2026-06-01', 'hourlyLinuxUSD': 0.10},
+        ])
+        entity = {'hourlyPriceUSD': 0.13, 'pricingLastUpdated': '2026-06-01T12:00:00Z'}
+        result = _build_history_series(client, entity, 'eastus', 'Standard_D2s_v5')
+        assert len(result['points']) == 1
+        assert result['points'][0]['hourlyLinux'] == 0.13
+
+    @pytest.mark.unit
+    def test_no_entity_returns_change_points_only(self):
+        pk = 'eastus|Standard_D2s_v5'
+        client = FakeHistoryClient([
+            {'PartitionKey': pk, 'RowKey': '2026-01-01', 'hourlyLinuxUSD': 0.10},
+            {'PartitionKey': pk, 'RowKey': '2026-03-01', 'hourlyLinuxUSD': 0.11},
+        ])
+        result = _build_history_series(client, None, 'eastus', 'Standard_D2s_v5')
+        assert len(result['points']) == 2
+        assert result['summary']['last'] == 0.11
 

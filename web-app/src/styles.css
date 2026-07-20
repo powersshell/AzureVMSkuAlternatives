@@ -833,6 +833,64 @@ body {
     color: var(--text-muted);
 }
 
+/* Disabled pricing/OS toggle buttons (e.g. Windows while Spot is selected) */
+.btn-pricing:disabled,
+.btn-os:disabled,
+.btn-os.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Price-history sparkline on result cards (I-G) */
+.card-sparkline-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 5px;
+    margin-top: 5px;
+    min-height: 22px;
+    cursor: pointer;
+}
+.card-sparkline-wrap.is-empty { cursor: default; }
+.sparkline-svg { display: block; }
+.sparkline-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 8px;
+    white-space: nowrap;
+}
+.sparkline-badge.down { background: #e6f4e6; color: var(--success); }
+.sparkline-badge.up { background: #fde7e9; color: var(--danger); }
+.sparkline-badge.flat { background: #f0f0f0; color: var(--text-muted); }
+.sparkline-empty { font-size: 11px; color: var(--text-muted); }
+
+/* Price-history modal chart (I-G) */
+.hist-chart-wrap { margin: 8px 0 4px; }
+.hist-chart {
+    display: block;
+    width: 100%;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.hist-axis { font-size: 10px; fill: var(--text-muted); }
+.hist-legend {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.hist-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.hist-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 3px;
+    border-radius: 2px;
+}
+
 /* Retirement badges */
 .retirement-badge {
     font-size: 11px;

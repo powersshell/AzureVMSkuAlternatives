@@ -10,7 +10,7 @@ import time
 import re
 import requests
 from typing import Dict, List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import azure.functions as func
 from azure.data.tables import TableServiceClient
@@ -18,6 +18,10 @@ from azure.identity import DefaultAzureCredential
 
 # Create the Function App instance
 app = func.FunctionApp()
+
+# Price-history (I-G) configuration
+HISTORY_TABLE = "vmskuhistory"
+HISTORY_RETENTION_DAYS = 365
 
 
 # ============================================================================
@@ -854,6 +858,8 @@ def get_sku_from_cache(sku_name: str, location: str) -> dict:
                 'monthlyPrice': entity.get('monthlyPriceUSD'),
                 'hourlyPriceWindows': entity.get('hourlyPriceUSDWindows'),
                 'monthlyPriceWindows': entity.get('monthlyPriceUSDWindows'),
+                'spotHourly': entity.get('spotHourlyPriceUSD'),
+                'spotMonthly': entity.get('spotMonthlyPriceUSD'),
                 'ri1YearHourly': entity.get('ri1YearHourlyUSD'),
                 'ri1YearMonthly': entity.get('ri1YearMonthlyUSD'),
                 'ri3YearHourly': entity.get('ri3YearHourlyUSD'),
@@ -1024,6 +1030,8 @@ def build_grid_row(entity: Dict, pricing_override: Optional[Dict] = None) -> Dic
         'monthlyLinux': price('monthlyPrice', 'monthlyPriceUSD'),
         'hourlyWindows': price('hourlyPriceWindows', 'hourlyPriceUSDWindows'),
         'monthlyWindows': price('monthlyPriceWindows', 'monthlyPriceUSDWindows'),
+        'spotHourlyLinux': price('spotHourly', 'spotHourlyPriceUSD'),
+        'spotMonthlyLinux': price('spotMonthly', 'spotMonthlyPriceUSD'),
         'ri1YearHourlyLinux': price('ri1YearHourly', 'ri1YearHourlyUSD'),
         'ri1YearMonthlyLinux': price('ri1YearMonthly', 'ri1YearMonthlyUSD'),
         'ri3YearHourlyLinux': price('ri3YearHourly', 'ri3YearHourlyUSD'),
@@ -1125,6 +1133,143 @@ def grid(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 
+def _history_summary(linux_series: List[float]) -> Optional[Dict]:
+    """Summary stats over the Linux hourly USD series (change-points + current)."""
+    vals = [v for v in linux_series if v is not None]
+    if not vals:
+        return None
+    first, last = vals[0], vals[-1]
+    pct = round((last - first) / first * 100, 1) if first else 0.0
+    return {
+        'first': first,
+        'last': last,
+        'pctChange': pct,
+        'min': min(vals),
+        'max': max(vals),
+    }
+
+
+def _build_history_series(history_client, sku_entity: Optional[Dict], region: str, sku: str) -> Dict:
+    """
+    Build a price-history series for one SKU: sorted change-points from the history
+    table plus the current cached price appended as the final point. USD only.
+    """
+    points = []
+    try:
+        rows = history_client.query_entities(query_filter=f"PartitionKey eq '{region}|{sku}'")
+        for r in rows:
+            points.append({
+                'date': r.get('RowKey'),
+                'hourlyLinux': r.get('hourlyLinuxUSD'),
+                'hourlyWindows': r.get('hourlyWindowsUSD'),
+                'hourlySpot': r.get('hourlySpotUSD'),
+            })
+    except Exception as e:
+        logging.warning(f"Failed to query history for {region}|{sku}: {e}")
+
+    points.sort(key=lambda p: p['date'] or '')
+
+    # Append the current cached price as the latest point (so a SKU with few or no
+    # change-points still renders a line ending at today's price).
+    if sku_entity is not None and sku_entity.get('hourlyPriceUSD') is not None:
+        cur_date = (sku_entity.get('pricingLastUpdated') or '')[:10] or \
+            datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        cur = {
+            'date': cur_date,
+            'hourlyLinux': sku_entity.get('hourlyPriceUSD'),
+            'hourlyWindows': sku_entity.get('hourlyPriceUSDWindows'),
+            'hourlySpot': sku_entity.get('spotHourlyPriceUSD'),
+        }
+        # Avoid duplicating a same-date point (replace it with the current value)
+        if points and points[-1]['date'] == cur_date:
+            points[-1] = cur
+        else:
+            points.append(cur)
+
+    summary = _history_summary([p['hourlyLinux'] for p in points])
+    return {'points': points, 'summary': summary}
+
+
+# ============================================================================
+# HTTP Route: /history - Daily price-history series per SKU (I-G)
+# ============================================================================
+@app.route(route="history", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def history(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Return the daily price-history series for one SKU (sku=) or several (skus=csv)
+    in a region. Prices are USD only (history is stored in USD); a currency param
+    is accepted but ignored.
+    """
+    logging.info('Processing price-history request')
+
+    location = req.params.get('location')
+    single = req.params.get('sku')
+    batch = req.params.get('skus')
+
+    if not location:
+        return func.HttpResponse(
+            json.dumps({'error': 'location parameter is required'}),
+            mimetype='application/json', status_code=400
+        )
+    if not single and not batch:
+        return func.HttpResponse(
+            json.dumps({'error': 'sku or skus parameter is required'}),
+            mimetype='application/json', status_code=400
+        )
+
+    sku_names = [s.strip() for s in (batch.split(',') if batch else [single]) if s and s.strip()]
+    # Cap batch size to keep the response bounded
+    sku_names = sku_names[:100]
+
+    storage_account_name = os.environ.get('SKU_CACHE_STORAGE_ACCOUNT')
+    if not storage_account_name:
+        return func.HttpResponse(
+            json.dumps({'error': 'SKU cache not configured'}),
+            mimetype='application/json', status_code=500
+        )
+
+    try:
+        credential = DefaultAzureCredential()
+        table_service = TableServiceClient(
+            endpoint=f"https://{storage_account_name}.table.core.windows.net",
+            credential=credential
+        )
+        history_client = table_service.get_table_client(HISTORY_TABLE)
+        vmskus_client = table_service.get_table_client("vmskus")
+
+        # Fetch current cached prices for the requested SKUs (for the trailing point)
+        entity_by_sku: Dict[str, Dict] = {}
+        for name in sku_names:
+            try:
+                entity_by_sku[name] = vmskus_client.get_entity(partition_key=location, row_key=name)
+            except Exception:
+                entity_by_sku[name] = None
+
+        series = {
+            name: _build_history_series(history_client, entity_by_sku.get(name), location, name)
+            for name in sku_names
+        }
+
+        if single and not batch:
+            result = series.get(single, {'points': [], 'summary': None})
+            response_data = {
+                'region': location, 'sku': single, 'currency': 'USD',
+                'points': result['points'], 'summary': result['summary'],
+            }
+        else:
+            response_data = {'region': location, 'currency': 'USD', 'series': series}
+
+        return func.HttpResponse(
+            json.dumps(response_data), mimetype='application/json', status_code=200
+        )
+    except Exception as e:
+        logging.error(f'Error building price history: {e}')
+        return func.HttpResponse(
+            json.dumps({'error': 'Failed to retrieve price history', 'details': str(e)}),
+            mimetype='application/json', status_code=500
+        )
+
+
 # ============================================================================
 # Timer Trigger: refresh_sku_cache - Daily SKU cache refresh
 # ============================================================================
@@ -1162,6 +1307,15 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
         return
     
     table_client = table_service.get_table_client(table_name)
+
+    # Price-history table (I-G) — created in-code, no infra change
+    history_client = None
+    try:
+        table_service.create_table_if_not_exists(HISTORY_TABLE)
+        history_client = table_service.get_table_client(HISTORY_TABLE)
+        logging.info(f"Table '{HISTORY_TABLE}' is ready")
+    except Exception as e:
+        logging.error(f"Failed to create price-history table (continuing without history): {e}")
     
     # Get access token for Azure Management API
     try:
@@ -1204,7 +1358,7 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
 
     def process_region(region):
         logging.info(f"Processing region: {region}")
-        count, coverage = refresh_region(region, subscription_id, token, table_client, network_bw)
+        count, coverage = refresh_region(region, subscription_id, token, table_client, network_bw, history_client)
         logging.info(f"Updated {count} SKUs for region {region}")
         return count, region, coverage
 
@@ -1247,6 +1401,13 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
                     total_errors += 1
 
     logging.info(f"SKU cache refresh completed. Updated: {total_updated}, Errors: {total_errors}")
+
+    # Prune price-history rows beyond the retention window (I-G)
+    if history_client is not None:
+        try:
+            prune_price_history(history_client)
+        except Exception as e:
+            logging.warning(f"Price-history prune failed: {e}")
 
     # Emit coverage telemetry for workbook visualization
     _emit_coverage_telemetry(all_region_coverage)
@@ -1292,9 +1453,16 @@ def admin_refresh_region(req: func.HttpRequest) -> func.HttpResponse:
         )
         table_service.create_table_if_not_exists("vmskus")
         table_client = table_service.get_table_client("vmskus")
-        
+
+        history_client = None
+        try:
+            table_service.create_table_if_not_exists(HISTORY_TABLE)
+            history_client = table_service.get_table_client(HISTORY_TABLE)
+        except Exception as e:
+            logging.warning(f"Price-history table unavailable for manual refresh: {e}")
+
         token = get_access_token()
-        count, coverage = refresh_region(region, subscription_id, token, table_client)
+        count, coverage = refresh_region(region, subscription_id, token, table_client, history_client=history_client)
         
         return func.HttpResponse(
             json.dumps({'region': region, 'skusUpdated': count, 'status': 'success', 'coverage': coverage}),
@@ -1512,6 +1680,18 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
             and 'Low Priority' not in item.get('skuName', '')
         ), None)
 
+        # Select Linux Spot: Consumption item whose skuName contains "Spot"
+        # (exclude Windows/DedicatedHost/Cloud). Linux spot only per product decision.
+        spot_item = next((
+            item for item in items
+            if item.get('type') == 'Consumption'
+            and 'productName' in item
+            and 'dedicatedhost' not in item['productName'].lower()
+            and 'cloud' not in item['productName'].lower()
+            and 'windows' not in item['productName'].lower()
+            and 'Spot' in item.get('skuName', '')
+        ), None)
+
         # Fall back to first non-Spot/non-Low Priority Consumption item if no Linux item found
         if not linux_item:
             linux_item = next((
@@ -1530,6 +1710,8 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
             'monthlyPrice': round(linux_item['unitPrice'] * 730, 2),
             'hourlyPriceWindows': windows_item['unitPrice'] if windows_item else None,
             'monthlyPriceWindows': round(windows_item['unitPrice'] * 730, 2) if windows_item else None,
+            'spotHourly': spot_item['unitPrice'] if spot_item else None,
+            'spotMonthly': round(spot_item['unitPrice'] * 730, 2) if spot_item else None,
             'currency': currency
         }
 
@@ -1663,6 +1845,8 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         'monthlyPrice': entity.get('monthlyPriceUSD'),
                         'hourlyPriceWindows': entity.get('hourlyPriceUSDWindows'),
                         'monthlyPriceWindows': entity.get('monthlyPriceUSDWindows'),
+                        'spotHourly': entity.get('spotHourlyPriceUSD'),
+                        'spotMonthly': entity.get('spotMonthlyPriceUSD'),
                         'ri1YearHourly': entity.get('ri1YearHourlyUSD'),
                         'ri1YearMonthly': entity.get('ri1YearMonthlyUSD'),
                         'ri3YearHourly': entity.get('ri3YearHourlyUSD'),
@@ -1799,6 +1983,7 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
     # Index by armSkuName, tracking best Linux, Windows, and fallback items per SKU
     sku_linux: Dict[str, Dict] = {}
     sku_windows: Dict[str, Dict] = {}
+    sku_spot: Dict[str, Dict] = {}
     sku_fallback: Dict[str, Dict] = {}
     # RI items keyed by (armSkuName, reservationTerm)
     sku_ri: Dict[str, Dict[str, Dict]] = {}
@@ -1815,7 +2000,14 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
         # 'Virtual Machines' serviceName but aren't actual VM SKU pricing
         if 'dedicatedhost' in product_lower or 'cloud' in product_lower:
             continue
-        if 'Spot' in sku_label or 'Low Priority' in sku_label:
+
+        is_spot = 'Spot' in sku_label or 'Low Priority' in sku_label
+        is_windows = 'windows' in product_lower
+
+        # Capture Linux Spot pricing (exclude Windows spot per product decision)
+        if is_spot:
+            if not is_windows and sku_name not in sku_spot:
+                sku_spot[sku_name] = item
             continue
 
         # Reservation items (RI) — compute-only, no Windows distinction
@@ -1827,8 +2019,6 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
                 if term not in sku_ri[sku_name]:
                     sku_ri[sku_name][term] = item
             continue
-
-        is_windows = 'windows' in product_lower
 
         if sku_name not in sku_fallback:
             sku_fallback[sku_name] = item
@@ -1842,16 +2032,20 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
     for sku_name in all_sku_names:
         linux_item = sku_linux.get(sku_name) or sku_fallback.get(sku_name)
         windows_item = sku_windows.get(sku_name)
+        spot_item = sku_spot.get(sku_name)
         if not linux_item:
             continue
         linux_price = linux_item['unitPrice']
         windows_price = windows_item['unitPrice'] if windows_item else None
+        spot_price = spot_item['unitPrice'] if spot_item else None
 
         pricing = {
             'hourlyPrice': linux_price,
             'monthlyPrice': round(linux_price * 730, 2),
             'hourlyPriceWindows': windows_price,
             'monthlyPriceWindows': round(windows_price * 730, 2) if windows_price else None,
+            'spotHourly': spot_price,
+            'spotMonthly': round(spot_price * 730, 2) if spot_price else None,
             'currency': linux_item.get('currencyCode', currency)
         }
 
@@ -2379,7 +2573,97 @@ def seed_cpu_performance_table(table_service: TableServiceClient) -> None:
     logging.info(f"Seeded cpuperf table: {len(CPU_PERFORMANCE_TABLE)} CPU models, {len(SERIES_CPU_MAP)} series mappings")
 
 
-def refresh_region(region: str, subscription_id: str, token: str, table_client, network_bw: Dict[str, int] = None) -> tuple:
+def _price_changed(old, new) -> bool:
+    """True if a tracked price differs (rounded to 6 dp) from the prior value.
+    A None<->value transition counts as a change; None==None does not."""
+    if old is None and new is None:
+        return False
+    if old is None or new is None:
+        return True
+    return round(float(old), 6) != round(float(new), 6)
+
+
+def record_price_history(history_client, region: str, entities: List[Dict],
+                         existing_prices: Dict[str, tuple]) -> int:
+    """
+    Write a price-history snapshot row (I-G) for each SKU whose Linux/Windows/Spot
+    USD hourly price changed vs the previously-cached value. On-change only keeps the
+    table sparse. PartitionKey = "{region}|{sku}", RowKey = today's UTC date.
+    Returns the number of history rows written.
+    """
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    written = 0
+    for entity in entities:
+        name = entity.get('RowKey')
+        linux = entity.get('hourlyPriceUSD')
+        # No Linux price -> nothing meaningful to record
+        if linux is None:
+            continue
+        windows = entity.get('hourlyPriceUSDWindows')
+        spot = entity.get('spotHourlyPriceUSD')
+
+        old = existing_prices.get(name)
+        if old is not None:
+            old_linux, old_windows, old_spot = old
+            if not (_price_changed(old_linux, linux)
+                    or _price_changed(old_windows, windows)
+                    or _price_changed(old_spot, spot)):
+                continue  # unchanged — skip
+
+        row = {
+            'PartitionKey': f"{region}|{name}",
+            'RowKey': today,
+            'hourlyLinuxUSD': linux,
+        }
+        # Only write present values — None coerces to 0 in Table Storage
+        if windows is not None:
+            row['hourlyWindowsUSD'] = windows
+        if spot is not None:
+            row['hourlySpotUSD'] = spot
+        try:
+            history_client.upsert_entity(row)
+            written += 1
+        except Exception as e:
+            logging.warning(f"Failed to write price history for {name} in {region}: {e}")
+    if written:
+        logging.info(f"Recorded {written} price-history changes for {region}")
+    return written
+
+
+def prune_price_history(history_client, retention_days: int = HISTORY_RETENTION_DAYS) -> int:
+    """
+    Delete price-history rows older than the retention window, but keep the single
+    newest pre-cutoff row per SKU partition as a carry-forward anchor (so a SKU whose
+    price last changed before the cutoff still has a baseline point). Returns rows deleted.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).strftime('%Y-%m-%d')
+    deleted = 0
+    try:
+        # RowKey is an ISO date string, so lexical comparison == chronological
+        stale = history_client.query_entities(
+            query_filter=f"RowKey lt '{cutoff}'",
+            select=['PartitionKey', 'RowKey']
+        )
+        # Group stale rows per partition to preserve the newest as an anchor
+        by_partition: Dict[str, List[str]] = {}
+        for e in stale:
+            by_partition.setdefault(e['PartitionKey'], []).append(e['RowKey'])
+        for pk, rowkeys in by_partition.items():
+            rowkeys.sort()  # ascending date; last is newest pre-cutoff -> keep as anchor
+            for rk in rowkeys[:-1]:
+                try:
+                    history_client.delete_entity(partition_key=pk, row_key=rk)
+                    deleted += 1
+                except Exception as e:
+                    logging.warning(f"Failed to prune history {pk}/{rk}: {e}")
+    except Exception as e:
+        logging.warning(f"Price-history prune query failed: {e}")
+    if deleted:
+        logging.info(f"Pruned {deleted} price-history rows older than {cutoff}")
+    return deleted
+
+
+def refresh_region(region: str, subscription_id: str, token: str, table_client, network_bw: Dict[str, int] = None, history_client=None) -> tuple:
     """
     Refresh SKU data for a specific region
     Fetches SKU data and pricing concurrently for performance
@@ -2453,6 +2737,8 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'monthlyPriceUSD': pricing['monthlyPrice'] if pricing else None,
                 'hourlyPriceUSDWindows': pricing.get('hourlyPriceWindows') if pricing else None,
                 'monthlyPriceUSDWindows': pricing.get('monthlyPriceWindows') if pricing else None,
+                'spotHourlyPriceUSD': pricing.get('spotHourly') if pricing else None,
+                'spotMonthlyPriceUSD': pricing.get('spotMonthly') if pricing else None,
                 'ri1YearHourlyUSD': pricing.get('ri1YearHourly') if pricing else None,
                 'ri1YearMonthlyUSD': pricing.get('ri1YearMonthly') if pricing else None,
                 'ri3YearHourlyUSD': pricing.get('ri3YearHourly') if pricing else None,
@@ -2486,6 +2772,23 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
         except Exception as e:
             logging.warning(f"Failed to process SKU {sku.get('name', 'unknown')}: {e}")
 
+    # Capture the currently-cached prices BEFORE upserting today's values so we can
+    # detect price changes for the on-change price-history snapshot (I-G).
+    existing_prices = {}
+    if history_client is not None:
+        try:
+            for e in table_client.query_entities(
+                query_filter=f"PartitionKey eq '{region}'",
+                select=['RowKey', 'hourlyPriceUSD', 'hourlyPriceUSDWindows', 'spotHourlyPriceUSD']
+            ):
+                existing_prices[e['RowKey']] = (
+                    e.get('hourlyPriceUSD'),
+                    e.get('hourlyPriceUSDWindows'),
+                    e.get('spotHourlyPriceUSD'),
+                )
+        except Exception as e:
+            logging.warning(f"Failed to read existing prices for history in {region}: {e}")
+
     # Batch upsert in groups of 100 (Azure Table Storage transaction limit)
     count = 0
     BATCH_SIZE = 100
@@ -2502,6 +2805,13 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                     count += 1
                 except Exception as e2:
                     logging.warning(f"Failed to upsert {entity.get('RowKey')}: {e2}")
+
+    # Record on-change price-history snapshots (I-G)
+    if history_client is not None:
+        try:
+            record_price_history(history_client, region, entities, existing_prices)
+        except Exception as e:
+            logging.warning(f"Failed to record price history for {region}: {e}")
     
     # Prune SKUs that no longer exist in the Azure API for this region
     api_sku_names = {s['name'] for s in skus}
@@ -3119,6 +3429,18 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
                 alt_pricing.get('monthlyPriceWindows'),
                 currency
             ) if target_pricing.get('monthlyPriceWindows') is not None else None,
+            'spot': {
+                'hourly': calculate_price_diff(
+                    target_pricing.get('spotHourly'),
+                    alt_pricing.get('spotHourly'),
+                    currency
+                ),
+                'monthly': calculate_price_diff(
+                    target_pricing.get('spotMonthly'),
+                    alt_pricing.get('spotMonthly'),
+                    currency
+                )
+            } if target_pricing.get('spotHourly') is not None else None,
             'efficiency': calculate_cost_efficiency(
                 target_sku, alternative_sku,
                 target_pricing, alt_pricing

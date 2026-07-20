@@ -35,6 +35,7 @@
   - `/api/skus`
   - `/api/grid` (GET) — all VM sizes for a region with specs + pricing (Browse/Grid view)
   - `/api/compare_details`
+  - `/api/history` (GET) — daily price-history series per SKU (single `sku=` or batch `skus=csv`); USD-only sparkline/trend data
   - `/api/health`
 - Infra is Bicep-first under `web-app/infra` with:
   - `deploy.bicep` (subscription-scoped orchestration)

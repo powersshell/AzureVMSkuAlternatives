@@ -602,10 +602,12 @@ function setPricingModel(model) {
     currentPricingModel = model;
     trackEvent('pricing_model_toggled', { model });
     document.getElementById('btn-payg')?.classList.toggle('active', model === 'payg');
+    document.getElementById('btn-spot')?.classList.toggle('active', model === 'spot');
     document.getElementById('btn-ri1year')?.classList.toggle('active', model === 'ri1year');
     document.getElementById('btn-ri3year')?.classList.toggle('active', model === 'ri3year');
 
-    // OS toggle stays enabled for all pricing models (RI Windows = RI compute + Windows license)
+    // Spot pricing is Linux-only — force Linux OS and disable the Windows toggle
+    applySpotOsLock(model === 'spot');
 
     updatePricingHeaders();
     if (currentResults) {
@@ -616,11 +618,32 @@ function setPricingModel(model) {
     if (currentMode === 'browse' && gridRows.length) renderGrid();
 }
 
+// Spot pricing exists for Linux only; lock the OS toggle to Linux while Spot is selected.
+function applySpotOsLock(isSpot) {
+    if (isSpot && currentPricingOS !== 'linux') {
+        currentPricingOS = 'linux';
+        document.getElementById('btn-linux-pricing')?.classList.add('active');
+        document.getElementById('btn-windows-pricing')?.classList.remove('active');
+        document.getElementById('btn-grid-linux')?.classList.add('active');
+        document.getElementById('btn-grid-windows')?.classList.remove('active');
+    }
+    ['btn-windows-pricing', 'btn-grid-windows'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.disabled = isSpot;
+        btn.classList.toggle('disabled', isSpot);
+        btn.title = isSpot ? 'Spot pricing is available for Linux only' : '';
+    });
+}
+
 function updatePricingHeaders() {
     const thHourly = document.getElementById('th-hourly');
     const thMonthly = document.getElementById('th-monthly');
     const osLabel = currentPricingOS === 'windows' ? 'Win' : 'Linux';
-    if (currentPricingModel === 'ri1year') {
+    if (currentPricingModel === 'spot') {
+        thHourly.textContent = 'Hourly Cost (Spot, Linux)';
+        thMonthly.textContent = 'Monthly Cost (Spot, Linux)';
+    } else if (currentPricingModel === 'ri1year') {
         thHourly.textContent = `Hourly Cost (1yr RI, ${osLabel})`;
         thMonthly.textContent = `Monthly Cost (1yr RI, ${osLabel})`;
     } else if (currentPricingModel === 'ri3year') {
@@ -634,6 +657,9 @@ function updatePricingHeaders() {
 
 function getHourlyPrice(pricing) {
     if (!pricing) return null;
+    if (currentPricingModel === 'spot') {
+        return pricing.spotHourly ?? null;
+    }
     if (currentPricingModel === 'ri1year') {
         return currentPricingOS === 'windows'
             ? (pricing.ri1YearHourlyWindows ?? pricing.ri1YearHourly ?? null)
@@ -651,6 +677,9 @@ function getHourlyPrice(pricing) {
 
 function getMonthlyPrice(pricing) {
     if (!pricing) return null;
+    if (currentPricingModel === 'spot') {
+        return pricing.spotMonthly ?? null;
+    }
     if (currentPricingModel === 'ri1year') {
         return currentPricingOS === 'windows'
             ? (pricing.ri1YearMonthlyWindows ?? pricing.ri1YearMonthly ?? null)
@@ -1041,6 +1070,221 @@ function closeRegionPriceModal() {
     document.body.classList.remove('modal-open');
 }
 
+// ============================================================================
+// Price history (I-G) — sparklines + modal chart. History is USD-only.
+// ============================================================================
+const historyCache = new Map(); // key `${region}|${sku}` -> { points, summary }
+
+function fmtUsd(v, dp = 4) {
+    if (v == null) return 'N/A';
+    return '$' + Number(v).toFixed(dp);
+}
+
+// Map a numeric series to SVG polyline points within a viewBox.
+function seriesToPoints(values, width, height, min, max, pad = 2) {
+    const n = values.length;
+    if (n === 0) return '';
+    const span = (max - min) || 1;
+    const stepX = n > 1 ? (width - pad * 2) / (n - 1) : 0;
+    return values.map((v, i) => {
+        const x = pad + i * stepX;
+        const y = pad + (height - pad * 2) * (1 - (v - min) / span);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+}
+
+// Build a compact sparkline SVG + %-change badge from a history series.
+function renderSparklineInto(el, series) {
+    const linux = (series?.points || []).map(p => p.hourlyLinux).filter(v => v != null);
+    if (linux.length < 2) {
+        el.innerHTML = '<span class="sparkline-empty" title="Price history is still building">— history</span>';
+        el.classList.add('is-empty');
+        return;
+    }
+    const min = Math.min(...linux), max = Math.max(...linux);
+    const w = 68, h = 22;
+    const pts = seriesToPoints(linux, w, h, min, max);
+    const first = linux[0], last = linux[linux.length - 1];
+    const pct = first ? ((last - first) / first * 100) : 0;
+    const dir = pct < -0.5 ? 'down' : pct > 0.5 ? 'up' : 'flat';
+    const stroke = dir === 'down' ? '#107c10' : dir === 'up' ? '#d13438' : '#8a8886';
+    const arrow = dir === 'down' ? '↓' : dir === 'up' ? '↑' : '→';
+    const badge = dir === 'flat'
+        ? '<span class="sparkline-badge flat">±0%</span>'
+        : `<span class="sparkline-badge ${dir}">${arrow}${Math.abs(pct).toFixed(0)}%</span>`;
+    el.classList.remove('is-empty');
+    el.innerHTML =
+        `<svg class="sparkline-svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">` +
+        `<polyline fill="none" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" points="${pts}"/></svg>` +
+        badge;
+}
+
+// Batch-fetch history for the given SKUs and render sparklines into
+// `.card-sparkline-wrap[data-sku]` elements found within `container`.
+async function loadSparklines(skuNames, region, container) {
+    const wraps = Array.from(container.querySelectorAll('.card-sparkline-wrap[data-sku]'));
+    if (!wraps.length) return;
+
+    const need = [];
+    const seen = new Set();
+    skuNames.forEach(name => {
+        const key = `${region}|${name}`;
+        if (!historyCache.has(key) && !seen.has(name)) { need.push(name); seen.add(name); }
+    });
+
+    if (need.length) {
+        try {
+            const url = `${API_BASE_URL}/history?location=${encodeURIComponent(region)}&skus=${encodeURIComponent(need.join(','))}`;
+            const resp = await fetch(url);
+            if (resp.ok) {
+                const data = await resp.json();
+                const series = data.series || {};
+                need.forEach(name => historyCache.set(`${region}|${name}`, series[name] || { points: [], summary: null }));
+            }
+        } catch (e) {
+            console.warn('Failed to load price-history sparklines:', e);
+        }
+    }
+
+    wraps.forEach(el => {
+        const name = el.dataset.sku;
+        const series = historyCache.get(`${region}|${name}`);
+        if (series) renderSparklineInto(el, series);
+        else el.innerHTML = '';
+    });
+}
+
+async function showPriceHistory(skuName) {
+    const modal = document.getElementById('priceHistoryModal');
+    const body = document.getElementById('priceHistoryBody');
+    const title = document.getElementById('priceHistoryModalTitle');
+    if (!modal || !body) return;
+
+    const region = (currentMode === 'browse' ? gridRegionLoaded : currentResults?.location)
+        || document.getElementById('location')?.value || '';
+    title.textContent = `Price history — ${skuName}`;
+    body.innerHTML = '<div class="region-price-loading"><div class="spinner"></div><p>Loading price history…</p></div>';
+    modal.classList.remove('hidden');
+    document.body.classList.add('modal-open');
+    trackEvent('price_history_opened', { sku: skuName, region });
+
+    try {
+        let series = historyCache.get(`${region}|${skuName}`);
+        // Always fetch the single-SKU series for the full (all-OS) point set
+        const url = `${API_BASE_URL}/history?location=${encodeURIComponent(region)}&sku=${encodeURIComponent(skuName)}`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`Request failed (${resp.status})`);
+        const data = await resp.json();
+        series = { points: data.points || [], summary: data.summary || null };
+        historyCache.set(`${region}|${skuName}`, series);
+        renderPriceHistory(series, skuName, region);
+    } catch (err) {
+        body.innerHTML = `<div class="region-price-error"><p>⚠️ Couldn't load price history.</p><p class="region-price-error-detail">${escapeHtml(err.message)}</p></div>`;
+    }
+}
+
+function renderPriceHistory(series, skuName, region) {
+    const body = document.getElementById('priceHistoryBody');
+    if (!body) return;
+
+    const points = series.points || [];
+    const linux = points.map(p => p.hourlyLinux).filter(v => v != null);
+    if (linux.length < 2) {
+        body.innerHTML =
+            `<div class="region-price-empty"><p>Price history is still building for this size.</p>` +
+            `<p class="region-price-note">Daily snapshots are recorded only when a price changes, so a trend line will appear once at least two data points exist.</p></div>`;
+        return;
+    }
+
+    const summary = series.summary || {};
+    const pct = summary.pctChange ?? 0;
+    const dir = pct < -0.5 ? 'down' : pct > 0.5 ? 'up' : 'flat';
+    const trendClass = dir === 'down' ? 'rp-savings' : dir === 'up' ? 'delta-more' : '';
+
+    const summaryHtml = `
+        <div class="region-price-summary">
+            <div class="region-price-summary-item">
+                <span class="rp-label">Current (Linux)</span>
+                <span class="rp-value">${fmtUsd(summary.last)}/hr</span>
+            </div>
+            <div class="region-price-summary-item">
+                <span class="rp-label">Change over range</span>
+                <span class="rp-value ${trendClass}">${pct > 0 ? '+' : ''}${pct.toFixed(1)}%</span>
+            </div>
+            <div class="region-price-summary-item">
+                <span class="rp-label">Min / Max</span>
+                <span class="rp-value">${fmtUsd(summary.min)} / ${fmtUsd(summary.max)}</span>
+            </div>
+        </div>`;
+
+    const chart = buildHistoryChart(points);
+
+    body.innerHTML =
+        summaryHtml + chart +
+        `<p class="region-price-note">Linux (blue), Windows (purple), Spot (orange) hourly pricing in <strong>USD</strong> for ${escapeHtml(region)}. ` +
+        `Points are recorded when a price changes; lines carry the last value forward. Guidance only — validate before production decisions.</p>`;
+}
+
+// Build a multi-line SVG chart (Linux/Windows/Spot) over the date range.
+function buildHistoryChart(points) {
+    const W = 640, H = 220, padL = 54, padR = 16, padT = 16, padB = 34;
+    const dates = points.map(p => p.date);
+    const seriesDefs = [
+        { key: 'hourlyLinux', color: '#0078d4', label: 'Linux' },
+        { key: 'hourlyWindows', color: '#8661c5', label: 'Windows' },
+        { key: 'hourlySpot', color: '#d97706', label: 'Spot' },
+    ];
+
+    const allVals = [];
+    seriesDefs.forEach(s => points.forEach(p => { if (p[s.key] != null) allVals.push(p[s.key]); }));
+    const min = Math.min(...allVals), max = Math.max(...allVals);
+    const span = (max - min) || 1;
+    const n = points.length;
+
+    const xAt = i => padL + (n > 1 ? (W - padL - padR) * (i / (n - 1)) : 0);
+    const yAt = v => padT + (H - padT - padB) * (1 - (v - min) / span);
+
+    // Gridlines + y labels (min, mid, max)
+    let grid = '';
+    [max, (max + min) / 2, min].forEach(val => {
+        const y = yAt(val);
+        grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="#eee" stroke-width="1"/>`;
+        grid += `<text x="${padL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" class="hist-axis">${fmtUsd(val)}</text>`;
+    });
+
+    // Lines (carry last value forward across null points)
+    let lines = '';
+    let legend = '';
+    seriesDefs.forEach(s => {
+        let last = null;
+        const pts = [];
+        points.forEach((p, i) => {
+            const v = p[s.key] != null ? p[s.key] : last;
+            if (v == null) return;
+            last = v;
+            pts.push(`${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`);
+        });
+        if (pts.length >= 2) {
+            lines += `<polyline fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" points="${pts.join(' ')}"/>`;
+            legend += `<span class="hist-legend-item"><span class="hist-swatch" style="background:${s.color}"></span>${s.label}</span>`;
+        }
+    });
+
+    const xFirst = `<text x="${padL}" y="${H - 12}" text-anchor="start" class="hist-axis">${escapeHtml(dates[0] || '')}</text>`;
+    const xLast = `<text x="${W - padR}" y="${H - 12}" text-anchor="end" class="hist-axis">${escapeHtml(dates[dates.length - 1] || '')}</text>`;
+
+    return `<div class="hist-chart-wrap">` +
+        `<svg class="hist-chart" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Price history chart">` +
+        grid + lines + xFirst + xLast +
+        `</svg><div class="hist-legend">${legend}</div></div>`;
+}
+
+function closePriceHistoryModal() {
+    const modal = document.getElementById('priceHistoryModal');
+    if (modal) modal.classList.add('hidden');
+    document.body.classList.remove('modal-open');
+}
+
 function escapeHtml(value) {
     const str = value === null || value === undefined ? '' : String(value);
     return str.replace(/[&<>"']/g, ch => ({
@@ -1055,8 +1299,14 @@ function escapeHtml(value) {
         const backdrop = document.getElementById('regionPriceBackdrop');
         if (closeBtn) closeBtn.addEventListener('click', closeRegionPriceModal);
         if (backdrop) backdrop.addEventListener('click', closeRegionPriceModal);
+
+        const histClose = document.getElementById('priceHistoryClose');
+        const histBackdrop = document.getElementById('priceHistoryBackdrop');
+        if (histClose) histClose.addEventListener('click', closePriceHistoryModal);
+        if (histBackdrop) histBackdrop.addEventListener('click', closePriceHistoryModal);
+
         document.addEventListener('keydown', e => {
-            if (e.key === 'Escape') closeRegionPriceModal();
+            if (e.key === 'Escape') { closeRegionPriceModal(); closePriceHistoryModal(); }
         });
     }
     if (document.readyState === 'loading') {
@@ -1304,6 +1554,7 @@ function displayAlternatives(alternatives) {
                 <div class="card-price-hourly">${formatHourlyPriceSafe(alt.pricing)}</div>
                 <div class="card-price-monthly">${formatMonthlyPriceSafe(alt.pricing)}/mo</div>
                 ${deltaHtml}
+                <div class="card-sparkline-wrap" data-sku="${escapeHtml(alt.name)}" role="button" tabindex="0" title="View price history (USD)" aria-label="View price history for ${escapeHtml(alt.name)}" onclick="event.stopPropagation(); showPriceHistory('${alt.name}')"></div>
             </div>
             <svg class="card-chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1329,6 +1580,12 @@ function displayAlternatives(alternatives) {
     if (targetSku) {
         const location = currentResults?.location || document.getElementById('location').value;
         prefetchTopDetails(alternatives, targetSku, location);
+    }
+
+    // Populate price-history sparklines for the rendered cards (I-G)
+    const histLocation = currentResults?.location || document.getElementById('location')?.value;
+    if (histLocation) {
+        loadSparklines(alternatives.map(a => a.name), histLocation, resultsTableBody);
     }
 }
 
@@ -1724,7 +1981,11 @@ function renderPricingSection(pricing) {
     const isWindows = currentPricingOS === 'windows';
     const osLabel = isWindows ? 'Windows' : 'Linux';
 
-    if (currentPricingModel === 'ri1year' && pricing.ri1Year) {
+    if (currentPricingModel === 'spot' && pricing.spot) {
+        hourly = pricing.spot.hourly;
+        monthly = pricing.spot.monthly;
+        modelLabel = 'Spot (Linux)';
+    } else if (currentPricingModel === 'ri1year' && pricing.ri1Year) {
         hourly = isWindows ? (pricing.ri1YearWindows?.hourly ?? pricing.ri1Year.hourly) : pricing.ri1Year.hourly;
         monthly = isWindows ? (pricing.ri1YearWindows?.monthly ?? pricing.ri1Year.monthly) : pricing.ri1Year.monthly;
         modelLabel = `1-Year RI (${osLabel})`;
@@ -1922,6 +2183,8 @@ function buildComparisonExportModel() {
         `Monthly Cost Linux${discountNote}`,
         `Hourly Cost Windows${discountNote}`,
         `Monthly Cost Windows${discountNote}`,
+        `Spot Hourly (Linux)${discountNote}`,
+        `Spot Monthly (Linux)${discountNote}`,
         `1yr RI Hourly (Linux)${discountNote}`,
         `1yr RI Monthly (Linux)${discountNote}`,
         `1yr RI Hourly (Windows)${discountNote}`,
@@ -1965,6 +2228,8 @@ function buildComparisonExportModel() {
             alt.pricing ? (alt.pricing.monthlyPrice * discount).toFixed(2) : 'N/A',
             alt.pricing && alt.pricing.hourlyPriceWindows != null ? (alt.pricing.hourlyPriceWindows * discount).toFixed(4) : 'N/A',
             alt.pricing && alt.pricing.monthlyPriceWindows != null ? (alt.pricing.monthlyPriceWindows * discount).toFixed(2) : 'N/A',
+            alt.pricing && alt.pricing.spotHourly != null ? (alt.pricing.spotHourly * discount).toFixed(4) : 'N/A',
+            alt.pricing && alt.pricing.spotMonthly != null ? (alt.pricing.spotMonthly * discount).toFixed(2) : 'N/A',
             alt.pricing && alt.pricing.ri1YearHourly != null ? (alt.pricing.ri1YearHourly * discount).toFixed(4) : 'N/A',
             alt.pricing && alt.pricing.ri1YearMonthly != null ? (alt.pricing.ri1YearMonthly * discount).toFixed(2) : 'N/A',
             alt.pricing && alt.pricing.ri1YearHourlyWindows != null ? (alt.pricing.ri1YearHourlyWindows * discount).toFixed(4) : 'N/A',
@@ -2443,6 +2708,8 @@ function gridRowPricing(row) {
         monthlyPrice: row.monthlyLinux,
         hourlyPriceWindows: row.hourlyWindows,
         monthlyPriceWindows: row.monthlyWindows,
+        spotHourly: row.spotHourlyLinux,
+        spotMonthly: row.spotMonthlyLinux,
         ri1YearHourly: row.ri1YearHourlyLinux,
         ri1YearMonthly: row.ri1YearMonthlyLinux,
         ri3YearHourly: row.ri3YearHourlyLinux,
@@ -2598,6 +2865,7 @@ function renderGridRow(r, discount) {
         <td class="grid-actions-col"><div class="grid-row-actions">
             <button type="button" class="grid-action-btn" onclick="gridFindAlternatives('${safeName}')">Find alternatives</button>
             <button type="button" class="grid-action-btn icon-btn" title="Where is this cheapest?" aria-label="Where is ${nameEsc} cheapest?" onclick="showRegionPriceComparison('${safeName}')">🌍</button>
+            <button type="button" class="grid-action-btn icon-btn" title="Price history" aria-label="Price history for ${nameEsc}" onclick="showPriceHistory('${safeName}')">📈</button>
         </div></td>
     </tr>`;
 }
@@ -2642,6 +2910,7 @@ function onGridSort(col) {
 
 function syncGridPricingButtons() {
     document.getElementById('btn-grid-payg')?.classList.toggle('active', currentPricingModel === 'payg');
+    document.getElementById('btn-grid-spot')?.classList.toggle('active', currentPricingModel === 'spot');
     document.getElementById('btn-grid-ri1year')?.classList.toggle('active', currentPricingModel === 'ri1year');
     document.getElementById('btn-grid-ri3year')?.classList.toggle('active', currentPricingModel === 'ri3year');
     document.getElementById('btn-grid-linux')?.classList.toggle('active', currentPricingOS === 'linux');
@@ -2687,6 +2956,7 @@ function buildGridExportModel() {
         'vCPUs per Core', 'Architecture', 'CPU Vendor', 'NVMe', 'RDMA', 'Availability Zones',
         `Hourly Linux${discountNote}`, `Monthly Linux${discountNote}`,
         `Hourly Windows${discountNote}`, `Monthly Windows${discountNote}`,
+        `Spot Hourly (Linux)${discountNote}`, `Spot Monthly (Linux)${discountNote}`,
         `1yr RI Hourly (Linux)${discountNote}`, `1yr RI Monthly (Linux)${discountNote}`,
         `3yr RI Hourly (Linux)${discountNote}`, `3yr RI Monthly (Linux)${discountNote}`,
         `1yr RI Hourly (Windows)${discountNote}`, `1yr RI Monthly (Windows)${discountNote}`,
@@ -2701,6 +2971,7 @@ function buildGridExportModel() {
         r.nvme ? 'Yes' : 'No', r.rdmaEnabled ? 'Yes' : 'No',
         (r.availabilityZones && r.availabilityZones.length) ? r.availabilityZones.join(' ') : 'N/A',
         fx4(r.hourlyLinux), fx2(r.monthlyLinux), fx4(r.hourlyWindows), fx2(r.monthlyWindows),
+        fx4(r.spotHourlyLinux), fx2(r.spotMonthlyLinux),
         fx4(r.ri1YearHourlyLinux), fx2(r.ri1YearMonthlyLinux), fx4(r.ri3YearHourlyLinux), fx2(r.ri3YearMonthlyLinux),
         fx4(r.ri1YearHourlyWindows), fx2(r.ri1YearMonthlyWindows), fx4(r.ri3YearHourlyWindows), fx2(r.ri3YearMonthlyWindows),
         currency
