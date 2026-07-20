@@ -248,8 +248,8 @@ jobs:
         run: |
           echo "🧪 Verifying platform CORS on the live API..."
           BASE="https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api"
-          PROD="https://black-sea-0784c5d0f.1.azurestaticapps.net"
-          PREVIEW="https://black-sea-0784c5d0f-9999.eastus2.1.azurestaticapps.net"
+          PROD="https://blue-grass-0e1bb5e10.7.azurestaticapps.net"
+          PREVIEW="https://blue-grass-0e1bb5e10-9999.centralus.7.azurestaticapps.net"
           FAIL=0
 
           # 1. Simple GET must return exactly one Access-Control-Allow-Origin.

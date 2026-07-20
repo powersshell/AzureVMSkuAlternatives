@@ -2,7 +2,7 @@
 
 > Find similar and alternative Azure Virtual Machine SKUs based on comprehensive hardware specifications, capabilities, and pricing.
 
-[![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-blue?style=for-the-badge)](https://black-sea-0784c5d0f.1.azurestaticapps.net)
+[![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-blue?style=for-the-badge)](https://blue-grass-0e1bb5e10.7.azurestaticapps.net)
 [![PowerShell](https://img.shields.io/badge/PowerShell-Script-blue?style=for-the-badge&logo=powershell)](powershell-script/)
 
 ---
@@ -35,7 +35,7 @@ Azure VM SKU Alternatives helps you discover similar or alternative VM SKUs when
 
 ### Web Application (Recommended)
 
-**Live Demo:** https://black-sea-0784c5d0f.1.azurestaticapps.net
+**Live Demo:** https://blue-grass-0e1bb5e10.7.azurestaticapps.net
 
 **Features:**
 - ✨ **Searchable dropdown** - Type "D2s" to filter 1000+ SKUs
@@ -398,7 +398,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🎯 Quick Links
 
-- 🌐 **Live Demo:** https://black-sea-0784c5d0f.1.azurestaticapps.net
+- 🌐 **Live Demo:** https://blue-grass-0e1bb5e10.7.azurestaticapps.net
 - ⚡ **PowerShell Script:** [powershell-script/README.md](powershell-script/README.md)
 - 🏗️ **Deployment Guide:** [GITHUB-ACTIONS-SETUP.md](GITHUB-ACTIONS-SETUP.md)
 - 🔧 **Troubleshooting:** [TROUBLESHOOTING.md](TROUBLESHOOTING.md)

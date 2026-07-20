@@ -34,7 +34,7 @@ git push origin main
 - Go to the **Actions** tab in your GitHub repository
 - Watch the workflow run
 - Deployment takes 2-3 minutes
-- Your site will be live at: https://black-sea-0784c5d0f.1.azurestaticapps.net
+- Your site will be live at: https://blue-grass-0e1bb5e10.7.azurestaticapps.net
 
 ---
 
@@ -64,8 +64,8 @@ Then use Option 2 above.
 ## Verification
 
 After deployment completes, visit:
-- **Your App:** https://black-sea-0784c5d0f.1.azurestaticapps.net
-- **API Health:** https://black-sea-0784c5d0f.1.azurestaticapps.net/api/compare-vms
+- **Your App:** https://blue-grass-0e1bb5e10.7.azurestaticapps.net
+- **API Health:** https://blue-grass-0e1bb5e10.7.azurestaticapps.net/api/compare-vms
 
 Test the comparison tool with:
 - SKU Name: `Standard_D4s_v3`

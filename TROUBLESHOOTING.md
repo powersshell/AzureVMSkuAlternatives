@@ -13,7 +13,7 @@ az staticwebapp functions show --name vmsku-alternatives-webapp --resource-group
 
 ### 2. Test Health Endpoint
 ```powershell
-curl https://black-sea-0784c5d0f.1.azurestaticapps.net/api/health
+curl https://blue-grass-0e1bb5e10.7.azurestaticapps.net/api/health
 ```
 **Expected:** JSON response with `{"status":"healthy"}`
 **Actual:** 500 Internal Server Error
@@ -75,7 +75,7 @@ az role assignment list --assignee <principalId> --output table
 
 I just deployed better error logging. Now when you test the website:
 
-1. **Open the website**: https://black-sea-0784c5d0f.1.azurestaticapps.net
+1. **Open the website**: https://blue-grass-0e1bb5e10.7.azurestaticapps.net
 2. **Open browser Developer Tools** (F12)
 3. **Go to Console tab**
 4. **Try a VM comparison**
@@ -92,7 +92,7 @@ Test the API directly with PowerShell:
 
 ```powershell
 # Test GET endpoint
-$response = Invoke-WebRequest -Uri 'https://black-sea-0784c5d0f.1.azurestaticapps.net/api/compare-vms' -UseBasicParsing
+$response = Invoke-WebRequest -Uri 'https://blue-grass-0e1bb5e10.7.azurestaticapps.net/api/compare-vms' -UseBasicParsing
 $response.StatusCode
 $response.Content
 
@@ -104,7 +104,7 @@ $body = @{
 
 try {
     $response = Invoke-WebRequest `
-        -Uri 'https://black-sea-0784c5d0f.1.azurestaticapps.net/api/compare-vms' `
+        -Uri 'https://blue-grass-0e1bb5e10.7.azurestaticapps.net/api/compare-vms' `
         -Method POST `
         -Body $body `
         -ContentType 'application/json' `
