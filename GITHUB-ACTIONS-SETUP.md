@@ -66,9 +66,14 @@ This creates the Azure AD App Registration and configures federated credentials.
 1. Creates Azure AD App Registration
 2. Creates Service Principal
 3. Configures federated credential for GitHub
-4. Assigns Azure RBAC roles:
-   - `Contributor` on resource group (deploy resources)
-   - `Reader` on subscription (read VM SKUs)
+4. Assigns Azure RBAC roles (all at **subscription** scope — `deploy.bicep` is
+   subscription-scoped, so it creates the resource group and assigns roles):
+   - `Contributor` on subscription (deploy resources + create the RG)
+   - `Role Based Access Control Administrator` on subscription (create the role
+     assignments the Bicep defines — Function App MI Reader + Storage data roles).
+     Least-privilege alternative to `User Access Administrator`; can be pinned to
+     just the required role IDs with an ABAC `--condition`.
+   - `Reader` on subscription (read VM SKUs; redundant under Contributor)
 5. Outputs GitHub secrets to configure
 
 **Output example:**
@@ -225,15 +230,23 @@ curl "https://vmsku-api-functions-flex.azurewebsites.net/api/compare_vms?current
 $sp = az ad sp list --display-name "github-actions-vmsku-functions" --query "[0]" -o json | ConvertFrom-Json
 az role assignment list --assignee $sp.id --all
 
-# Required roles:
-# 1. Contributor (RG scope) - Deploy resources
-# 2. User Access Administrator (RG scope) - Assign RBAC roles
-# 3. Reader (Subscription scope) - Read VM SKUs
+# Required roles (all at SUBSCRIPTION scope — deploy.bicep is subscription-scoped,
+# creates the RG, and assigns roles, so RG-scoped grants fail with ResourceGroupNotFound):
+# 1. Contributor (Subscription scope) - Deploy resources + create the RG
+# 2. Role Based Access Control Administrator (Subscription scope) - Create the role
+#    assignments the Bicep defines (least-privilege vs User Access Administrator)
+# 3. Reader (Subscription scope) - Read VM SKUs (redundant under Contributor)
 
 # Re-assign roles if needed
-az role assignment create --role "Contributor" --assignee $sp.id --scope "/subscriptions/{sub-id}/resourceGroups/rg-vmsku-alternatives"
-az role assignment create --role "User Access Administrator" --assignee $sp.id --scope "/subscriptions/{sub-id}/resourceGroups/rg-vmsku-alternatives"
+az role assignment create --role "Contributor" --assignee $sp.id --scope "/subscriptions/{sub-id}"
+az role assignment create --role "Role Based Access Control Administrator" --assignee $sp.id --scope "/subscriptions/{sub-id}"
 az role assignment create --role "Reader" --assignee $sp.id --scope "/subscriptions/{sub-id}"
+
+# Optional: pin RBAC Administrator to only the roles the Bicep assigns
+# (Reader, Storage Blob Data Owner, Storage Queue/Table Data Contributor):
+$roles = "acdd72a7-3385-48ef-bd42-f606fba81ae7,b7e6dc6d-f1e8-4753-8033-0f276bb0955b,974c5e8b-45b9-4653-ba55-5f855dd0fb88,0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3"
+$cond = "((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$roles})) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {$roles}))"
+az role assignment create --role "Role Based Access Control Administrator" --assignee $sp.id --scope "/subscriptions/{sub-id}" --condition "$cond" --condition-version "2.0"
 ```
 
 ### Error: "Storage account access denied"
