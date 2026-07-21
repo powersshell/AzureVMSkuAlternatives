@@ -20,7 +20,7 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 The MCP server is hosted publicly at:
 
 ```
-https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp
+https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp
 ```
 
 **No local setup required** — no Python, no dependencies, no cloning. Just point your MCP client at the URL.
@@ -34,7 +34,7 @@ Add to `.vscode/settings.json` or your user settings:
   "mcp": {
     "servers": {
       "azure-vm-skus": {
-        "url": "https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp"
+        "url": "https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp"
       }
     }
   }
@@ -49,7 +49,7 @@ Add to `claude_desktop_config.json` (`%APPDATA%\Claude\claude_desktop_config.jso
 {
   "mcpServers": {
     "azure-vm-skus": {
-      "url": "https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp"
+      "url": "https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp"
     }
   }
 }
@@ -76,7 +76,7 @@ In any Copilot CLI session, run:
 Then fill in:
 - **Name:** `azure-vm-skus`
 - **Type:** `http`
-- **URL:** `https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp`
+- **URL:** `https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp`
 
 Press `Ctrl+S` to save.
 
@@ -88,14 +88,14 @@ Add to `~/.copilot/mcp-config.json` (create it if it doesn't exist):
 ```powershell
 $file = "$env:USERPROFILE\.copilot\mcp-config.json"
 $config = if (Test-Path $file) { Get-Content $file | ConvertFrom-Json } else { @{ mcpServers = @{} } }
-$config.mcpServers | Add-Member -Force -Name 'azure-vm-skus' -Value @{ type = 'http'; url = 'https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp' } -MemberType NoteProperty
+$config.mcpServers | Add-Member -Force -Name 'azure-vm-skus' -Value @{ type = 'http'; url = 'https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp' } -MemberType NoteProperty
 $config | ConvertTo-Json -Depth 10 | Set-Content $file
 ```
 
 **macOS / Linux:**
 ```bash
 cat ~/.copilot/mcp-config.json 2>/dev/null | \
-  jq '.mcpServers["azure-vm-skus"] = {"type":"http","url":"https://vmsku-mcp-server.thankfulforest-045e8683.eastus2.azurecontainerapps.io/mcp"}' \
+  jq '.mcpServers["azure-vm-skus"] = {"type":"http","url":"https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp"}' \
   > ~/.copilot/mcp-config.json.tmp && mv ~/.copilot/mcp-config.json.tmp ~/.copilot/mcp-config.json
 ```
 

@@ -9,9 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-07-20
-- **feature:** New **Spot** option on the pricing toggle (with Pay-as-you-go and reserved) on both alternatives cards and the Browse grid — showing the deeply discounted Linux Spot price for interruptible workloads. When Spot is selected the OS toggle locks to Linux, sizes without a Spot price show "N/A", and Spot columns are included in CSV/Excel exports.
-- **feature:** New **price history** — daily snapshots of each size's Linux/Windows/Spot price. Cards show an inline **sparkline** and a **% change badge** (green = price fell, red = rose), and a 📈 button opens a **Price history** dialog with a multi-line chart, date axis, and summary stats (first, last, % change, min, max). Prices shown in USD; history accrues going forward via a new `/api/history` endpoint.
+### 2026-07-21
+- **improvement:** The hosted **MCP server** endpoint moved to a new region/host. The remote Streamable-HTTP URL is now `https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp` (previously in `eastus2`). MCP clients should repoint to the new URL; the tool set and anonymous access are unchanged.
 
 📄 [Full changelog →](CHANGELOG.md)
 

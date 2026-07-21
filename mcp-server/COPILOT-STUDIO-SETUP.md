@@ -65,12 +65,12 @@ The GitHub Actions workflow `deploy-mcp-container.yml` handles the build and dep
 
 The workflow will:
 - Build the Docker image and push to GitHub Container Registry (free, public)
-- Deploy the Azure Container App into `rg-vmsku-alternatives` in eastus2
+- Deploy the Azure Container App into `rg-vmsku-alternatives` in southcentralus
 - Configure Entra ID Easy Auth on the Container App
 
 At the end of the workflow run, the **MCP Endpoint URL** is printed in the logs:
 ```
-MCP Endpoint: https://vmsku-mcp-server.<hash>.eastus2.azurecontainerapps.io/mcp
+MCP Endpoint: https://vmsku-mcp-server.<hash>.southcentralus.azurecontainerapps.io/mcp
 ```
 Copy this URL — you need it in Step 4.
 

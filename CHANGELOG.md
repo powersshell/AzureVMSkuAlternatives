@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-07-21
+- **improvement:** The hosted **MCP server** endpoint moved to a new region and host. The remote Streamable-HTTP URL is now `https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp` (previously in `eastus2`). Connection docs (`mcp-server/README.md`, `mcp-server/COPILOT-STUDIO-SETUP.md`) and the container deploy workflow's default region were updated to match. Existing MCP clients should repoint to the new URL; the tool set and anonymous access are unchanged.
+
 ## 2026-07-20
 - **fix:** The manual per-region cache refresh endpoint is reachable again. Its route was `/api/admin/refresh-region`, but the Azure Functions host reserves the `admin` route prefix for its own management API and silently drops HTTP functions registered under it (the function existed but returned 404). The route is now `/api/refresh-region` (still protected by a function key), restoring operators' ability to warm or correct a single region's pricing on demand without waiting for the daily timer.
 - **feature:** New **Spot** option on the pricing toggle (alongside Pay-as-you-go and 1-year/3-year reserved), on both the alternatives cards and the Browse all VMs grid. Spot shows the deeply discounted Linux Spot price for interruptible workloads; when Spot is selected the OS toggle locks to Linux (Spot pricing is Linux-only here), and sizes without a published Spot price show "N/A". Spot hourly/monthly columns are also included in the CSV and Excel exports. Backed by capturing the Linux Spot retail price into the daily cache.
