@@ -1271,6 +1271,59 @@ def history(req: func.HttpRequest) -> func.HttpResponse:
 
 
 # ============================================================================
+# HTTP Route: /retirements - List VM sizes announced for retirement / retired
+# ============================================================================
+@app.route(route="retirements", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def retirements(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    List Azure VM sizes announced for retirement or already retired.
+
+    Query Parameters:
+    - sku: (optional) a single ARM SKU name to check. When provided, returns just
+      that SKU's retirement status (retirementStatus is null when not retiring).
+
+    With no parameters, returns the full retirement catalog with counts. Each entry's
+    sizePattern is a regular expression matching the affected size names (retirement is
+    published per size-series, not per individual SKU). Source: Microsoft
+    azure-compute-docs retired-sizes list.
+    """
+    logging.info('Processing retirements request')
+
+    sku_name = req.params.get('sku')
+    if sku_name:
+        info = _get_retirement_info(sku_name)
+        response_data = {'sku': sku_name, **info} if info else {
+            'sku': sku_name,
+            'retirementStatus': None,
+            'retirementDate': None,
+            'migrationGuideUrl': None,
+        }
+        return func.HttpResponse(
+            json.dumps(response_data), mimetype='application/json', status_code=200
+        )
+
+    items = [
+        {
+            'sizePattern': entry['pattern'],
+            'retirementStatus': entry['status'],
+            'retirementDate': entry['retirementDate'],
+            'migrationGuideUrl': entry['migrationGuideUrl'],
+        }
+        for entry in VM_RETIREMENT_INFO
+    ]
+    announced = sum(1 for e in VM_RETIREMENT_INFO if e['status'] == 'Announced')
+    retired = sum(1 for e in VM_RETIREMENT_INFO if e['status'] == 'Retired')
+    response_data = {
+        'total': len(items),
+        'counts': {'announced': announced, 'retired': retired},
+        'retirements': items,
+    }
+    return func.HttpResponse(
+        json.dumps(response_data), mimetype='application/json', status_code=200
+    )
+
+
+# ============================================================================
 # Timer Trigger: refresh_sku_cache - Daily SKU cache refresh
 # ============================================================================
 @app.timer_trigger(schedule="0 0 2 * * *", arg_name="timer", run_on_startup=False, use_monitor=True)

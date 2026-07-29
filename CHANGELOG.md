@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-07-29
+- **feature:** The **MCP server** now exposes the tool's newer capabilities to AI agents. Four new tools were added — `compare_regions_for_sku` ("where is this cheapest?" cross-region pricing), `list_region_vm_grid` (every size in a region with full specs and all pricing models), `get_sku_price_history` (daily Linux/Windows/Spot price trends), and `list_retiring_skus` (sizes announced for retirement or already retired) — and the existing tool descriptions now document Spot and reserved-instance pricing and per-SKU retirement status. Backed by a new anonymous `/api/retirements` endpoint that returns the retirement catalog (or a single SKU's status via `?sku=`).
+
 ## 2026-07-21
 - **improvement:** The hosted **MCP server** endpoint moved to a new region and host. The remote Streamable-HTTP URL is now `https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp` (previously in `eastus2`). Connection docs (`mcp-server/README.md`, `mcp-server/COPILOT-STUDIO-SETUP.md`) and the container deploy workflow's default region were updated to match. Existing MCP clients should repoint to the new URL; the tool set and anonymous access are unchanged.
 

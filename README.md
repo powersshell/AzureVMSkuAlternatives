@@ -9,8 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-07-21
-- **improvement:** The hosted **MCP server** endpoint moved to a new region/host. The remote Streamable-HTTP URL is now `https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp` (previously in `eastus2`). MCP clients should repoint to the new URL; the tool set and anonymous access are unchanged.
+### 2026-07-29
+- **feature:** The **MCP server** now exposes the newer capabilities to AI agents — four new tools (`compare_regions_for_sku`, `list_region_vm_grid`, `get_sku_price_history`, `list_retiring_skus`) plus Spot/reserved pricing and retirement status documented on existing tools. Backed by a new `/api/retirements` endpoint.
 
 📄 [Full changelog →](CHANGELOG.md)
 
