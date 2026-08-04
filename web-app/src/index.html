@@ -35,6 +35,10 @@
                 GitHub
             </a>
             <a id="reportIssueLink" href="https://github.com/powersshell/AzureVMSkuAlternatives/issues/new/choose" target="_blank" rel="noopener" class="nav-link">Report Issue</a>
+            <button id="useWithAiBtn" type="button" class="nav-link nav-link-btn nav-link-cta">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4L12 3z"/><path d="M19 14l.9 2.2L22 17l-2.1.8L19 20l-.9-2.2L16 17l2.1-.8L19 14z"/></svg>
+                Use with AI
+            </button>
         </div>
     </nav>
 
@@ -465,6 +469,117 @@
             </div>
             <div class="region-price-body" id="priceHistoryBody">
                 <!-- Populated by app.js -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Use with AI (MCP server) modal -->
+    <div id="mcpModal" class="region-price-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mcpModalTitle">
+        <div class="region-price-backdrop" id="mcpBackdrop"></div>
+        <div class="region-price-dialog mcp-dialog">
+            <div class="region-price-header">
+                <h3 id="mcpModalTitle">Use this tool from your AI assistant</h3>
+                <button type="button" class="region-price-close" id="mcpClose" aria-label="Close">✕</button>
+            </div>
+            <div class="region-price-body">
+                <p class="mcp-intro">
+                    This site is also an <strong>MCP server</strong>, so AI assistants like
+                    GitHub Copilot, VS Code, and Claude can query Azure VM SKUs, pricing,
+                    cross-region costs, price history, and retirement info directly in chat.
+                    Point your client at this URL — <strong>no install, no sign-in</strong>:
+                </p>
+
+                <div class="mcp-url-row">
+                    <code id="mcpUrl" class="mcp-url">https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp</code>
+                    <button type="button" class="mcp-copy-btn" data-copy-target="mcpUrl">Copy URL</button>
+                </div>
+
+                <div class="mcp-tabs" role="tablist" aria-label="AI client">
+                    <button type="button" class="mcp-tab active" role="tab" aria-selected="true" data-mcp-tab="cli">Copilot CLI</button>
+                    <button type="button" class="mcp-tab" role="tab" aria-selected="false" data-mcp-tab="vscode">VS Code</button>
+                    <button type="button" class="mcp-tab" role="tab" aria-selected="false" data-mcp-tab="claude">Claude Desktop</button>
+                    <button type="button" class="mcp-tab" role="tab" aria-selected="false" data-mcp-tab="other">Other clients</button>
+                </div>
+
+                <!-- Copilot CLI -->
+                <div class="mcp-panel active" data-mcp-panel="cli">
+                    <p class="mcp-step">In any GitHub Copilot CLI session, run:</p>
+                    <div class="mcp-code-row">
+                        <pre id="mcpCliCmd" class="mcp-code">/mcp add</pre>
+                        <button type="button" class="mcp-copy-btn" data-copy-target="mcpCliCmd">Copy</button>
+                    </div>
+                    <p class="mcp-step">Then enter these values and press <kbd>Ctrl</kbd>+<kbd>S</kbd> to save:</p>
+                    <ul class="mcp-fields">
+                        <li><span class="mcp-field-key">Name</span><code>azure-vm-skus</code></li>
+                        <li><span class="mcp-field-key">Type</span><code>http</code></li>
+                        <li><span class="mcp-field-key">URL</span><code>the URL above</code></li>
+                    </ul>
+                    <p class="mcp-step mcp-muted">Prefer editing config directly? Add this to <code>~/.copilot/mcp-config.json</code>:</p>
+                    <div class="mcp-code-row">
+                        <pre id="mcpCliJson" class="mcp-code">{
+  "mcpServers": {
+    "azure-vm-skus": {
+      "type": "http",
+      "url": "https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp"
+    }
+  }
+}</pre>
+                        <button type="button" class="mcp-copy-btn" data-copy-target="mcpCliJson">Copy</button>
+                    </div>
+                </div>
+
+                <!-- VS Code -->
+                <div class="mcp-panel" data-mcp-panel="vscode">
+                    <p class="mcp-step">Create <code>.vscode/mcp.json</code> in your workspace (or add to user settings) with:</p>
+                    <div class="mcp-code-row">
+                        <pre id="mcpVscodeJson" class="mcp-code">{
+  "servers": {
+    "azure-vm-skus": {
+      "type": "http",
+      "url": "https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp"
+    }
+  }
+}</pre>
+                        <button type="button" class="mcp-copy-btn" data-copy-target="mcpVscodeJson">Copy</button>
+                    </div>
+                    <p class="mcp-step mcp-muted">Then open Copilot Chat in Agent mode and start the <code>azure-vm-skus</code> server. Requires GitHub Copilot in VS Code 1.99+.</p>
+                </div>
+
+                <!-- Claude Desktop -->
+                <div class="mcp-panel" data-mcp-panel="claude">
+                    <p class="mcp-step">
+                        Add to <code>claude_desktop_config.json</code>
+                        (<code>%APPDATA%\Claude\</code> on Windows,
+                        <code>~/Library/Application Support/Claude/</code> on macOS), then restart Claude:
+                    </p>
+                    <div class="mcp-code-row">
+                        <pre id="mcpClaudeJson" class="mcp-code">{
+  "mcpServers": {
+    "azure-vm-skus": {
+      "url": "https://vmsku-mcp-server.braveriver-1558541d.southcentralus.azurecontainerapps.io/mcp"
+    }
+  }
+}</pre>
+                        <button type="button" class="mcp-copy-btn" data-copy-target="mcpClaudeJson">Copy</button>
+                    </div>
+                </div>
+
+                <!-- Other -->
+                <div class="mcp-panel" data-mcp-panel="other">
+                    <p class="mcp-step">
+                        Any MCP client that supports the
+                        <a href="https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http" target="_blank" rel="noopener">Streamable HTTP transport</a>
+                        can connect using the URL at the top of this dialog. No authentication is required.
+                    </p>
+                    <p class="mcp-step mcp-muted">
+                        Full setup notes, the local stdio option, and the complete tool list live in the
+                        <a href="https://github.com/powersshell/AzureVMSkuAlternatives/blob/main/mcp-server/README.md" target="_blank" rel="noopener">MCP server README</a>.
+                    </p>
+                </div>
+
+                <p class="mcp-try">
+                    Once connected, try asking: <em>"Find cheaper alternatives to Standard_D8s_v5 and tell me which region is least expensive."</em>
+                </p>
             </div>
         </div>
     </div>

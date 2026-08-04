@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-08-04
+- **feature:** Added a **"Use with AI"** link in the top navigation that opens a dialog with clear, copy-paste setup instructions for connecting the site's **MCP server** to AI assistants. Includes the remote server URL (one-click copy) plus tabbed, ready-to-paste config for GitHub Copilot CLI, VS Code, Claude Desktop, and any Streamable-HTTP MCP client — no install or sign-in required.
+
 ## 2026-07-29
 - **feature:** The **MCP server** now exposes the tool's newer capabilities to AI agents. Four new tools were added — `compare_regions_for_sku` ("where is this cheapest?" cross-region pricing), `list_region_vm_grid` (every size in a region with full specs and all pricing models), `get_sku_price_history` (daily Linux/Windows/Spot price trends), and `list_retiring_skus` (sizes announced for retirement or already retired) — and the existing tool descriptions now document Spot and reserved-instance pricing and per-SKU retirement status. Backed by a new anonymous `/api/retirements` endpoint that returns the retirement catalog (or a single SKU's status via `?sku=`).
 

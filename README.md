@@ -9,8 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-07-29
-- **feature:** The **MCP server** now exposes the newer capabilities to AI agents — four new tools (`compare_regions_for_sku`, `list_region_vm_grid`, `get_sku_price_history`, `list_retiring_skus`) plus Spot/reserved pricing and retirement status documented on existing tools. Backed by a new `/api/retirements` endpoint.
+### 2026-08-04
+- **feature:** Added a **"Use with AI"** link in the top navigation that opens copy-paste setup instructions for connecting the site's **MCP server** to GitHub Copilot CLI, VS Code, Claude Desktop, or any Streamable-HTTP MCP client — no install or sign-in required.
 
 📄 [Full changelog →](CHANGELOG.md)
 

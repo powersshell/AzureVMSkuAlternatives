@@ -1337,6 +1337,174 @@ body.modal-open { overflow: hidden; }
 .region-price-error-detail { font-size: 0.8rem; color: var(--text-muted); margin-top: 6px; }
 
 /* ============================================================
+   Use with AI (MCP) — nav CTA + modal
+   ============================================================ */
+.nav-link-btn {
+    background: none;
+    border: none;
+    font-family: inherit;
+    cursor: pointer;
+    padding: 0;
+}
+.nav-link-cta {
+    color: var(--blue-start);
+    font-weight: 600;
+}
+.nav-link-cta svg { color: var(--blue-start); }
+.nav-link-cta:hover { color: var(--blue-end, var(--blue-start)); filter: brightness(1.08); }
+
+.mcp-dialog { width: min(680px, 100%); }
+
+.mcp-intro {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 14px;
+}
+
+.mcp-url-row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 18px;
+}
+.mcp-url {
+    flex: 1;
+    min-width: 0;
+    background: var(--border-light);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 9px 12px;
+    font-size: 0.78rem;
+    color: var(--text-primary);
+    word-break: break-all;
+    display: flex;
+    align-items: center;
+}
+
+.mcp-copy-btn {
+    flex-shrink: 0;
+    background: var(--blue-start);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, opacity 0.15s;
+}
+.mcp-copy-btn:hover { opacity: 0.9; }
+.mcp-copy-btn.copied { background: var(--success, #107c10); }
+
+.mcp-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+.mcp-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 8px 12px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    margin-bottom: -1px;
+}
+.mcp-tab:hover { color: var(--text-primary); }
+.mcp-tab.active {
+    color: var(--blue-start);
+    border-bottom-color: var(--blue-start);
+    font-weight: 600;
+}
+
+.mcp-panel { display: none; }
+.mcp-panel.active { display: block; }
+
+.mcp-step {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 10px 0 8px;
+}
+.mcp-muted { color: var(--text-muted); }
+.mcp-step code,
+.mcp-fields code {
+    background: var(--border-light);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.82em;
+    color: var(--text-primary);
+}
+
+.mcp-code-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.mcp-code {
+    flex: 1;
+    min-width: 0;
+    background: var(--border-light);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 0.78rem;
+    color: var(--text-primary);
+    white-space: pre;
+    overflow-x: auto;
+    margin: 0;
+}
+
+.mcp-fields {
+    list-style: none;
+    margin: 4px 0 12px;
+    padding: 0;
+}
+.mcp-fields li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0;
+    font-size: 0.85rem;
+}
+.mcp-field-key {
+    display: inline-block;
+    min-width: 52px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.mcp-fields kbd,
+.mcp-step kbd {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.78em;
+    font-family: Consolas, "Courier New", monospace;
+    color: var(--text-primary);
+}
+
+.mcp-try {
+    margin-top: 16px;
+    padding: 12px 14px;
+    background: var(--border-light);
+    border-radius: var(--radius-sm);
+    font-size: 0.83rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+/* ============================================================
    Mode Tabs + Browse/Grid View (I-F)
    ============================================================ */
 .mode-tabs {

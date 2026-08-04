@@ -1316,6 +1316,75 @@ function escapeHtml(value) {
     }
 })();
 
+// Wire up the "Use with AI" (MCP) modal: open/close, tabs, copy-to-clipboard.
+(function initMcpModal() {
+    function bind() {
+        const modal = document.getElementById('mcpModal');
+        if (!modal) return;
+        const openBtn = document.getElementById('useWithAiBtn');
+        const closeBtn = document.getElementById('mcpClose');
+        const backdrop = document.getElementById('mcpBackdrop');
+
+        const open = () => modal.classList.remove('hidden');
+        const close = () => modal.classList.add('hidden');
+
+        if (openBtn) openBtn.addEventListener('click', open);
+        if (closeBtn) closeBtn.addEventListener('click', close);
+        if (backdrop) backdrop.addEventListener('click', close);
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') close();
+        });
+
+        // Tab switching
+        modal.querySelectorAll('.mcp-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const target = tab.getAttribute('data-mcp-tab');
+                modal.querySelectorAll('.mcp-tab').forEach(t => {
+                    const active = t === tab;
+                    t.classList.toggle('active', active);
+                    t.setAttribute('aria-selected', active ? 'true' : 'false');
+                });
+                modal.querySelectorAll('.mcp-panel').forEach(p => {
+                    p.classList.toggle('active', p.getAttribute('data-mcp-panel') === target);
+                });
+            });
+        });
+
+        // Copy-to-clipboard buttons
+        modal.querySelectorAll('.mcp-copy-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const el = document.getElementById(btn.getAttribute('data-copy-target'));
+                if (!el) return;
+                const text = el.textContent;
+                try {
+                    await navigator.clipboard.writeText(text);
+                } catch {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    try { document.execCommand('copy'); } catch { /* ignore */ }
+                    document.body.removeChild(ta);
+                }
+                const original = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = original;
+                    btn.classList.remove('copied');
+                }, 1600);
+            });
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bind);
+    } else {
+        bind();
+    }
+})();
+
 // Format CPU performance display for table cells
 function formatCpuPerf(sku) {
     const gen = sku.cpuGeneration;
