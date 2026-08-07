@@ -11,6 +11,7 @@
 
 ### 2026-08-07
 - **fix:** Analytics now count unique visitors correctly — the App Insights "Users" metric was always 1 because the anonymous per-browser id wasn't populating the field the portal's user rollup uses. Tracking stays anonymous with no PII.
+- **fix:** The Site Usage Analytics workbook now reports real unique-user counts — its queries referenced a custom property the frontend never emits, so every `dcount` collapsed to 1.
 
 📄 [Full changelog →](CHANGELOG.md)
 
