@@ -128,8 +128,17 @@ async function initializeTelemetry() {
     });
 
     appInsights.loadAppInsights();
-    appInsights.context.user.id = analyticsUserId;
-    appInsights.context.user.accountId = 'public-site';
+    // Register the stable per-browser id as user_AuthenticatedId — the field the
+    // Application Insights "Users" metric prefers (assigning context.user.id after load
+    // does not reliably drive the portal user count). storeInCookie=true persists it
+    // across page loads; the trailing account id stays constant ('public-site') and is
+    // not the count dimension. Also stamp ai.user.id on every envelope so raw user_Id
+    // is distinct too.
+    appInsights.setAuthenticatedUserContext(analyticsUserId, 'public-site', true);
+    appInsights.addTelemetryInitializer(envelope => {
+        envelope.tags = envelope.tags || {};
+        envelope.tags['ai.user.id'] = analyticsUserId;
+    });
     telemetryReady = true;
     appInsights.trackPageView({ name: 'home' });
     flushPendingTelemetryEvents();

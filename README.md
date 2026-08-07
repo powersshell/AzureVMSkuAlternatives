@@ -9,8 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-08-04
-- **feature:** Added a **"Use with AI"** link in the top navigation that opens copy-paste setup instructions for connecting the site's **MCP server** to GitHub Copilot CLI, VS Code, Claude Desktop, or any Streamable-HTTP MCP client — no install or sign-in required.
+### 2026-08-07
+- **fix:** Analytics now count unique visitors correctly — the App Insights "Users" metric was always 1 because the anonymous per-browser id wasn't populating the field the portal's user rollup uses. Tracking stays anonymous with no PII.
 
 📄 [Full changelog →](CHANGELOG.md)
 

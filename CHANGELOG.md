@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-08-07
+- **fix:** Analytics now count **unique visitors correctly** (the App Insights "Users" metric was always 1). The stable per-browser anonymous id is now registered via `setAuthenticatedUserContext` so it populates `user_AuthenticatedId` — the field the portal's user rollup prefers — and is also stamped onto `ai.user.id`, replacing an earlier `context.user.id` assignment that didn't drive the count. No change to what's collected (still anonymous, no PII).
+
 ## 2026-08-04
 - **feature:** Added a **"Use with AI"** link in the top navigation that opens a dialog with clear, copy-paste setup instructions for connecting the site's **MCP server** to AI assistants. Includes the remote server URL (one-click copy) plus tabbed, ready-to-paste config for GitHub Copilot CLI, VS Code, Claude Desktop, and any Streamable-HTTP MCP client — no install or sign-in required.
 
