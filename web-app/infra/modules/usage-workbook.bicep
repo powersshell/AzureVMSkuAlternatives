@@ -132,7 +132,7 @@ var serializedData = '''
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'compare_submitted'\n| extend SKU = tostring(Properties.skuName)\n| where isnotempty(SKU)\n| summarize CompareCount = count(), UniqueUsers = dcount(tostring(Properties.anonymousUserId)) by SKU\n| order by CompareCount desc\n| take 20",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'compare_submitted'\n| extend SKU = tostring(Properties.targetSku)\n| where isnotempty(SKU)\n| summarize CompareCount = count(), UniqueUsers = dcount(tostring(Properties.anonymousUserId)) by SKU\n| order by CompareCount desc\n| take 20",
         "size": 0,
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
@@ -219,6 +219,210 @@ var serializedData = '''
         "title": "Frontend Error Events"
       },
       "name": "frontend-errors-table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "---\n## Value & Impact\nMetrics that quantify how the tool helps visitors: engagement, conversion, savings surfaced, feature adoption, and reach."
+      },
+      "name": "value-header"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Engagement & Retention"
+      },
+      "name": "engagement-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated > ago(30d)\n| extend u = tostring(Properties.anonymousUserId)\n| where isnotempty(u)\n| summarize DAU = dcountif(u, TimeGenerated > ago(1d)), WAU = dcountif(u, TimeGenerated > ago(7d)), MAU = dcountif(u, TimeGenerated > ago(30d))\n| extend ['Stickiness (DAU/MAU %)'] = iff(MAU > 0, round(100.0 * DAU / MAU, 1), 0.0)",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "Active Users - DAU / WAU / MAU (fixed windows, ignores Time Range)"
+      },
+      "name": "active-users-tiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| extend u = tostring(Properties.anonymousUserId)\n| where isnotempty(u)\n| summarize ActiveDays = dcount(bin(TimeGenerated, 1d)) by u\n| summarize ['Returning (multi-day)'] = countif(ActiveDays > 1), ['Single-visit'] = countif(ActiveDays == 1)",
+        "size": 1,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "New vs Returning Visitors"
+      },
+      "name": "new-returning-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| extend u = tostring(Properties.anonymousUserId)\n| where isnotempty(u)\n| summarize Events = count() by u, Day = bin(TimeGenerated, 1d)\n| summarize ['Avg events / user / day'] = round(avg(Events), 1), ['Median events / user / day'] = round(percentile(Events, 50), 1)",
+        "size": 1,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Engagement Depth (events per active user per day)"
+      },
+      "name": "engagement-depth-table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Value & Conversion"
+      },
+      "name": "value-conversion-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'compare_completed'\n| extend Status = tostring(Properties.resultStatus)\n| summarize Count = count() by Status",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "piechart",
+        "title": "Compare Outcomes: Answered vs No Results"
+      },
+      "name": "answered-rate-chart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| summarize Compares = countif(Name == 'compare_completed' and tostring(Properties.resultStatus) == 'results'), Exports = countif(Name in ('export_csv_clicked', 'export_xlsx_clicked'))\n| extend ['Export conversion %'] = iff(Compares > 0, round(100.0 * Exports / Compares, 1), 0.0)",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "Export Conversion (exports per successful compare)"
+      },
+      "name": "export-conversion-tiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'compare_completed'\n| extend n = todouble(Measurements.alternativesCount)\n| where isnotnull(n)\n| summarize ['Avg alternatives / compare'] = round(avg(n), 1), ['Median'] = round(percentile(n, 50), 1), Compares = count()",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "Alternatives Surfaced per Comparison"
+      },
+      "name": "avg-alternatives-tiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'compare_completed'\n| extend s = todouble(Measurements.maxMonthlySavings), pct = todouble(Measurements.maxSavingsPct)\n| where isnotnull(s) and s > 0\n| summarize ['Median $/mo savings surfaced'] = round(percentile(s, 50), 2), ['95th pct $/mo'] = round(percentile(s, 95), 2), ['Median savings %'] = round(percentile(pct, 50), 1), ['Compares with savings'] = count()",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "Potential Monthly Savings Surfaced (target vs cheapest alternative, USD)"
+      },
+      "name": "savings-surfaced-tiles"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Feature Adoption"
+      },
+      "name": "feature-adoption-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name in ('where_cheapest_opened', 'price_history_opened', 'region_check_completed', 'grid_loaded', 'pricing_model_toggled', 'mode_switched')\n| extend Feature = case(\n    Name == 'where_cheapest_opened', 'Where is cheapest?',\n    Name == 'price_history_opened', 'Price history',\n    Name == 'region_check_completed', 'Cross-region availability',\n    Name == 'grid_loaded', 'Browse / Grid view',\n    Name == 'pricing_model_toggled', 'Spot / RI pricing toggle',\n    Name == 'mode_switched', 'Mode switch',\n    Name)\n| summarize Events = count(), UniqueUsers = dcount(tostring(Properties.anonymousUserId)) by Feature\n| order by UniqueUsers desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "categoricalbar",
+        "title": "Feature Adoption (unique users per feature)"
+      },
+      "name": "feature-adoption-chart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'where_cheapest_result'\n| extend s = todouble(Measurements.maxRegionSavings), regions = todouble(Measurements.regionCount)\n| summarize Checks = count(), UniqueUsers = dcount(tostring(Properties.anonymousUserId)), ['Median region savings $/mo'] = round(percentile(s, 50), 2), ['Avg regions compared'] = round(avg(regions), 1)",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "Where-is-Cheapest Impact"
+      },
+      "name": "where-cheapest-tiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'region_check_completed'\n| extend avail = todouble(Measurements.availableCount), total = todouble(Measurements.totalChecked)\n| summarize Checks = count(), UniqueUsers = dcount(tostring(Properties.anonymousUserId)), ['Avg regions available'] = round(avg(avail), 1), ['Avg regions checked'] = round(avg(total), 1)",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "Cross-Region Availability Checks"
+      },
+      "name": "region-check-tiles"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Reach & Timing"
+      },
+      "name": "reach-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where isnotempty(ClientCountryOrRegion)\n| summarize Users = dcount(tostring(Properties.anonymousUserId)), Events = count() by Country = ClientCountryOrRegion\n| order by Users desc\n| take 25",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Visitors by Country / Region (Top 25)"
+      },
+      "name": "geo-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'page_loaded'\n| summarize Visits = count() by Hour = hourofday(TimeGenerated)\n| order by Hour asc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "barchart",
+        "title": "Usage by Hour of Day (UTC)"
+      },
+      "name": "usage-by-hour-chart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'page_loaded'\n| extend d = dayofweek(TimeGenerated)\n| extend DayNum = toint(d / 1d), DayOfWeek = case(d == 0d, 'Sun', d == 1d, 'Mon', d == 2d, 'Tue', d == 3d, 'Wed', d == 4d, 'Thu', d == 5d, 'Fri', 'Sat')\n| summarize Visits = count() by DayOfWeek, DayNum\n| order by DayNum asc\n| project DayOfWeek, Visits",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "barchart",
+        "title": "Usage by Day of Week (UTC)"
+      },
+      "name": "usage-by-day-chart"
     },
     {
       "type": 1,

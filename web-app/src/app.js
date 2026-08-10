@@ -527,7 +527,8 @@ async function handleCompare() {
 
     trackEvent('compare_submitted', {
         location,
-        currencyCode
+        currencyCode,
+        targetSku: skuName
     }, {
         maxResults: MAX_RESULTS
     });
@@ -570,13 +571,36 @@ async function handleCompare() {
         currentResults = data;
         displayResults(data);
 
+        const hasResults = data.alternatives && data.alternatives.length > 0;
+        const compareMeasurements = {
+            alternativesCount: data.alternatives ? data.alternatives.length : 0
+        };
+        // Savings surfaced: gap between the target SKU and the cheapest alternative
+        // (Linux/USD monthly, as emitted by the pricing API). Guard nulls so we never
+        // emit 0/NaN measurements when pricing is unavailable.
+        const targetMonthly = data.targetSku?.pricing?.monthlyPrice;
+        const altMonthlies = hasResults
+            ? data.alternatives
+                .map(a => a?.pricing?.monthlyPrice)
+                .filter(p => typeof p === 'number' && p > 0)
+            : [];
+        if (typeof targetMonthly === 'number' && targetMonthly > 0) {
+            compareMeasurements.targetMonthlyPrice = targetMonthly;
+            if (altMonthlies.length > 0) {
+                const cheapestAltMonthly = Math.min(...altMonthlies);
+                compareMeasurements.cheapestAltMonthlyPrice = cheapestAltMonthly;
+                const maxMonthlySavings = Math.max(0, targetMonthly - cheapestAltMonthly);
+                compareMeasurements.maxMonthlySavings = maxMonthlySavings;
+                compareMeasurements.maxSavingsPct = (maxMonthlySavings / targetMonthly) * 100;
+            }
+        }
+
         trackEvent('compare_completed', {
             location,
             currencyCode,
-            resultStatus: data.alternatives && data.alternatives.length > 0 ? 'results' : 'no_results'
-        }, {
-            alternativesCount: data.alternatives ? data.alternatives.length : 0
-        });
+            targetSku: skuName,
+            resultStatus: hasResults ? 'results' : 'no_results'
+        }, compareMeasurements);
     } catch (error) {
         console.error('Error comparing VMs:', error);
         trackEvent('compare_failed', {
@@ -987,6 +1011,12 @@ async function showRegionPriceComparison(skuName) {
     modal.classList.remove('hidden');
     document.body.classList.add('modal-open');
 
+    trackEvent('where_cheapest_opened', {
+        sku: skuName,
+        sourceRegion: currentRegion,
+        currencyCode: currency
+    });
+
     try {
         const url = `${API_BASE_URL}/compare_regions?skuName=${encodeURIComponent(skuName)}&currency=${encodeURIComponent(currency)}&os=${encodeURIComponent(os)}`;
         const response = await fetch(url);
@@ -995,6 +1025,27 @@ async function showRegionPriceComparison(skuName) {
         }
         const data = await response.json();
         renderRegionPriceComparison(data, osLabel, currentRegion);
+
+        // Adoption + value: how many regions were compared and the savings surfaced.
+        const resultMeasurements = {};
+        if (typeof data.regionCount === 'number') resultMeasurements.regionCount = data.regionCount;
+        if (typeof data.cheapest?.monthlyPrice === 'number') {
+            resultMeasurements.cheapestMonthlyPrice = data.cheapest.monthlyPrice;
+        }
+        const sourceRow = Array.isArray(data.regions)
+            ? data.regions.find(r => r.region === currentRegion)
+            : null;
+        if (typeof sourceRow?.monthlyPrice === 'number') {
+            resultMeasurements.sourceMonthlyPrice = sourceRow.monthlyPrice;
+        }
+        if (typeof data.maxMonthlySavings === 'number') {
+            resultMeasurements.maxRegionSavings = data.maxMonthlySavings;
+        }
+        trackEvent('where_cheapest_result', {
+            sku: skuName,
+            sourceRegion: currentRegion,
+            currencyCode: currency
+        }, resultMeasurements);
     } catch (err) {
         body.innerHTML = `<div class="region-price-error"><p>⚠️ Couldn't load regional pricing.</p><p class="region-price-error-detail">${escapeHtml(err.message)}</p></div>`;
     }

@@ -9,9 +9,9 @@
 
 ## 📋 Recent Changes
 
-### 2026-08-07
-- **fix:** Analytics now count unique visitors correctly — the App Insights "Users" metric was always 1 because the anonymous per-browser id wasn't populating the field the portal's user rollup uses. Tracking stays anonymous with no PII.
-- **fix:** The Site Usage Analytics workbook now reports real unique-user counts — its queries referenced a custom property the frontend never emits, so every `dcount` collapsed to 1.
+### 2026-08-10
+- **feature:** The Site Usage Analytics workbook gained a **Value & Impact** section — engagement & retention (DAU/WAU/MAU + stickiness, new vs returning), value & conversion (answered rate, export conversion, avg alternatives, and **potential monthly savings surfaced**), feature adoption (Where-is-cheapest, price history, region checks, Browse/Grid, Spot/RI), and reach & timing (country breakdown, usage by hour/day). The empty "Most Compared SKUs" table now works.
+- **improvement:** Frontend telemetry now records the target VM size on compare events, the potential monthly savings of the cheapest alternative, and "Where is this cheapest?" usage — all still anonymous, no PII.
 
 📄 [Full changelog →](CHANGELOG.md)
 
