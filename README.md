@@ -10,6 +10,8 @@
 ## 📋 Recent Changes
 
 ### 2026-08-10
+- **feature:** The Site Usage Analytics workbook gained an **MCP Server Usage** section — headline totals (tool calls, active days, distinct tools/callers), tool invocations over time, invocations by tool, success vs error, latency (avg/p50/p95 + per-tool), and reach proxies (distinct callers over time, sessions started, and a clients-by-app table showing which AI tools connect).
+- **improvement:** The **MCP server** now emits anonymous usage telemetry to Application Insights via a FastMCP middleware — one event per tool call (tool, success/error, duration, caller IP) plus a session event on each client `initialize`. No-op locally; no PII.
 - **feature:** The Site Usage Analytics workbook gained a **Value & Impact** section — engagement & retention (DAU/WAU/MAU + stickiness, new vs returning), value & conversion (answered rate, export conversion, avg alternatives, and **potential monthly savings surfaced**), feature adoption (Where-is-cheapest, price history, region checks, Browse/Grid, Spot/RI), and reach & timing (country breakdown, usage by hour/day). The empty "Most Compared SKUs" table now works.
 - **improvement:** Frontend telemetry now records the target VM size on compare events, the potential monthly savings of the cheapest alternative, and "Where is this cheapest?" usage — all still anonymous, no PII.
 

@@ -87,6 +87,19 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Fetch Application Insights connection string
+        id: appinsights
+        run: |
+          CONN=$(az monitor app-insights component show \
+            --app vmsku-api-func-cus-insights \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query connectionString -o tsv 2>/dev/null || true)
+          if [ -z "$CONN" ]; then
+            echo "::warning::Application Insights connection string not found; MCP telemetry will be disabled."
+          fi
+          echo "::add-mask::$CONN"
+          echo "connection-string=$CONN" >> "$GITHUB_OUTPUT"
+
       - name: Deploy Container App via Bicep
         uses: azure/arm-deploy@v1
         with:
@@ -95,6 +108,7 @@ jobs:
           parameters: >
             containerImage=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             location=${{ github.event.inputs.location || 'southcentralus' }}
+            appInsightsConnectionString=${{ steps.appinsights.outputs.connection-string }}
           failOnStdErr: false
 
       - name: Get MCP endpoint URL

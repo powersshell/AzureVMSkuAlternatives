@@ -427,6 +427,137 @@ var serializedData = '''
     {
       "type": 1,
       "content": {
+        "json": "---\n## MCP Server Usage\nTool calls made by AI agents (GitHub Copilot CLI, Scout, VS Code, etc.) through the MCP server. Agents are anonymous, so reach metrics use the caller IP and the client-reported app name as proxies for distinct users."
+      },
+      "name": "mcp-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where TimeGenerated {TimeRange}\n| where Message has 'mcp_tool_invoked'\n| extend cd = parse_json(Message)\n| where cd.event_type == 'mcp_tool_invoked'\n| summarize ['Total tool calls'] = count(), ['Active days'] = dcount(startofday(TimeGenerated)), ['Distinct tools'] = dcount(tostring(cd.tool)), ['Distinct callers (by IP)'] = dcountif(tostring(cd.clientIp), isnotempty(tostring(cd.clientIp)))",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "MCP Server — Headline Totals"
+      },
+      "name": "mcp-headline-tiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where TimeGenerated {TimeRange}\n| where Message has 'mcp_tool_invoked'\n| extend cd = parse_json(Message)\n| where cd.event_type == 'mcp_tool_invoked'\n| summarize Calls = count() by bin(TimeGenerated, 1d), Tool = tostring(cd.tool)\n| order by TimeGenerated asc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart",
+        "title": "Tool Invocations Over Time (by tool)"
+      },
+      "name": "mcp-volume-over-time"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where TimeGenerated {TimeRange}\n| where Message has 'mcp_tool_invoked'\n| extend cd = parse_json(Message)\n| where cd.event_type == 'mcp_tool_invoked'\n| summarize Calls = count() by Tool = tostring(cd.tool)\n| order by Calls desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "categoricalbar",
+        "title": "Invocations by Tool"
+      },
+      "name": "mcp-by-tool"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where TimeGenerated {TimeRange}\n| where Message has 'mcp_tool_invoked'\n| extend cd = parse_json(Message)\n| where cd.event_type == 'mcp_tool_invoked'\n| summarize Calls = count() by Status = tostring(cd.status)",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "piechart",
+        "title": "Success vs Error"
+      },
+      "name": "mcp-success-error"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where TimeGenerated {TimeRange}\n| where Message has 'mcp_tool_invoked'\n| extend cd = parse_json(Message)\n| where cd.event_type == 'mcp_tool_invoked'\n| extend d = todouble(cd.durationMs)\n| where isnotnull(d)\n| summarize ['Avg ms'] = round(avg(d), 0), ['p50 ms'] = round(percentile(d, 50), 0), ['p95 ms'] = round(percentile(d, 95), 0)",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "Tool Call Latency (proxy round-trip to API)"
+      },
+      "name": "mcp-latency-tiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where TimeGenerated {TimeRange}\n| where Message has 'mcp_tool_invoked'\n| extend cd = parse_json(Message)\n| where cd.event_type == 'mcp_tool_invoked'\n| extend d = todouble(cd.durationMs)\n| where isnotnull(d)\n| summarize ['Avg ms'] = round(avg(d), 0), ['p95 ms'] = round(percentile(d, 95), 0), Calls = count() by Tool = tostring(cd.tool)\n| order by Calls desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Latency by Tool"
+      },
+      "name": "mcp-latency-by-tool"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### MCP Reach (proxies for distinct users)\nAgents are anonymous. Distinct caller IPs approximate distinct users (shared egress / NAT may under-count), and the client app name shows which AI tools connect."
+      },
+      "name": "mcp-reach-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where TimeGenerated {TimeRange}\n| where Message has 'mcp_tool_invoked'\n| extend cd = parse_json(Message)\n| where cd.event_type == 'mcp_tool_invoked' and isnotempty(tostring(cd.clientIp))\n| summarize ['Distinct callers'] = dcount(tostring(cd.clientIp)) by bin(TimeGenerated, 1d)\n| order by TimeGenerated asc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart",
+        "title": "Distinct Callers Over Time (by IP)"
+      },
+      "name": "mcp-callers-over-time"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where TimeGenerated {TimeRange}\n| where Message has 'mcp_session_started'\n| extend cd = parse_json(Message)\n| where cd.event_type == 'mcp_session_started'\n| summarize ['MCP sessions started'] = count(), ['Distinct callers (by IP)'] = dcountif(tostring(cd.clientIp), isnotempty(tostring(cd.clientIp))), ['Distinct client apps'] = dcountif(tostring(cd.clientName), isnotempty(tostring(cd.clientName)))",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "MCP Sessions & Distinct Clients"
+      },
+      "name": "mcp-sessions-tiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where TimeGenerated {TimeRange}\n| where Message has 'mcp_session_started'\n| extend cd = parse_json(Message)\n| where cd.event_type == 'mcp_session_started'\n| summarize Sessions = count(), ['Distinct callers'] = dcountif(tostring(cd.clientIp), isnotempty(tostring(cd.clientIp))) by ['Client app'] = iff(isempty(tostring(cd.clientName)), 'unknown', tostring(cd.clientName)), Version = tostring(cd.clientVersion)\n| order by Sessions desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Clients by App (which AI tools connect)"
+      },
+      "name": "mcp-clients-by-app"
+    },
+    {
+      "type": 1,
+      "content": {
         "json": "---\n## SKU Data Coverage\nAnalysis of cached VM SKU data completeness, refreshed daily at 2:00 AM UTC."
       },
       "name": "coverage-header"

@@ -11,6 +11,10 @@ param location string = resourceGroup().location
 @description('Container image to deploy (from GHCR)')
 param containerImage string
 
+@description('Application Insights connection string for usage telemetry (optional).')
+@secure()
+param appInsightsConnectionString string = ''
+
 @description('Tags to apply to all resources')
 param tags object = {
   Environment: 'Production'
@@ -27,6 +31,31 @@ resource containerAppsEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
 
 }
 
+// Telemetry wiring — only present when a connection string is supplied. When set, the
+// MCP server exports per-tool usage telemetry to Application Insights (the same workspace
+// the usage workbook reads).
+var telemetryEnabled = !empty(appInsightsConnectionString)
+var baseEnv = [
+  {
+    name: 'MCP_TRANSPORT'
+    value: 'http'
+  }
+  {
+    name: 'PORT'
+    value: '8000'
+  }
+]
+var telemetryEnv = telemetryEnabled ? [
+  {
+    name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+    secretRef: 'appinsights-connection-string'
+  }
+  {
+    name: 'OTEL_SERVICE_NAME'
+    value: mcpAppName
+  }
+] : []
+
 // MCP Server Container App
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: mcpAppName
@@ -35,6 +64,12 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   properties: {
     environmentId: containerAppsEnv.id
     configuration: {
+      secrets: telemetryEnabled ? [
+        {
+          name: 'appinsights-connection-string'
+          value: appInsightsConnectionString
+        }
+      ] : []
       ingress: {
         external: true
         targetPort: 8000
@@ -47,16 +82,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         {
           name: 'mcp-server'
           image: containerImage
-          env: [
-            {
-              name: 'MCP_TRANSPORT'
-              value: 'http'
-            }
-            {
-              name: 'PORT'
-              value: '8000'
-            }
-          ]
+          env: concat(baseEnv, telemetryEnv)
           resources: {
             cpu: json('0.25')
             memory: '0.5Gi'

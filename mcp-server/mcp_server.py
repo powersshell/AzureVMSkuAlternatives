@@ -3,6 +3,7 @@
 # dependencies = [
 #   "fastmcp>=2.0",
 #   "httpx>=0.27",
+#   "azure-monitor-opentelemetry>=1.6.0",
 # ]
 # ///
 """
@@ -29,14 +30,77 @@ Setup: see README.md
 """
 
 import os
+import json
+import time
+import logging
 import httpx
 from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware
 
 # The deployed Azure Functions API — no auth required
 API_BASE = "https://vmsku-api-func-cus.azurewebsites.net/api"
 
 # Azure Functions Flex Consumption can have a cold start of 3-5s on first call
 HTTP_TIMEOUT = 60.0
+
+# Transport is resolved once at import so telemetry records can tag it.
+TRANSPORT = "http" if os.environ.get("MCP_TRANSPORT") == "http" else "stdio"
+
+# Dedicated logger for usage telemetry. When Azure Monitor is configured (below) these
+# records are exported to Application Insights (AppTraces) and surfaced in the workbook.
+usage_logger = logging.getLogger("mcp-usage")
+usage_logger.setLevel(logging.INFO)
+
+
+def _setup_telemetry() -> bool:
+    """Wire Azure Monitor (Application Insights) if a connection string is present.
+
+    Returns True when telemetry export is enabled. No-op for local/stdio use where the
+    APPLICATIONINSIGHTS_CONNECTION_STRING env var is unset, so the server still runs
+    unchanged outside Azure.
+    """
+    conn = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    if not conn:
+        return False
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+
+        # service.name (cloud role) tags all telemetry as the MCP server. Set via env so
+        # the OTel SDK picks it up; default to the known role name.
+        os.environ.setdefault("OTEL_SERVICE_NAME", "vmsku-mcp-server")
+        configure_azure_monitor(connection_string=conn, logger_name="mcp-usage")
+        return True
+    except Exception as exc:  # never let telemetry setup break the server
+        logging.warning(f"Azure Monitor telemetry not configured: {exc}")
+        return False
+
+
+def _client_ip() -> str:
+    """Best-effort caller IP for the current HTTP request (empty in stdio mode).
+
+    Prefers the first hop of X-Forwarded-For (Container Apps ingress sits in front of the
+    app), falling back to the socket peer. A distinct-IP count is only an approximation of
+    distinct users — agents behind shared egress/NAT collapse together.
+    """
+    try:
+        from fastmcp.server.dependencies import get_http_request
+
+        req = get_http_request()
+        xff = req.headers.get("x-forwarded-for", "")
+        if xff:
+            return xff.split(",")[0].strip()
+        return req.client.host if req.client else ""
+    except Exception:
+        return ""
+
+
+def _emit(record: dict) -> None:
+    """Emit a structured usage record as a single JSON log line."""
+    try:
+        usage_logger.info(json.dumps(record))
+    except Exception:
+        pass
+
 
 mcp = FastMCP(
     name="Azure VM SKU Alternatives",
@@ -54,6 +118,53 @@ mcp = FastMCP(
         "eastus, westus2, westeurope, eastasia, australiaeast."
     ),
 )
+
+
+class TelemetryMiddleware(Middleware):
+    """Emits usage telemetry for MCP traffic.
+
+    - `on_message` captures the `initialize` handshake as an `mcp_session_started` record,
+      carrying the client app name/version (from the MCP clientInfo) and caller IP — the
+      closest available proxies for "who/what is using the server" (agents are anonymous).
+    - `on_call_tool` records one `mcp_tool_invoked` per tool call with the tool name, outcome,
+      duration, transport, and caller IP.
+    """
+
+    async def on_message(self, context, call_next):
+        if getattr(context, "method", None) == "initialize":
+            client_name = ""
+            client_version = ""
+            info = getattr(context.message, "clientInfo", None)
+            if info is not None:
+                client_name = getattr(info, "name", "") or ""
+                client_version = getattr(info, "version", "") or ""
+            _emit({
+                "event_type": "mcp_session_started",
+                "clientName": client_name,
+                "clientVersion": client_version,
+                "clientIp": _client_ip(),
+                "transport": TRANSPORT,
+            })
+        return await call_next(context)
+
+    async def on_call_tool(self, context, call_next):
+        tool = getattr(context.message, "name", "") or ""
+        started = time.perf_counter()
+        status = "success"
+        try:
+            return await call_next(context)
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            _emit({
+                "event_type": "mcp_tool_invoked",
+                "tool": tool,
+                "status": status,
+                "durationMs": int((time.perf_counter() - started) * 1000),
+                "transport": TRANSPORT,
+                "clientIp": _client_ip(),
+            })
 
 
 @mcp.tool
@@ -328,6 +439,11 @@ async def list_retiring_skus(sku: str = "") -> dict:
 
 if __name__ == "__main__":
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
+
+    # Wire Application Insights (no-op without a connection string) and attach the usage
+    # telemetry middleware so tool calls and sessions are recorded.
+    _setup_telemetry()
+    mcp.add_middleware(TelemetryMiddleware())
 
     if transport == "http":
         # HTTP (streamable-http) mode — for M365 Copilot via Azure Container Apps.
