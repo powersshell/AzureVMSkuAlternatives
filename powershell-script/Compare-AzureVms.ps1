@@ -345,10 +345,14 @@ $script:VmRetirementInfo = @(
     @{ Pattern = '^Standard_D\d+$'; Status = 'Announced'; RetirementDate = '2028-05-01'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
     @{ Pattern = '^Standard_DS\d+$'; Status = 'Announced'; RetirementDate = '2028-05-01'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
     @{ Pattern = '^Standard_D\d+_v2$'; Status = 'Announced'; RetirementDate = '2028-05-01'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
-    @{ Pattern = '^Standard_DS\d+_v2$'; Status = 'Announced'; RetirementDate = '2028-05-01'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    # Note the (-\d+)? group: constrained-vCPU variants (e.g. Standard_DS11-1_v2)
+    # retire with their parent series and must match here too.
+    @{ Pattern = '^Standard_DS\d+(-\d+)?_v2$'; Status = 'Announced'; RetirementDate = '2028-05-01'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
     @{ Pattern = '^Standard_A\d+m?_v2$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
-    @{ Pattern = '^Standard_B\d+[a-z]*s$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    # Narrower B-series pattern must precede the general one: '[a-z]*' would
+    # otherwise absorb 'l' and leave this entry permanently shadowed.
     @{ Pattern = '^Standard_B\d+ls$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
+    @{ Pattern = '^Standard_B\d+[a-z]*s$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
     @{ Pattern = '^Standard_F\d+$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
     @{ Pattern = '^Standard_F\d+s$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }
     @{ Pattern = '^Standard_F\d+s_v2$'; Status = 'Announced'; RetirementDate = '2028-11-15'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide' }

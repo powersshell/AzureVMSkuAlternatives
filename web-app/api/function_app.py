@@ -3023,6 +3023,14 @@ def _is_retired_no_pricing_sku(name: str) -> bool:
 # ============================================================================
 # VM SKU Retirement Data
 # Source: https://github.com/MicrosoftDocs/azure-compute-docs/blob/main/articles/virtual-machines/sizes/retirement/retired-sizes-list.md
+#
+# Mirrored in $script:VmRetirementInfo (powershell-script/Compare-AzureVms.ps1) --
+# same patterns, same order. Validate with scripts/check_sku_lifecycle.py.
+# Maintenance procedure: docs/sku-lifecycle-runbook.md
+#
+# Ordering matters (first match wins): narrower patterns -- constrained-vCPU
+# '-N' variants and letter-suffixed sizes -- must precede the general pattern
+# for their series, or they are permanently shadowed.
 # ============================================================================
 VM_RETIREMENT_INFO = [
     # General Purpose
@@ -3032,13 +3040,17 @@ VM_RETIREMENT_INFO = [
      'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
     {'pattern': r'^Standard_D\d+_v2$', 'status': 'Announced', 'retirementDate': '2028-05-01',
      'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
-    {'pattern': r'^Standard_DS\d+_v2$', 'status': 'Announced', 'retirementDate': '2028-05-01',
+    # Note the (-\d+)? group: constrained-vCPU variants (e.g. Standard_DS11-1_v2)
+    # retire with their parent series and must match here too.
+    {'pattern': r'^Standard_DS\d+(-\d+)?_v2$', 'status': 'Announced', 'retirementDate': '2028-05-01',
      'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
     {'pattern': r'^Standard_A\d+m?_v2$', 'status': 'Announced', 'retirementDate': '2028-11-15',
      'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
-    {'pattern': r'^Standard_B\d+[a-z]*s$', 'status': 'Announced', 'retirementDate': '2028-11-15',
-     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    # Narrower B-series pattern must precede the general one: '[a-z]*' would
+    # otherwise absorb 'l' and leave this entry permanently shadowed.
     {'pattern': r'^Standard_B\d+ls$', 'status': 'Announced', 'retirementDate': '2028-11-15',
+     'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
+    {'pattern': r'^Standard_B\d+[a-z]*s$', 'status': 'Announced', 'retirementDate': '2028-11-15',
      'migrationGuideUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/d-ds-dv2-dsv2-ls-series-migration-guide'},
     # Compute Optimized
     {'pattern': r'^Standard_F\d+$', 'status': 'Announced', 'retirementDate': '2028-11-15',
@@ -3131,7 +3143,12 @@ def _retirement_penalty(sku_name: str) -> float:
 # NOTE: growth restriction is ORTHOGONAL to retirement. Microsoft explicitly
 # states the Dv3/Ev3 and Dv4/Ev4 families are NOT retired and remain fully
 # supported; they simply cannot receive additional quota. A SKU may be
-# retiring, growth-restricted, both, or neither.
+# retiring, growth-restricted, both, or neither. As of the last reconciliation
+# run, 102 SKUs in eastus across 13 series carry BOTH flags.
+#
+# When a restricted series is later announced for retirement, ADD a retirement
+# entry and LEAVE this table untouched -- see docs/sku-lifecycle-runbook.md.
+# Mirrored in $script:VmGrowthRestrictionInfo (Compare-AzureVms.ps1).
 # ============================================================================
 GROWTH_RESTRICTION_DOC_URL = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/previous-gen-series-capacity-limitations'
 GROWTH_RESTRICTION_EFFECTIVE_DATE = '2026-07-01'
