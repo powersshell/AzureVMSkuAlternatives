@@ -38,6 +38,11 @@
 .PARAMETER HideRetiring
     Exclude SKUs announced for retirement or already retired (default: $true, matching the website).
     Use -HideRetiring:$false to include retiring SKUs (a similarity-score penalty is applied for ranking).
+.PARAMETER HideGrowthRestricted
+    Exclude growth-restricted (capacity-limited) SKUs. Default: $false, matching the website --
+    these sizes are still supported and are shown with a warning plus a similarity-score penalty.
+    Growth-restricted series can't be deployed by new subscriptions and won't be granted
+    additional quota. Use -HideGrowthRestricted to drop them entirely.
 .PARAMETER PricingModel
     Pricing model to display and use for cost-efficiency: PAYG, RI1Year, or RI3Year (default: PAYG).
     Reserved Instance models show $null/N/A for SKUs without RI pricing.
@@ -115,6 +120,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [bool]$HideRetiring = $true,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$HideGrowthRestricted,
 
     [Parameter(Mandatory = $false)]
     [ValidateSet('PAYG', 'RI1Year', 'RI3Year')]
@@ -359,10 +367,58 @@ $script:VmRetirementInfo = @(
     @{ Pattern = '^Standard_NP\d+s$'; Status = 'Announced'; RetirementDate = '2027-05-31'; MigrationGuideUrl = 'https://learn.microsoft.com/azure/virtual-machines/sizes/retirement/np-series-retirement' }
 )
 
-# --- CPU performance, vendor, and retirement helpers ---
+# Growth restriction (capacity limitation) data.
+# Source: https://learn.microsoft.com/azure/virtual-machines/migration/sizes/previous-gen-series-capacity-limitations
+# Effective July 2026: new subscriptions can't deploy these series, and existing
+# subscriptions won't be granted additional quota. This is NOT retirement -- the Dv3/Ev3
+# and Dv4/Ev4 families remain fully supported. The two flags are independent.
+$script:GrowthRestrictionDocUrl = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/previous-gen-series-capacity-limitations'
+$script:GrowthRestrictionEffectiveDate = '2026-07-01'
+$script:GrowthRestrictionPenalty = 8.0
+
+$script:VmGrowthRestrictionInfo = @(
+    # Compute optimized
+    @{ Pattern = '^Standard_F\d+$'; Series = 'F'; Category = 'Compute optimized'; RecommendedTargets = @('Fsv6', 'Fasv6') }
+    @{ Pattern = '^Standard_F\d+s$'; Series = 'Fs'; Category = 'Compute optimized'; RecommendedTargets = @('Fsv6', 'Fasv6') }
+    @{ Pattern = '^Standard_F\d+s_v2$'; Series = 'Fsv2'; Category = 'Compute optimized'; RecommendedTargets = @('Fsv6', 'Fasv6') }
+    # General purpose
+    @{ Pattern = '^Standard_D\d+$'; Series = 'D'; Category = 'General purpose'; RecommendedTargets = @('Dsv5', 'Dsv6', 'Dsv7') }
+    @{ Pattern = '^Standard_DS\d+(-\d+)?$'; Series = 'Ds'; Category = 'General purpose'; RecommendedTargets = @('Dsv5', 'Dsv6', 'Dsv7') }
+    @{ Pattern = '^Standard_D\d+_v2$'; Series = 'Dv2'; Category = 'General purpose'; RecommendedTargets = @('Dsv5', 'Dsv6', 'Dsv7') }
+    @{ Pattern = '^Standard_DS\d+(-\d+)?_v2$'; Series = 'Dsv2'; Category = 'General purpose'; RecommendedTargets = @('Dsv5', 'Dsv6', 'Dsv7') }
+    @{ Pattern = '^Standard_D\d+_v3$'; Series = 'Dv3'; Category = 'General purpose'; RecommendedTargets = @('Dv5', 'Dv6', 'Dv7') }
+    @{ Pattern = '^Standard_D\d+(-\d+)?s_v3$'; Series = 'Dsv3'; Category = 'General purpose'; RecommendedTargets = @('Dsv5', 'Dsv6', 'Dsv7') }
+    @{ Pattern = '^Standard_D\d+_v4$'; Series = 'Dv4'; Category = 'General purpose'; RecommendedTargets = @('Dv5', 'Dv6', 'Dv7') }
+    @{ Pattern = '^Standard_D\d+(-\d+)?s_v4$'; Series = 'Dsv4'; Category = 'General purpose'; RecommendedTargets = @('Dsv5', 'Dsv6', 'Dsv7') }
+    @{ Pattern = '^Standard_D\d+d_v4$'; Series = 'Ddv4'; Category = 'General purpose'; RecommendedTargets = @('Ddv5', 'Ddv6', 'Ddv7') }
+    @{ Pattern = '^Standard_D\d+(-\d+)?ds_v4$'; Series = 'Ddsv4'; Category = 'General purpose'; RecommendedTargets = @('Ddsv5', 'Ddsv6', 'Ddsv7') }
+    @{ Pattern = '^Standard_D\d+a_v4$'; Series = 'Dav4'; Category = 'General purpose'; RecommendedTargets = @('Dasv5', 'Dasv6') }
+    @{ Pattern = '^Standard_D\d+(-\d+)?as_v4$'; Series = 'Dasv4'; Category = 'General purpose'; RecommendedTargets = @('Dasv5', 'Dasv6') }
+    @{ Pattern = '^Standard_D\d+ad_v4$'; Series = 'Ddav4'; Category = 'General purpose'; RecommendedTargets = @('Dadsv5', 'Dadsv6') }
+    @{ Pattern = '^Standard_D\d+(-\d+)?ads_v4$'; Series = 'Ddav4'; Category = 'General purpose'; RecommendedTargets = @('Dadsv5', 'Dadsv6') }
+    @{ Pattern = '^Standard_B\d+[a-z]*s$'; Series = 'B / Bs'; Category = 'General purpose'; RecommendedTargets = @('Bsv2', 'Dsv5') }
+    @{ Pattern = '^Standard_A\d+m?_v2$'; Series = 'Av2 / Amv2'; Category = 'General purpose'; RecommendedTargets = @('Dsv5', 'Dsv6') }
+    # Memory optimized
+    @{ Pattern = '^Standard_E\d+i?_v3$'; Series = 'Ev3'; Category = 'Memory optimized'; RecommendedTargets = @('Ev5', 'Esv6', 'Esv7') }
+    @{ Pattern = '^Standard_E\d+(-\d+)?i?s_v3$'; Series = 'Esv3'; Category = 'Memory optimized'; RecommendedTargets = @('Esv5', 'Esv6', 'Esv7') }
+    @{ Pattern = '^Standard_E\d+i?_v4$'; Series = 'Ev4'; Category = 'Memory optimized'; RecommendedTargets = @('Ev5', 'Esv6', 'Esv7') }
+    @{ Pattern = '^Standard_E\d+(-\d+)?i?s_v4$'; Series = 'Esv4'; Category = 'Memory optimized'; RecommendedTargets = @('Esv5', 'Esv6', 'Esv7') }
+    @{ Pattern = '^Standard_E\d+i?d_v4$'; Series = 'Edv4'; Category = 'Memory optimized'; RecommendedTargets = @('Edsv5', 'Edsv6') }
+    @{ Pattern = '^Standard_E\d+(-\d+)?i?ds_v4$'; Series = 'Edsv4'; Category = 'Memory optimized'; RecommendedTargets = @('Edsv5', 'Edsv6') }
+    @{ Pattern = '^Standard_E\d+a_v4$'; Series = 'Eav4'; Category = 'Memory optimized'; RecommendedTargets = @('Easv5', 'Easv6') }
+    @{ Pattern = '^Standard_E\d+(-\d+)?as_v4$'; Series = 'Easv4'; Category = 'Memory optimized'; RecommendedTargets = @('Easv5', 'Easv6') }
+    @{ Pattern = '^Standard_G\d+$'; Series = 'G'; Category = 'Memory optimized'; RecommendedTargets = @('Esv5', 'Esv6') }
+    @{ Pattern = '^Standard_GS\d+(-\d+)?$'; Series = 'Gs'; Category = 'Memory optimized'; RecommendedTargets = @('Esv5', 'Esv6') }
+    # Storage optimized
+    @{ Pattern = '^Standard_L\d+s$'; Series = 'Ls'; Category = 'Storage optimized'; RecommendedTargets = @('Lsv3', 'Lasv3') }
+    @{ Pattern = '^Standard_L\d+s_v2$'; Series = 'Lsv2'; Category = 'Storage optimized'; RecommendedTargets = @('Lsv3', 'Lasv3') }
+)
+
+# --- CPU performance, vendor, retirement, and growth restriction helpers ---
 # Static data and logic below are ported from web-app/api/function_app.py
-# (CPU_PERFORMANCE_TABLE, SERIES_CPU_MAP, VM_RETIREMENT_INFO, detect_cpu_vendor,
-#  _get_series_prefix, get_cpu_performance, _get_retirement_info, _retirement_penalty).
+# (CPU_PERFORMANCE_TABLE, SERIES_CPU_MAP, VM_RETIREMENT_INFO, VM_GROWTH_RESTRICTION_INFO,
+#  detect_cpu_vendor, _get_series_prefix, get_cpu_performance, _get_retirement_info,
+#  _retirement_penalty, _get_growth_restriction_info, _growth_restriction_penalty).
 # Keep these in sync with the Python source of truth when it changes.
 
 function Get-SeriesPrefix {
@@ -491,6 +547,42 @@ function Get-RetirementPenalty {
     } catch {
         return 2.0
     }
+}
+
+function Get-GrowthRestrictionInfo {
+    <#
+    .SYNOPSIS
+        Return growth restriction (capacity limitation) info for a SKU, or $null if unaffected.
+        Ported from _get_growth_restriction_info in function_app.py.
+    #>
+    param([Parameter(Mandatory = $true)][string]$SkuName)
+
+    foreach ($entry in $script:VmGrowthRestrictionInfo) {
+        if ($SkuName -match $entry.Pattern) {
+            return [PSCustomObject]@{
+                GrowthRestricted   = $true
+                Series             = $entry.Series
+                Category           = $entry.Category
+                EffectiveDate      = $script:GrowthRestrictionEffectiveDate
+                RecommendedTargets = $entry.RecommendedTargets
+                DocumentationUrl   = $script:GrowthRestrictionDocUrl
+            }
+        }
+    }
+    return $null
+}
+
+function Get-GrowthRestrictionPenalty {
+    <#
+    .SYNOPSIS
+        Similarity-score penalty for growth-restricted SKUs (ranking only). Applied in
+        addition to any retirement penalty, since the two conditions are independent.
+        Ported from _growth_restriction_penalty in function_app.py.
+    #>
+    param([Parameter(Mandatory = $true)][string]$SkuName)
+
+    if (Get-GrowthRestrictionInfo -SkuName $SkuName) { return $script:GrowthRestrictionPenalty }
+    return 0.0
 }
 
 function Get-SelectedPrice {
@@ -748,6 +840,7 @@ $targetArch = if ($targetCapabilities.ContainsKey('CpuArchitectureType')) { $tar
 $targetVendor = Get-CpuVendor -SkuName $SkuName -Architecture $targetArch
 $targetCpuPerf = Get-CpuPerformance -SkuName $SkuName
 $targetRetirement = Get-RetirementInfo -SkuName $SkuName
+$targetGrowthRestriction = Get-GrowthRestrictionInfo -SkuName $SkuName
 
 Write-Host "CPU Vendor: $targetVendor" -ForegroundColor Cyan
 if ($targetCpuPerf) {
@@ -756,6 +849,12 @@ if ($targetCpuPerf) {
 if ($targetRetirement) {
     Write-Host "[!] Retirement: $($targetRetirement.RetirementStatus) - $($targetRetirement.RetirementDate)" -ForegroundColor Red
     Write-Host "    Migration guide: $($targetRetirement.MigrationGuideUrl)" -ForegroundColor Red
+}
+if ($targetGrowthRestriction) {
+    Write-Host "[!] Capacity limited: $($targetGrowthRestriction.Series) series (effective $($targetGrowthRestriction.EffectiveDate))" -ForegroundColor Yellow
+    Write-Host "    New subscriptions can't deploy this series, and additional quota won't be approved." -ForegroundColor Yellow
+    Write-Host "    Recommended targets: $($targetGrowthRestriction.RecommendedTargets -join ', ')" -ForegroundColor Yellow
+    Write-Host "    Details: $($targetGrowthRestriction.DocumentationUrl)" -ForegroundColor Yellow
 }
 Write-Host "Capabilities:" -ForegroundColor Cyan
 
@@ -1137,10 +1236,17 @@ $similarSkus = $allSkus | Where-Object {
         $retirementFilterPass = $false
     }
 
+    # Growth restriction filter (shown by default; opt-in hide, matching the website)
+    $skuGrowthRestriction = Get-GrowthRestrictionInfo -SkuName $sku.Name
+    $growthFilterPass = $true
+    if ($HideGrowthRestricted -and $skuGrowthRestriction) {
+        $growthFilterPass = $false
+    }
+
     # Apply basic tolerance filter on CPU, Memory, NVMe, and GPU (if required)
     if ($cores -ge $coreMin -and $cores -le $coreMax -and
         $memoryGB -ge $memoryMin -and $memoryGB -le $memoryMax -and
-        $nvmeFilterPass -and $gpuFilterPass -and $vendorFilterPass -and $retirementFilterPass) {
+        $nvmeFilterPass -and $gpuFilterPass -and $vendorFilterPass -and $retirementFilterPass -and $growthFilterPass) {
 
         # Calculate weighted similarity score across ALL capabilities
         $weightedScore = 0
@@ -1178,9 +1284,9 @@ $similarSkus = $allSkus | Where-Object {
         # Only include SKUs above minimum similarity threshold (unpenalized score,
         # matching the website which thresholds first then penalizes for ranking)
         if ($similarityScore -ge $MinSimilarityScore) {
-            # Apply retirement penalty for ranking only (after threshold)
+            # Apply retirement + growth restriction penalties for ranking only (after threshold)
             $originalSimilarityScore = $similarityScore
-            $penalty = Get-RetirementPenalty -SkuName $sku.Name
+            $penalty = (Get-RetirementPenalty -SkuName $sku.Name) + (Get-GrowthRestrictionPenalty -SkuName $sku.Name)
             if ($penalty -gt 0) {
                 $similarityScore = [Math]::Round([Math]::Max(0, $similarityScore - $penalty), 2)
             }
@@ -1212,6 +1318,9 @@ $similarSkus = $allSkus | Where-Object {
                 MemoryGB                          = $memoryGB
                 AvailabilityZones                 = $skuZonesDisplay
                 RetirementStatus                  = if ($skuRetirement) { $skuRetirement.RetirementStatus } else { 'Active' }
+                GrowthRestricted                  = if ($skuGrowthRestriction) { 'Yes' } else { 'No' }
+                GrowthRestrictionSeries           = if ($skuGrowthRestriction) { $skuGrowthRestriction.Series } else { $null }
+                GrowthRestrictionTargets          = if ($skuGrowthRestriction) { $skuGrowthRestriction.RecommendedTargets -join ', ' } else { $null }
                 "HourlyPrice($CurrencyCode)"      = if ($selectedPrice) { $selectedPrice.Hourly } else { 'N/A' }
                 "MonthlyPrice($CurrencyCode)"     = if ($selectedPrice) { $selectedPrice.Monthly } else { 'N/A' }
                 "CostPerVCPU($CurrencyCode)"      = $costPerVCPU
@@ -1327,9 +1436,17 @@ if ($similarSkus.Count -gt 0) {
         # Show condensed view with key metrics - include GPUs if target has them
         $baseProps = @('SkuName', 'SimilarityScore', 'CpuVendor', 'CpuGeneration', 'vCPUs', 'MemoryGB')
         if ($targetHasGPU) { $baseProps += 'GPUs' }
-        $baseProps += @('AvailabilityZones', 'RetirementStatus', "MonthlyPrice($CurrencyCode)", "CostPerVCPU($CurrencyCode)")
+        $baseProps += @('AvailabilityZones', 'RetirementStatus', 'GrowthRestricted', "MonthlyPrice($CurrencyCode)", "CostPerVCPU($CurrencyCode)")
         if ($CheckRegion) { $baseProps += "AvailableIn_$CheckRegion" }
         $displaySkus | Format-Table -Property $baseProps -AutoSize
+    }
+
+    $restrictedCount = ($similarSkus | Where-Object { $_.GrowthRestricted -eq 'Yes' }).Count
+    if ($restrictedCount -gt 0) {
+        Write-Host "`n[!] $restrictedCount of these alternatives are growth-restricted (capacity limited)." -ForegroundColor Yellow
+        Write-Host "    New subscriptions can't deploy them and additional quota won't be approved." -ForegroundColor Yellow
+        Write-Host "    See GrowthRestrictionTargets for recommended replacements, or use -HideGrowthRestricted to exclude them." -ForegroundColor Yellow
+        Write-Host "    Details: $script:GrowthRestrictionDocUrl" -ForegroundColor Yellow
     }
 
     if ($similarSkus.Count -gt 20) {
@@ -1366,6 +1483,7 @@ if ($similarSkus.Count -gt 0) {
     Write-Host "  - Adjust weights to prioritize different capabilities"
     if ($CpuVendor) { Write-Host "  - Broaden -CpuVendor (current: $($CpuVendor -join ', '))" }
     if ($HideRetiring) { Write-Host "  - Use -HideRetiring:`$false to include retiring SKUs" }
+    if ($HideGrowthRestricted) { Write-Host "  - Drop -HideGrowthRestricted to include capacity-limited SKUs" }
 }
 
 # Optional CSV export of the full result set

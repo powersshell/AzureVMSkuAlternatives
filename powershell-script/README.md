@@ -23,6 +23,7 @@ A powerful PowerShell script for comparing Azure VM SKUs based on comprehensive 
 - **CPU Vendor & Generation Awareness**: Detects Intel / AMD / ARM vendor and reports CPU generation and a relative performance score
 - **CPU Vendor Filtering**: Restrict alternatives to specific vendors (Intel, AMD, ARM)
 - **Retirement Awareness**: Flags retiring/retired SKUs, hides them by default (matching the website), and applies a ranking penalty when shown
+- **Growth Restriction Awareness**: Flags capacity-limited (growth-restricted) SKUs that new subscriptions can't deploy and that won't be granted additional quota, applies a ranking penalty, and surfaces recommended migration targets
 - **Customizable Weighting System**: Adjust importance of different capabilities (CPU, Memory, GPU, Storage, Network, Features)
 - **Intelligent Scoring**: Weighted similarity scores (0-100) to rank alternatives
 - **Pricing Integration**: Real-time pricing data from Azure Retail Prices API, including **Reserved Instance (1-year / 3-year)** and **Windows** pricing
@@ -72,6 +73,7 @@ Connect-AzAccount
 | `RequireGPUMatch` | Switch | Off | Only show alternatives with GPU if target has GPU |
 | `CpuVendor` | String[] | *(all)* | Filter alternatives by CPU vendor: `Intel`, `AMD`, `ARM` (one or more) |
 | `HideRetiring` | Bool | `$true` | Exclude retiring/retired SKUs (matches the website). Use `-HideRetiring:$false` to include them |
+| `HideGrowthRestricted` | Switch | Off | Exclude growth-restricted (capacity-limited) SKUs. Shown by default with a warning + ranking penalty, matching the website |
 | `PricingModel` | String | PAYG | Pricing to display/use: `PAYG`, `RI1Year`, `RI3Year` |
 | `OS` | String | Linux | Operating system for pricing: `Linux` or `Windows` |
 | `CheckRegion` | String | *(none)* | Second region to check each alternative's availability in |
@@ -145,6 +147,12 @@ Show retiring/retired SKUs (a ranking penalty is applied):
 .\Compare-AzureVms.ps1 -SkuName "Standard_NC6s_v3" -Location "eastus" -HideRetiring:$false
 ```
 
+### Exclude Growth-Restricted SKUs
+Capacity-limited sizes are shown by default with a `GrowthRestricted` column and a warning. To drop them entirely:
+```powershell
+.\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v3" -Location "eastus" -HideGrowthRestricted
+```
+
 ### Cross-Region Availability + CSV Export
 Check availability in a second region and export results:
 ```powershell
@@ -159,6 +167,7 @@ The script provides detailed output including:
 - SKU name and availability zones
 - CPU vendor, generation, and performance score
 - Retirement status (if announced/retired) with a migration guide link
+- Capacity limitation warning (if growth-restricted) with recommended targets and a documentation link
 - Organized capability listing by category (Compute, Memory, GPU, Storage, Network, Features)
 - Pricing information for the selected model/OS (hourly and monthly) plus cost efficiency
 
@@ -171,6 +180,7 @@ The script provides detailed output including:
 - GPUs (if applicable)
 - Availability Zones
 - Retirement status
+- Growth restriction (capacity limitation) status
 - Monthly pricing and cost per vCPU
 - Availability in the comparison region (when `-CheckRegion` is used)
 

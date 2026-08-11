@@ -20,6 +20,7 @@ Tools:
   - list_region_vm_grid     Every SKU in a region with full specs + all pricing models
   - get_sku_price_history   Daily price-history series (Linux/Windows/Spot) per SKU
   - list_retiring_skus      VM sizes announced for retirement or already retired
+  - list_growth_restricted_skus  VM series with capacity limitations (no new/additional quota)
   - health_check            Verify API connectivity
 
 Transport modes:
@@ -112,7 +113,9 @@ mcp = FastMCP(
         "in a region with full specs and all pricing models. Use compare_regions_for_sku "
         "to find the cheapest region for a size, get_sku_price_history to see price "
         "trends over time, and list_retiring_skus to flag sizes announced for "
-        "retirement. Each SKU includes a CPU performance "
+        "retirement. Use list_growth_restricted_skus to flag capacity-limited series "
+        "that cannot receive additional quota — never recommend one of those for a "
+        "workload that needs to scale or for a new subscription. Each SKU includes a CPU performance "
         "score (normalized to Ice Lake = 100) for cross-architecture comparison "
         "(Intel vs AMD vs ARM). Azure region slugs look like: "
         "eastus, westus2, westeurope, eastasia, australiaeast."
@@ -189,7 +192,10 @@ async def list_vm_skus(location: str) -> dict:
     "Cobalt 100 (Neoverse N2)"), and a normalized CPU performance score (Ice Lake = 100).
     Each SKU also carries pricing across models (Linux/Windows pay-as-you-go, Linux
     Spot, and 1-year reserved) and, when applicable, retirement info
-    (retirementStatus "Announced"/"Retired", retirementDate, migrationGuideUrl).
+    (retirementStatus "Announced"/"Retired", retirementDate, migrationGuideUrl) and
+    capacity-limitation info (growthRestricted true, growthRestrictionSeries,
+    recommendedTargets, growthRestrictionDocUrl). Retirement and growth restriction are
+    independent — check both.
     Use this to discover what SKUs exist before comparing, or to see which
     vendors/families are available.
 
@@ -227,6 +233,14 @@ async def find_alternative_skus(
     Check the retirementStatus field: 'Announced' means planned for retirement,
     'Retired' means no longer available. retirementDate shows the planned date,
     and migrationGuideUrl links to the official migration guide.
+
+    Growth-restricted (capacity-limited) SKUs also receive a ranking penalty but are
+    still returned. When growthRestricted is true, that size cannot be deployed by new
+    subscriptions and will not be granted additional quota (effective July 2026), even
+    though it is not retired. Do NOT recommend such a size for a workload that must grow
+    or for a new subscription — surface its recommendedTargets instead, and cite
+    growthRestrictionDocUrl. Retirement and growth restriction are independent flags; a
+    size may carry both.
 
     Use the cpuPerfScore field to compare relative CPU performance across architectures.
     Higher scores mean faster per-vCPU performance. Examples: Ice Lake = 100,
@@ -281,7 +295,10 @@ async def compare_sku_details(
     reserved, with percentage change and cost-per-vCPU metrics. CPU performance scores
     are normalized to Ice Lake = 100, enabling cross-architecture comparison (Intel vs
     AMD vs ARM). The response also includes retirement status for each side
-    (targetRetirement / alternativeRetirement) when a size is announced/retired.
+    (targetRetirement / alternativeRetirement) when a size is announced/retired, and
+    capacity-limitation status (targetGrowthRestriction / alternativeGrowthRestriction)
+    when a size belongs to a growth-restricted series that cannot receive additional
+    quota. These two signals are independent.
 
     Use this after find_alternative_skus to drill into a specific candidate.
 
@@ -367,7 +384,8 @@ async def list_region_vm_grid(
 
     Each row includes vCPUs, memory, GPU, CPU vendor/generation/performance score,
     storage/network capabilities, retirement status (retirementStatus/retirementDate/
-    migrationGuideUrl when applicable), and pricing across pricing models: Linux and
+    migrationGuideUrl when applicable), capacity-limitation status (growthRestricted/
+    growthRestrictionSeries/recommendedTargets when applicable), and pricing across pricing models: Linux and
     Windows pay-as-you-go, Linux Spot (deeply discounted, interruptible), and 1-year
     reserved-instance prices (hourly and monthly). Use this to browse, filter, or rank
     an entire region; for a focused set of alternatives to a specific size use
@@ -433,6 +451,42 @@ async def list_retiring_skus(sku: str = "") -> dict:
     params = {"sku": sku} if sku else None
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         resp = await client.get(f"{API_BASE}/retirements", params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+
+@mcp.tool
+async def list_growth_restricted_skus(sku: str = "") -> dict:
+    """
+    List Azure VM size series subject to capacity limitations ("growth restricted").
+
+    Effective July 2026, Microsoft applied capacity limitations to a large set of
+    previous-generation series. For an affected size: NEW subscriptions cannot deploy it
+    at all; EXISTING subscriptions can still deploy it but only within already-approved
+    quota, and requests for ADDITIONAL quota will not be approved.
+
+    This is NOT retirement. Microsoft explicitly states the Dv3/Ev3 and Dv4/Ev4 families
+    are not retired and remain fully SLA-supported. Growth restriction is an independent
+    signal — a size can be retiring, growth restricted, both, or neither. Always check
+    both `retirementStatus` and `growthRestricted`.
+
+    IMPORTANT for recommendations: do not propose a growth-restricted size as a target for
+    a workload that needs to grow, scale out, or be deployed into a new subscription — the
+    quota simply will not be granted. Use the entry's `recommendedTargets` instead.
+
+    With no argument, returns the full catalog: each entry has a sizePattern (a regex
+    matching the affected size names — capacity limits are published per size-series, not
+    per individual SKU), the series and category, the effectiveDate, recommendedTargets,
+    and the official documentationUrl, plus counts by category. Pass a specific sku to
+    check just that size (growthRestricted is false when unaffected).
+
+    Args:
+        sku: (optional) a single ARM SKU name to check, e.g. "Standard_D4s_v3".
+             Leave empty to list the entire capacity-limitation catalog.
+    """
+    params = {"sku": sku} if sku else None
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        resp = await client.get(f"{API_BASE}/growth-restrictions", params=params)
         resp.raise_for_status()
         return resp.json()
 

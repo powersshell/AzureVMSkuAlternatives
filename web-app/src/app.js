@@ -355,6 +355,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Retirement filter checkbox
     document.getElementById('hideRetiringFilter').addEventListener('change', updateResultsFilters);
 
+    // Growth-restriction filter checkbox
+    document.getElementById('hideGrowthRestrictedFilter').addEventListener('change', updateResultsFilters);
+
     // Update discount hint text as user types
     document.getElementById('discountPct').addEventListener('input', updateDiscountHint);
 
@@ -463,9 +466,10 @@ function populateSkuChoices(skus) {
     // Build choices array with displayName constructed on frontend
     const choices = skus.map(sku => {
         const retiring = sku.retirementStatus ? ' ⚠️ Retiring' : '';
+        const restricted = sku.growthRestricted ? ' 🔒 Limited' : '';
         return {
             value: sku.name,
-            label: `${sku.name} (${sku.vCPUs} vCPUs, ${sku.memoryGB} GB)${retiring}`,
+            label: `${sku.name} (${sku.vCPUs} vCPUs, ${sku.memoryGB} GB)${retiring}${restricted}`,
             customProperties: {
                 vCPUs: sku.vCPUs,
                 memoryGB: sku.memoryGB
@@ -844,13 +848,18 @@ function filterResultsByGeneration(alternatives) {
     });
 }
 
-// Apply vendor, generation, and retirement filters
+// Apply vendor, generation, retirement, and growth-restriction filters
 function filterResults(alternatives) {
     let filtered = filterResultsByGeneration(filterResultsByVendor(alternatives));
     // Apply retirement filter if checkbox exists and is checked
     const hideRetiring = document.getElementById('hideRetiringFilter');
     if (hideRetiring && hideRetiring.checked) {
         filtered = filtered.filter(alt => !alt.retirementStatus);
+    }
+    // Growth-restricted sizes are shown by default; this filter is opt-in
+    const hideRestricted = document.getElementById('hideGrowthRestrictedFilter');
+    if (hideRestricted && hideRestricted.checked) {
+        filtered = filtered.filter(alt => !alt.growthRestricted);
     }
     return filtered;
 }
@@ -988,6 +997,29 @@ function displayTargetSku(targetSku) {
             retirementBanner.classList.remove('hidden');
         } else {
             retirementBanner.classList.add('hidden');
+        }
+    }
+
+    // Show capacity-limitation banner if target SKU is growth restricted.
+    // Independent of retirement -- both banners can show at once.
+    const growthBanner = document.getElementById('growthRestrictionBanner');
+    if (growthBanner) {
+        if (targetSku.growthRestricted) {
+            const series = targetSku.growthRestrictionSeries ? `${escapeHtml(targetSku.growthRestrictionSeries)}-series` : 'This series';
+            const targets = Array.isArray(targetSku.recommendedTargets) && targetSku.recommendedTargets.length
+                ? ` Microsoft recommends migrating to ${escapeHtml(targetSku.recommendedTargets.join(', '))}.`
+                : '';
+            const docUrl = targetSku.growthRestrictionDocUrl;
+            growthBanner.className = 'growth-restriction-banner';
+            growthBanner.innerHTML = `
+                <strong>🔒 Capacity limited &mdash; ${series}.</strong>
+                New subscriptions can't deploy this size, and additional quota won't be approved.
+                Existing deployments keep running within already-approved quota.${targets}
+                ${docUrl ? `<a href="${docUrl}" target="_blank" rel="noopener">View capacity limitations →</a>` : ''}
+            `;
+            growthBanner.classList.remove('hidden');
+        } else {
+            growthBanner.classList.add('hidden');
         }
     }
 }
@@ -1469,6 +1501,18 @@ function renderRetirementBadge(alt) {
     return `<span class="retirement-badge retiring" title="Retirement announced for ${dateStr}">⚠️ Retiring ${dateStr}</span>`;
 }
 
+// Render growth restriction (capacity limitation) badge for a SKU.
+// Independent of retirement: a SKU can carry both badges.
+function renderGrowthRestrictionBadge(alt) {
+    if (!alt.growthRestricted) return '';
+    const series = alt.growthRestrictionSeries ? `${alt.growthRestrictionSeries}-series` : 'This series';
+    const targets = Array.isArray(alt.recommendedTargets) && alt.recommendedTargets.length
+        ? ` Recommended instead: ${alt.recommendedTargets.join(', ')}.`
+        : '';
+    const title = `${series} is capacity limited: new subscriptions can't deploy it and additional quota won't be approved.${targets}`;
+    return `<span class="growth-badge" title="${escapeHtml(title)}">🔒 Limited growth</span>`;
+}
+
 // Get CPU performance direction indicator
 function getCpuPerfIndicator(targetScore, altScore) {
     if (targetScore == null || altScore == null) {
@@ -1664,7 +1708,7 @@ function displayAlternatives(alternatives) {
 
         card.innerHTML = `
             <div class="card-sku-info">
-                <div class="card-sku-name">${alt.name} ${renderRetirementBadge(alt)}${nvmeBadge}</div>
+                <div class="card-sku-name">${alt.name} ${renderRetirementBadge(alt)}${renderGrowthRestrictionBadge(alt)}${nvmeBadge}</div>
                 <div class="card-sku-cpu">${cpuInfo}</div>
                 <div class="card-score-bar">
                     <div class="score-track"><div class="score-fill ${scoreClass}" style="width:${scorePercent}%"></div></div>
@@ -2978,12 +3022,13 @@ function renderGridRow(r, discount) {
     const monthly = formatMonthlyPriceSafe(p);
     const nvme = r.nvme ? '<span class="grid-badge nvme" title="Supports the NVMe disk interface">NVMe</span>' : '';
     const retiring = r.retirementStatus ? '<span class="grid-badge retiring" title="This size is being retired">⚠ Retiring</span>' : '';
+    const restricted = r.growthRestricted ? '<span class="grid-badge restricted" title="Capacity limited: new subscriptions can\'t deploy this size and additional quota won\'t be approved">🔒 Limited</span>' : '';
     const gpu = r.gpuCount > 0 ? `${r.gpuCount}${r.gpuType ? ' ' + escapeHtml(r.gpuType) : ''}` : '<span class="grid-muted">—</span>';
     const acu = r.acu > 0 ? r.acu : '<span class="grid-muted">—</span>';
     const nameEsc = escapeHtml(r.name);
     const safeName = String(r.name).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     return `<tr>
-        <td class="grid-name-cell">${nameEsc}${nvme}${retiring}</td>
+        <td class="grid-name-cell">${nameEsc}${nvme}${retiring}${restricted}</td>
         <td class="grid-family-cell">${escapeHtml(r.family || '—')}</td>
         <td class="num">${r.vCPUs || '—'}</td>
         <td class="num">${r.memoryGB != null ? r.memoryGB : '—'}</td>

@@ -432,6 +432,23 @@ body {
     font-weight: 600;
 }
 
+/* Growth restriction (capacity limitation) — distinct blue/slate tone so it
+   reads as separate from the amber/red retirement signals. */
+.growth-restriction-banner {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    line-height: 1.4;
+    background: #eff6fc;
+    border: 1px solid #2b88d8;
+    color: #10405f;
+}
+.growth-restriction-banner a {
+    color: var(--blue-start);
+    font-weight: 600;
+}
+
 /* ========== Right Panel - Results ========== */
 .results-panel {
     display: flex;
@@ -582,6 +599,9 @@ body {
     margin-left: 8px;
     padding-left: 8px;
     border-left: 1px solid var(--border);
+}
+.filter-growth {
+    cursor: help;
 }
 
 /* Generation Filter */
@@ -905,6 +925,15 @@ body {
 .retirement-badge.retiring {
     background: #fff4ce;
     color: #6a4b00;
+}
+.growth-badge {
+    font-size: 11px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 500;
+    background: #eff6fc;
+    color: #10405f;
+    cursor: help;
 }
 .feature-badge {
     font-size: 10px;
@@ -1742,6 +1771,7 @@ body[data-mode="browse"] .compare-only { display: none !important; }
 }
 .grid-badge.nvme { background: #eaf3ff; color: var(--blue-start); }
 .grid-badge.retiring { background: #fff4e5; color: #a15c00; }
+.grid-badge.restricted { background: #eff6fc; color: #10405f; }
 .grid-actions-col { width: 1%; }
 .grid-row-actions { display: flex; gap: 6px; justify-content: flex-end; }
 .grid-action-btn {

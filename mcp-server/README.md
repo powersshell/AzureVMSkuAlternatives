@@ -13,6 +13,7 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 | `list_region_vm_grid` | Every SKU in a region with full specs and all pricing models (PAYG, Spot, reserved) |
 | `get_sku_price_history` | Daily price-history series (Linux/Windows/Spot) for one or more SKUs |
 | `list_retiring_skus` | List VM sizes announced for retirement or already retired |
+| `list_growth_restricted_skus` | List VM sizes with capacity limitations (growth-restricted; no new quota) |
 | `check_region_availability` | Check if SKUs are available in a different region |
 | `list_vm_skus` | List all SKUs available in a region |
 | `health_check` | Verify API connectivity |

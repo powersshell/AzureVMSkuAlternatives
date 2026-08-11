@@ -200,11 +200,15 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 _enrich_cpu_perf(alt, sku['name'])
                 _enrich_network_bw(alt, sku['name'])
 
-                # Retirement awareness: add status and apply ranking penalty
+                # Retirement + growth-restriction awareness: add status and apply ranking penalties
                 retirement_info = _get_retirement_info(sku['name'])
-                if retirement_info:
-                    alt.update(retirement_info)
-                    penalty = _retirement_penalty(sku['name'])
+                growth_info = _get_growth_restriction_info(sku['name'])
+                if retirement_info or growth_info:
+                    if retirement_info:
+                        alt.update(retirement_info)
+                    if growth_info:
+                        alt.update(growth_info)
+                    penalty = _retirement_penalty(sku['name']) + _growth_restriction_penalty(sku['name'])
                     alt['originalSimilarityScore'] = alt['similarityScore']
                     alt['similarityScore'] = round(max(0, alt['similarityScore'] - penalty), 2)
 
@@ -300,10 +304,13 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         }
         _enrich_cpu_perf(target_sku_data, target_sku['name'])
         _enrich_network_bw(target_sku_data, target_sku['name'])
-        # Add retirement info for target SKU
+        # Add retirement + growth restriction info for target SKU
         target_retirement = _get_retirement_info(target_sku['name'])
         if target_retirement:
             target_sku_data.update(target_retirement)
+        target_growth = _get_growth_restriction_info(target_sku['name'])
+        if target_growth:
+            target_sku_data.update(target_growth)
         response_data = {
             'targetSku': target_sku_data,
             'alternatives': alternatives,
@@ -500,7 +507,9 @@ def compare_details(req: func.HttpRequest) -> func.HttpResponse:
             'location': location,
             'differences': differences,
             'targetRetirement': _get_retirement_info(target_name),
-            'alternativeRetirement': _get_retirement_info(alternative_name)
+            'alternativeRetirement': _get_retirement_info(alternative_name),
+            'targetGrowthRestriction': _get_growth_restriction_info(target_name),
+            'alternativeGrowthRestriction': _get_growth_restriction_info(alternative_name)
         }
         
         return func.HttpResponse(
@@ -939,6 +948,9 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
             retirement_info = _get_retirement_info(entity['name'])
             if retirement_info:
                 sku_data.update(retirement_info)
+            growth_info = _get_growth_restriction_info(entity['name'])
+            if growth_info:
+                sku_data.update(growth_info)
             skus.append(sku_data)
         
         # Sort by vCPUs then memory
@@ -1045,6 +1057,9 @@ def build_grid_row(entity: Dict, pricing_override: Optional[Dict] = None) -> Dic
     retirement_info = _get_retirement_info(name)
     if retirement_info:
         row.update(retirement_info)
+    growth_info = _get_growth_restriction_info(name)
+    if growth_info:
+        row.update(growth_info)
     return row
 
 
@@ -1317,6 +1332,71 @@ def retirements(req: func.HttpRequest) -> func.HttpResponse:
         'total': len(items),
         'counts': {'announced': announced, 'retired': retired},
         'retirements': items,
+    }
+    return func.HttpResponse(
+        json.dumps(response_data), mimetype='application/json', status_code=200
+    )
+
+
+# ============================================================================
+# HTTP Route: /growth-restrictions - List capacity-limited (growth-restricted) VM sizes
+# ============================================================================
+@app.route(route="growth-restrictions", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def growth_restrictions(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    List Azure VM size series subject to capacity limitations ("growth restricted").
+
+    Effective July 2026, these previous-generation series cannot be deployed by new
+    subscriptions, and existing subscriptions will not be granted additional quota.
+    They are NOT retired -- they remain fully supported within already-approved quota.
+    Growth restriction is therefore independent of retirement status.
+
+    Query Parameters:
+    - sku: (optional) a single ARM SKU name to check. When provided, returns just that
+      SKU's growth restriction status (growthRestricted is false when unaffected).
+
+    With no parameters, returns the full catalog with counts by category. Each entry's
+    sizePattern is a regular expression matching the affected size names (capacity
+    limitations are published per size-series, not per individual SKU).
+    """
+    logging.info('Processing growth-restrictions request')
+
+    sku_name = req.params.get('sku')
+    if sku_name:
+        info = _get_growth_restriction_info(sku_name)
+        response_data = {'sku': sku_name, **info} if info else {
+            'sku': sku_name,
+            'growthRestricted': False,
+            'growthRestrictionSeries': None,
+            'growthRestrictionCategory': None,
+            'growthRestrictionEffectiveDate': None,
+            'growthRestrictionDocUrl': GROWTH_RESTRICTION_DOC_URL,
+            'recommendedTargets': [],
+        }
+        return func.HttpResponse(
+            json.dumps(response_data), mimetype='application/json', status_code=200
+        )
+
+    items = [
+        {
+            'sizePattern': entry['pattern'],
+            'series': entry['series'],
+            'category': entry['category'],
+            'effectiveDate': GROWTH_RESTRICTION_EFFECTIVE_DATE,
+            'recommendedTargets': entry['recommendedTargets'],
+            'documentationUrl': GROWTH_RESTRICTION_DOC_URL,
+        }
+        for entry in VM_GROWTH_RESTRICTION_INFO
+    ]
+    counts: Dict[str, int] = {}
+    for entry in VM_GROWTH_RESTRICTION_INFO:
+        counts[entry['category']] = counts.get(entry['category'], 0) + 1
+    response_data = {
+        'total': len(items),
+        'effectiveDate': GROWTH_RESTRICTION_EFFECTIVE_DATE,
+        'documentationUrl': GROWTH_RESTRICTION_DOC_URL,
+        'countsByCategory': counts,
+        'growthRestrictions': items,
     }
     return func.HttpResponse(
         json.dumps(response_data), mimetype='application/json', status_code=200
@@ -3041,6 +3121,121 @@ def _retirement_penalty(sku_name: str) -> float:
             return 2.0
     except (ValueError, TypeError):
         return 2.0
+
+
+# ============================================================================
+# VM SKU Growth Restriction (capacity limitation) Data
+# Source: https://learn.microsoft.com/azure/virtual-machines/migration/sizes/previous-gen-series-capacity-limitations
+# Doc ms.date: 08/03/2026 -- refresh this table when the article changes.
+#
+# NOTE: growth restriction is ORTHOGONAL to retirement. Microsoft explicitly
+# states the Dv3/Ev3 and Dv4/Ev4 families are NOT retired and remain fully
+# supported; they simply cannot receive additional quota. A SKU may be
+# retiring, growth-restricted, both, or neither.
+# ============================================================================
+GROWTH_RESTRICTION_DOC_URL = 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/previous-gen-series-capacity-limitations'
+GROWTH_RESTRICTION_EFFECTIVE_DATE = '2026-07-01'
+
+VM_GROWTH_RESTRICTION_INFO = [
+    # --- Compute optimized ---
+    {'pattern': r'^Standard_F\d+$', 'series': 'F', 'category': 'Compute optimized',
+     'recommendedTargets': ['Fsv6', 'Fasv6']},
+    {'pattern': r'^Standard_F\d+s$', 'series': 'Fs', 'category': 'Compute optimized',
+     'recommendedTargets': ['Fsv6', 'Fasv6']},
+    {'pattern': r'^Standard_F\d+s_v2$', 'series': 'Fsv2', 'category': 'Compute optimized',
+     'recommendedTargets': ['Fsv6', 'Fasv6']},
+    # --- General purpose ---
+    {'pattern': r'^Standard_D\d+$', 'series': 'D', 'category': 'General purpose',
+     'recommendedTargets': ['Dsv5', 'Dsv6', 'Dsv7']},
+    {'pattern': r'^Standard_DS\d+(-\d+)?$', 'series': 'Ds', 'category': 'General purpose',
+     'recommendedTargets': ['Dsv5', 'Dsv6', 'Dsv7']},
+    {'pattern': r'^Standard_D\d+_v2$', 'series': 'Dv2', 'category': 'General purpose',
+     'recommendedTargets': ['Dsv5', 'Dsv6', 'Dsv7']},
+    {'pattern': r'^Standard_DS\d+(-\d+)?_v2$', 'series': 'Dsv2', 'category': 'General purpose',
+     'recommendedTargets': ['Dsv5', 'Dsv6', 'Dsv7']},
+    {'pattern': r'^Standard_D\d+_v3$', 'series': 'Dv3', 'category': 'General purpose',
+     'recommendedTargets': ['Dv5', 'Dv6', 'Dv7']},
+    {'pattern': r'^Standard_D\d+(-\d+)?s_v3$', 'series': 'Dsv3', 'category': 'General purpose',
+     'recommendedTargets': ['Dsv5', 'Dsv6', 'Dsv7']},
+    {'pattern': r'^Standard_D\d+_v4$', 'series': 'Dv4', 'category': 'General purpose',
+     'recommendedTargets': ['Dv5', 'Dv6', 'Dv7']},
+    {'pattern': r'^Standard_D\d+(-\d+)?s_v4$', 'series': 'Dsv4', 'category': 'General purpose',
+     'recommendedTargets': ['Dsv5', 'Dsv6', 'Dsv7']},
+    {'pattern': r'^Standard_D\d+d_v4$', 'series': 'Ddv4', 'category': 'General purpose',
+     'recommendedTargets': ['Ddv5', 'Ddv6', 'Ddv7']},
+    {'pattern': r'^Standard_D\d+(-\d+)?ds_v4$', 'series': 'Ddsv4', 'category': 'General purpose',
+     'recommendedTargets': ['Ddsv5', 'Ddsv6', 'Ddsv7']},
+    {'pattern': r'^Standard_D\d+a_v4$', 'series': 'Dav4', 'category': 'General purpose',
+     'recommendedTargets': ['Dasv5', 'Dasv6']},
+    {'pattern': r'^Standard_D\d+(-\d+)?as_v4$', 'series': 'Dasv4', 'category': 'General purpose',
+     'recommendedTargets': ['Dasv5', 'Dasv6']},
+    {'pattern': r'^Standard_D\d+ad_v4$', 'series': 'Ddav4', 'category': 'General purpose',
+     'recommendedTargets': ['Dadsv5', 'Dadsv6']},
+    {'pattern': r'^Standard_D\d+(-\d+)?ads_v4$', 'series': 'Ddav4', 'category': 'General purpose',
+     'recommendedTargets': ['Dadsv5', 'Dadsv6']},
+    {'pattern': r'^Standard_B\d+[a-z]*s$', 'series': 'B / Bs', 'category': 'General purpose',
+     'recommendedTargets': ['Bsv2', 'Dsv5']},
+    {'pattern': r'^Standard_A\d+m?_v2$', 'series': 'Av2 / Amv2', 'category': 'General purpose',
+     'recommendedTargets': ['Dsv5', 'Dsv6']},
+    # --- Memory optimized ---
+    {'pattern': r'^Standard_E\d+i?_v3$', 'series': 'Ev3', 'category': 'Memory optimized',
+     'recommendedTargets': ['Ev5', 'Esv6', 'Esv7']},
+    {'pattern': r'^Standard_E\d+(-\d+)?i?s_v3$', 'series': 'Esv3', 'category': 'Memory optimized',
+     'recommendedTargets': ['Esv5', 'Esv6', 'Esv7']},
+    {'pattern': r'^Standard_E\d+i?_v4$', 'series': 'Ev4', 'category': 'Memory optimized',
+     'recommendedTargets': ['Ev5', 'Esv6', 'Esv7']},
+    {'pattern': r'^Standard_E\d+(-\d+)?i?s_v4$', 'series': 'Esv4', 'category': 'Memory optimized',
+     'recommendedTargets': ['Esv5', 'Esv6', 'Esv7']},
+    {'pattern': r'^Standard_E\d+i?d_v4$', 'series': 'Edv4', 'category': 'Memory optimized',
+     'recommendedTargets': ['Edsv5', 'Edsv6']},
+    {'pattern': r'^Standard_E\d+(-\d+)?i?ds_v4$', 'series': 'Edsv4', 'category': 'Memory optimized',
+     'recommendedTargets': ['Edsv5', 'Edsv6']},
+    {'pattern': r'^Standard_E\d+a_v4$', 'series': 'Eav4', 'category': 'Memory optimized',
+     'recommendedTargets': ['Easv5', 'Easv6']},
+    {'pattern': r'^Standard_E\d+(-\d+)?as_v4$', 'series': 'Easv4', 'category': 'Memory optimized',
+     'recommendedTargets': ['Easv5', 'Easv6']},
+    {'pattern': r'^Standard_G\d+$', 'series': 'G', 'category': 'Memory optimized',
+     'recommendedTargets': ['Esv5', 'Esv6']},
+    {'pattern': r'^Standard_GS\d+(-\d+)?$', 'series': 'Gs', 'category': 'Memory optimized',
+     'recommendedTargets': ['Esv5', 'Esv6']},
+    # --- Storage optimized ---
+    {'pattern': r'^Standard_L\d+s$', 'series': 'Ls', 'category': 'Storage optimized',
+     'recommendedTargets': ['Lsv3', 'Lasv3']},
+    {'pattern': r'^Standard_L\d+s_v2$', 'series': 'Lsv2', 'category': 'Storage optimized',
+     'recommendedTargets': ['Lsv3', 'Lasv3']},
+]
+
+# Penalty applied to the similarity score for growth-restricted SKUs. Sits below
+# 'Retired' (15.0) and a near-term 'Announced' retirement (10.0) because these
+# sizes still work, but above a distant retirement (2.0) because they cannot get
+# additional quota.
+GROWTH_RESTRICTION_PENALTY = 8.0
+
+
+def _get_growth_restriction_info(sku_name: str) -> Optional[Dict]:
+    """
+    Check if a SKU belongs to a growth-restricted (capacity-limited) series.
+    Returns dict with growth restriction details or None.
+    """
+    for entry in VM_GROWTH_RESTRICTION_INFO:
+        if re.match(entry['pattern'], sku_name):
+            return {
+                'growthRestricted': True,
+                'growthRestrictionSeries': entry['series'],
+                'growthRestrictionCategory': entry['category'],
+                'growthRestrictionEffectiveDate': GROWTH_RESTRICTION_EFFECTIVE_DATE,
+                'growthRestrictionDocUrl': GROWTH_RESTRICTION_DOC_URL,
+                'recommendedTargets': entry['recommendedTargets'],
+            }
+    return None
+
+
+def _growth_restriction_penalty(sku_name: str) -> float:
+    """
+    Similarity score penalty for growth-restricted SKUs. Applied in addition to
+    any retirement penalty, since the two conditions are independent.
+    """
+    return GROWTH_RESTRICTION_PENALTY if _get_growth_restriction_info(sku_name) else 0.0
 
 
 def _is_promo_sku(name: str) -> bool:

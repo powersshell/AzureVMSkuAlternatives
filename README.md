@@ -9,11 +9,11 @@
 
 ## 📋 Recent Changes
 
-### 2026-08-10
-- **feature:** The Site Usage Analytics workbook gained an **MCP Server Usage** section — headline totals (tool calls, active days, distinct tools/callers), tool invocations over time, invocations by tool, success vs error, latency (avg/p50/p95 + per-tool), and reach proxies (distinct callers over time, sessions started, and a clients-by-app table showing which AI tools connect).
-- **improvement:** The **MCP server** now emits anonymous usage telemetry to Application Insights via a FastMCP middleware — one event per tool call (tool, success/error, duration, caller IP) plus a session event on each client `initialize`. No-op locally; no PII.
-- **feature:** The Site Usage Analytics workbook gained a **Value & Impact** section — engagement & retention (DAU/WAU/MAU + stickiness, new vs returning), value & conversion (answered rate, export conversion, avg alternatives, and **potential monthly savings surfaced**), feature adoption (Where-is-cheapest, price history, region checks, Browse/Grid, Spot/RI), and reach & timing (country breakdown, usage by hour/day). The empty "Most Compared SKUs" table now works.
-- **improvement:** Frontend telemetry now records the target VM size on compare events, the potential monthly savings of the cheapest alternative, and "Where is this cheapest?" usage — all still anonymous, no PII.
+### 2026-08-11
+- **feature:** Added **growth-restricted (capacity-limited) VM size awareness**. Microsoft has published capacity limitations (effective July 2026) for many previous-generation series — new subscriptions can't deploy them and additional quota won't be approved, even though most aren't retired. Affected sizes now get a **🔒 Limited** badge, a warning banner with recommended migration targets, and a ranking penalty so scalable alternatives sort higher. They're still shown by default, with a new opt-in **"Hide growth-restricted"** filter.
+- **feature:** The **MCP server** gained `list_growth_restricted_skus`, and every SKU-returning tool now includes `growthRestricted` / `recommendedTargets` so AI agents stop recommending sizes a customer can't scale into. Backed by a new `/api/growth-restrictions` endpoint.
+- **feature:** The **PowerShell script** reached parity — a `GrowthRestricted` column, a target-size warning with recommended targets, the same ranking penalty, and a `-HideGrowthRestricted` switch.
+- **data:** Added the capacity-limitation table covering 31 size patterns across compute optimized, general purpose (including Dv3/Dsv3/Dv4/Dsv4/Ddv4/Ddsv4/Dav4/Dasv4), memory optimized (including Ev3/Esv3/Ev4/Esv4/Edv4/Edsv4/Eav4/Easv4), and storage optimized series, each with recommended migration targets.
 
 📄 [Full changelog →](CHANGELOG.md)
 
@@ -27,6 +27,7 @@ Azure VM SKU Alternatives helps you discover similar or alternative VM SKUs when
 - ⚡ You want better performance for similar specs
 - 🔄 You're migrating between VM families (e.g., Dv3 → Dv5)
 - ⚠️ Your current SKU is announced for retirement
+- 🔒 Your current SKU is growth-restricted (capacity limited) and can't get more quota
 - 📊 You need to compare VM capabilities side-by-side
 
 **Example:** Need an alternative to `Standard_D4s_v3`? Get instant recommendations with similarity scores, specs, and pricing!
@@ -267,6 +268,7 @@ Total Score = (200 + 200 + 90 + 100 + 37.5) / (2 + 2 + 1 + 1 + 0.5)
 - **Mobile-friendly** - Responsive design
 - **Validation** - Prevents invalid SKU names
 - **Retirement awareness** - Retiring SKUs flagged with ⚠️, hidden by default
+- **Growth restriction awareness** - Capacity-limited SKUs flagged with 🔒, shown by default with a ranking penalty and an opt-in hide filter
 - **CPU performance scoring** - Cross-architecture comparison (Intel/AMD/ARM normalized to Ice Lake = 100)
 - **CPU generation filter** - Collapsible dropdown to filter by microarchitecture
 
