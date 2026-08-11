@@ -22,6 +22,12 @@ let appInsights = null;
 let analyticsUserId = null;
 let telemetryReady = false;
 const pendingTelemetryEvents = [];
+// Which surface ('compare' = Find Alternatives, 'browse' = Browse all VMs) the user was on
+// when an event fired. Mirrors currentMode, but declared up here so sendTelemetryEvent can
+// read it without hitting the temporal dead zone during early page-load events. Stamped on
+// every event so shared features (price history, where-is-cheapest) are attributable to the
+// surface they were opened from.
+let telemetrySurface = 'compare';
 
 function generateAnonymousId(prefix = 'anon') {
     if (window.crypto && window.crypto.randomUUID) {
@@ -78,6 +84,7 @@ function sendTelemetryEvent(name, properties = {}, measurements = {}) {
         { name },
         sanitizeTelemetryProperties({
             anonymousUserId: analyticsUserId || 'unknown',
+            surface: telemetrySurface,
             ...properties
         }),
         sanitizeTelemetryMeasurements(measurements)
@@ -145,13 +152,16 @@ async function initializeTelemetry() {
 }
 
 function trackEvent(name, properties = {}, measurements = {}) {
+    // Stamp the surface at event time (not flush time) so queued pre-init events keep the
+    // mode the user was actually on.
+    const props = { surface: telemetrySurface, ...properties };
     if (!telemetryReady || !appInsights) {
         if (pendingTelemetryEvents.length < 100) {
-            pendingTelemetryEvents.push({ name, properties, measurements });
+            pendingTelemetryEvents.push({ name, properties: props, measurements });
         }
         return;
     }
-    sendTelemetryEvent(name, properties, measurements);
+    sendTelemetryEvent(name, props, measurements);
 }
 
 function getPriorityWeight(id) {
@@ -1417,7 +1427,10 @@ function escapeHtml(value) {
         const closeBtn = document.getElementById('mcpClose');
         const backdrop = document.getElementById('mcpBackdrop');
 
-        const open = () => modal.classList.remove('hidden');
+        const open = () => {
+            modal.classList.remove('hidden');
+            trackEvent('mcp_modal_opened', {});
+        };
         const close = () => modal.classList.add('hidden');
 
         if (openBtn) openBtn.addEventListener('click', open);
@@ -1463,6 +1476,9 @@ function escapeHtml(value) {
                 const original = btn.textContent;
                 btn.textContent = 'Copied!';
                 btn.classList.add('copied');
+                trackEvent('mcp_config_copied', {
+                    client: btn.getAttribute('data-copy-target') || 'unknown'
+                });
                 setTimeout(() => {
                     btn.textContent = original;
                     btn.classList.remove('copied');
@@ -2773,7 +2789,9 @@ const gridSelectedFamilies = new Set(); // empty = all families
 // Switch between "Find alternatives" (compare) and "Browse all VMs" (grid)
 function switchMode(mode) {
     if (mode !== 'compare' && mode !== 'browse') return;
+    const previousMode = currentMode;
     currentMode = mode;
+    telemetrySurface = mode;
     document.body.dataset.mode = mode;
 
     const compareTab = document.getElementById('tabCompare');
@@ -2794,7 +2812,7 @@ function switchMode(mode) {
         contentGrid.classList.remove('hidden');
     }
 
-    trackEvent('mode_switched', { mode });
+    trackEvent('mode_switched', { mode, fromMode: previousMode });
 
     if (mode === 'browse') {
         const region = document.getElementById('location').value;

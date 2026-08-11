@@ -427,9 +427,120 @@ var serializedData = '''
     {
       "type": 1,
       "content": {
+        "json": "---\n## Where Users Find Answers\nThe site has two ways in: **Find Alternatives** (pick a SKU, get ranked replacements) and **Browse all VMs** (scan every size in a region). These tiles show *coverage* — which area people reach for, who uses both, and how the two feed each other. This is not a competition between the two: both are valid paths to an answer, and the goal is to confirm each one is pulling its weight.\n\nEvery event carries the surface the user was on when it fired, so shared features (price history, where-is-cheapest) are attributed to where they were opened from. Events sent before this stamping shipped fall back to inference from the event name."
+      },
+      "name": "surface-usage-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name !in ('page_loaded', 'report_issue_clicked', 'mcp_modal_opened')\n| extend uid = tostring(Properties.anonymousUserId)\n| where isnotempty(uid) and uid != 'unknown'\n| extend sp = tostring(Properties.surface)\n| extend Surface = case(sp in ('browse', 'compare'), sp, Name startswith 'grid_', 'browse', 'compare')\n| summarize surfaces = make_set(Surface) by uid\n| extend usedBrowse = set_has_element(surfaces, 'browse'), usedCompare = set_has_element(surfaces, 'compare')\n| summarize ['Active users'] = count(), ['Used Find Alternatives'] = countif(usedCompare), ['Used Browse all VMs'] = countif(usedBrowse), ['Used both areas'] = countif(usedBrowse and usedCompare)",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "Surface Coverage (users who reached each area)"
+      },
+      "name": "surface-coverage-tiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name !in ('page_loaded', 'report_issue_clicked', 'mcp_modal_opened')\n| extend uid = tostring(Properties.anonymousUserId)\n| where isnotempty(uid) and uid != 'unknown'\n| extend sp = tostring(Properties.surface)\n| extend Surface = case(sp == 'browse', 'Browse all VMs', sp == 'compare', 'Find Alternatives', Name startswith 'grid_', 'Browse all VMs', 'Find Alternatives')\n| summarize Users = dcount(uid) by bin(TimeGenerated, 1d), Surface\n| order by TimeGenerated asc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "linechart",
+        "title": "Daily Unique Users in Each Area"
+      },
+      "name": "surface-daily-users-chart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name !in ('page_loaded', 'report_issue_clicked', 'mcp_modal_opened')\n| extend uid = tostring(Properties.anonymousUserId)\n| where isnotempty(uid) and uid != 'unknown'\n| extend sp = tostring(Properties.surface)\n| extend Surface = case(sp == 'browse', 'Browse all VMs', sp == 'compare', 'Find Alternatives', Name startswith 'grid_', 'Browse all VMs', 'Find Alternatives')\n| summarize Actions = count() by uid, Surface\n| summarize ['Unique users'] = dcount(uid), ['Total actions'] = sum(Actions), ['Avg actions per user'] = round(avg(Actions), 1), ['Median actions per user'] = round(percentile(Actions, 50), 1) by Surface\n| order by ['Unique users'] desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Engagement Depth per Area"
+      },
+      "name": "surface-depth-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name !in ('page_loaded', 'report_issue_clicked', 'mcp_modal_opened')\n| extend uid = tostring(Properties.anonymousUserId)\n| where isnotempty(uid) and uid != 'unknown'\n| extend sp = tostring(Properties.surface)\n| extend Area = case(sp == 'browse', 'Browse all VMs', sp == 'compare', 'Find Alternatives', Name startswith 'grid_', 'Browse all VMs', 'Find Alternatives')\n| extend Action = case(\n    Name == 'compare_submitted', 'Ran a comparison',\n    Name == 'compare_completed', 'Comparison returned results',\n    Name == 'compare_failed', 'Comparison failed',\n    Name == 'compare_validation_failed', 'Comparison blocked by validation',\n    Name == 'grid_loaded', 'Loaded the region grid',\n    Name == 'grid_find_alternatives', 'Jumped from grid to Find Alternatives',\n    Name == 'grid_export_csv', 'Exported grid to CSV',\n    Name == 'grid_export_xlsx', 'Exported grid to Excel',\n    Name == 'export_csv_clicked', 'Exported results to CSV',\n    Name == 'export_xlsx_clicked', 'Exported results to Excel',\n    Name in ('export_csv_failed', 'export_xlsx_failed'), 'Export failed',\n    Name == 'where_cheapest_opened', 'Opened where-is-cheapest',\n    Name == 'where_cheapest_result', 'Got where-is-cheapest result',\n    Name == 'price_history_opened', 'Opened price history',\n    Name == 'region_check_completed', 'Checked cross-region availability',\n    Name == 'result_vendor_filter_changed', 'Filtered by CPU vendor',\n    Name == 'result_generation_filter_changed', 'Filtered by CPU generation',\n    Name in ('results_expand_all', 'results_collapse_all'), 'Expanded / collapsed results',\n    Name in ('pricing_os_toggled', 'pricing_model_toggled'), 'Changed pricing view',\n    Name == 'mode_switched', 'Switched area',\n    Name)\n| summarize Events = count(), ['Unique users'] = dcount(uid) by Area, Action\n| order by Area asc, ['Unique users'] desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "What Users Actually Do in Each Area"
+      },
+      "name": "surface-actions-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name in ('grid_loaded', 'grid_find_alternatives')\n| extend uid = tostring(Properties.anonymousUserId)\n| where isnotempty(uid) and uid != 'unknown'\n| summarize ['Grid loads'] = countif(Name == 'grid_loaded'), ['Users who browsed'] = dcountif(uid, Name == 'grid_loaded'), ['Handoffs to Find Alternatives'] = countif(Name == 'grid_find_alternatives'), ['Users who handed off'] = dcountif(uid, Name == 'grid_find_alternatives')",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "Browse → Find Alternatives Handoff (browsing feeding the compare flow)"
+      },
+      "name": "surface-handoff-tiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name == 'mode_switched'\n| extend uid = tostring(Properties.anonymousUserId)\n| extend toMode = tostring(Properties.mode), fromMode = tostring(Properties.fromMode)\n| extend Direction = case(\n    toMode == 'browse' and fromMode == 'compare', 'Find Alternatives → Browse all VMs',\n    toMode == 'compare' and fromMode == 'browse', 'Browse all VMs → Find Alternatives',\n    toMode == 'browse', 'Switched into Browse all VMs',\n    toMode == 'compare', 'Switched into Find Alternatives',\n    'Unknown')\n| summarize Switches = count(), ['Unique users'] = dcount(uid) by Direction\n| order by Switches desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Movement Between Areas"
+      },
+      "name": "surface-movement-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name in ('export_csv_clicked', 'export_xlsx_clicked', 'grid_export_csv', 'grid_export_xlsx', 'where_cheapest_result', 'price_history_opened', 'region_check_completed')\n| extend uid = tostring(Properties.anonymousUserId)\n| where isnotempty(uid) and uid != 'unknown'\n| extend sp = tostring(Properties.surface)\n| extend Area = case(sp == 'browse', 'Browse all VMs', sp == 'compare', 'Find Alternatives', Name startswith 'grid_', 'Browse all VMs', 'Find Alternatives')\n| extend Outcome = case(\n    Name in ('export_csv_clicked', 'export_xlsx_clicked', 'grid_export_csv', 'grid_export_xlsx'), 'Took the data away (export)',\n    Name == 'where_cheapest_result', 'Found a cheaper region',\n    Name == 'price_history_opened', 'Checked price trend',\n    Name == 'region_check_completed', 'Checked regional availability',\n    Name)\n| summarize Events = count(), ['Unique users'] = dcount(uid) by Area, Outcome\n| order by Area asc, Events desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Where the Answer Landed (deep-dive & export actions by area)"
+      },
+      "name": "surface-outcome-table"
+    },
+    {
+      "type": 1,
+      "content": {
         "json": "---\n## MCP Server Usage\nTool calls made by AI agents (GitHub Copilot CLI, Scout, VS Code, etc.) through the MCP server. Agents are anonymous, so reach metrics use the caller IP and the client-reported app name as proxies for distinct users."
       },
       "name": "mcp-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppEvents\n| where TimeGenerated {TimeRange}\n| where Name in ('mcp_modal_opened', 'mcp_config_copied')\n| extend uid = tostring(Properties.anonymousUserId)\n| where isnotempty(uid) and uid != 'unknown'\n| summarize ['Opened MCP instructions'] = countif(Name == 'mcp_modal_opened'), ['Users who opened'] = dcountif(uid, Name == 'mcp_modal_opened'), ['Config copied'] = countif(Name == 'mcp_config_copied'), ['Users who copied config'] = dcountif(uid, Name == 'mcp_config_copied')",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "title": "Site → MCP Funnel (visitors picking up the MCP server from the site)"
+      },
+      "name": "mcp-site-funnel-tiles"
     },
     {
       "type": 3,
