@@ -1436,7 +1436,7 @@ if ($similarSkus.Count -gt 0) {
         # Show condensed view with key metrics - include GPUs if target has them
         $baseProps = @('SkuName', 'SimilarityScore', 'CpuVendor', 'CpuGeneration', 'vCPUs', 'MemoryGB')
         if ($targetHasGPU) { $baseProps += 'GPUs' }
-        $baseProps += @('AvailabilityZones', 'RetirementStatus', 'GrowthRestricted', "MonthlyPrice($CurrencyCode)", "CostPerVCPU($CurrencyCode)")
+        $baseProps += @('AvailabilityZones', 'RetirementStatus', @{ Name = 'Limited'; Expression = { $_.GrowthRestricted } }, "MonthlyPrice($CurrencyCode)", "CostPerVCPU($CurrencyCode)")
         if ($CheckRegion) { $baseProps += "AvailableIn_$CheckRegion" }
         $displaySkus | Format-Table -Property $baseProps -AutoSize
     }

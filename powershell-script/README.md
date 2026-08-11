@@ -180,7 +180,7 @@ The script provides detailed output including:
 - GPUs (if applicable)
 - Availability Zones
 - Retirement status
-- Growth restriction (capacity limitation) status
+- Growth restriction (capacity limitation) status — shown as a `Limited` column
 - Monthly pricing and cost per vCPU
 - Availability in the comparison region (when `-CheckRegion` is used)
 
