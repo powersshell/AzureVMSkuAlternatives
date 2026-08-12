@@ -1,0 +1,60 @@
+name: Check Pricing Invariants
+
+# Guards against silent price-selection corruption.
+#
+# Azure publishes several retail meters per VM size that all share the same
+# armSkuName -- pay-as-you-go, Spot, the deprecated Batch-only "Low Priority"
+# tier, Windows, and reservations. Picking the wrong one produces a
+# plausible-looking number rather than an error, so these bugs are invisible
+# without an external check. Conflating "Low Priority" with "Spot" published
+# wrong Spot prices for 472 sizes in eastus (worst case 99.8% off) and went
+# unnoticed until 2026-08-12.
+#
+# scripts/check_pricing_invariants.py validates the LIVE API output against the
+# Azure retail price list as ground truth, so it detects the corruption no
+# matter which code path introduced it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'scripts/check_pricing_invariants.py'
+      - '.github/workflows/check-pricing-invariants.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'scripts/check_pricing_invariants.py'
+      - '.github/workflows/check-pricing-invariants.yml'
+  # Daily sweep. The cached price data is refreshed on a timer, so a bad
+  # refresh can corrupt prices without any code change -- code-triggered runs
+  # alone would not catch that.
+  schedule:
+    - cron: '0 15 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Validate published prices against retail meters
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two regions in different currencies-of-record and pricing tiers, so a
+        # region-specific regression is caught rather than assumed absent.
+        location: [eastus, westeurope]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Pure stdlib (urllib, json) by design -- no lockfile, no install step.
+
+      - name: Check pricing invariants
+        run: python scripts/check_pricing_invariants.py --location "${{ matrix.location }}"
