@@ -2074,12 +2074,17 @@ def fetch_pricing_concurrent(sku_names: List[str], location: str, max_workers: i
     return pricing_results
 
 
-def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str, Dict]:
+def fetch_bulk_region_pricing(location: str, currency: str = 'USD', require_complete: bool = False) -> Dict[str, Dict]:
     """
     Fetch ALL VM pricing for a region in one paginated API call.
     ~20x fewer HTTP calls vs fetching per-SKU.
     Returns dict keyed by armSkuName -> pricing dict.
     Includes retry logic with exponential backoff to handle transient failures.
+
+    If pagination aborts early the result is PARTIAL — SKUs on unfetched pages
+    are simply absent. Callers that persist the result (cache / price history)
+    must pass require_complete=True so a truncated fetch raises instead of
+    silently overwriting good prices with nulls.
     """
     api_url = 'https://prices.azure.com/api/retail/prices'
     filter_str = f"serviceName eq 'Virtual Machines' and armRegionName eq '{location}' and (type eq 'Consumption' or type eq 'Reservation')"
@@ -2088,6 +2093,7 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
     all_items = []
     page = 0
     max_retries = 3
+    complete = True
     while url:
         # Retry loop with exponential backoff for each page
         success = False
@@ -2107,6 +2113,7 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
 
         if not success:
             logging.error(f'Bulk pricing fetch FAILED for {location} after {max_retries} attempts on page {page}. Returning partial data.')
+            complete = False
             break
 
         data = response.json()
@@ -2138,16 +2145,19 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
         if 'dedicatedhost' in product_lower or 'cloud' in product_lower:
             continue
 
-        is_spot = 'Spot' in sku_label or 'Low Priority' in sku_label
+        is_spot = 'Spot' in sku_label
         is_windows = 'windows' in product_lower
 
-        # Capture Linux Spot pricing (exclude Windows spot per product decision)
-        if is_spot:
-            if not is_windows and sku_name not in sku_spot:
-                sku_spot[sku_name] = item
+        # 'Low Priority' is the deprecated, Batch-only tier — a *different*
+        # product from Spot with materially different prices. Drop it entirely
+        # so it can never be mistaken for Spot or for pay-as-you-go pricing.
+        # (get_vm_pricing applies the same exclusion.)
+        if 'Low Priority' in sku_label:
             continue
 
-        # Reservation items (RI) — compute-only, no Windows distinction
+        # Reservation items (RI) — compute-only, no Windows distinction.
+        # Checked before Spot: a Spot-labelled reservation would otherwise have
+        # its full term total written into the hourly spot field.
         if item_type == 'Reservation':
             term = item.get('reservationTerm', '')
             if term in ('1 Year', '3 Years'):
@@ -2155,6 +2165,12 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
                     sku_ri[sku_name] = {}
                 if term not in sku_ri[sku_name]:
                     sku_ri[sku_name][term] = item
+            continue
+
+        # Capture Linux Spot pricing (exclude Windows spot per product decision)
+        if is_spot:
+            if not is_windows and sku_name not in sku_spot:
+                sku_spot[sku_name] = item
             continue
 
         if sku_name not in sku_fallback:
@@ -2167,7 +2183,12 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
     result: Dict[str, Dict] = {}
     all_sku_names = sku_fallback.keys()
     for sku_name in all_sku_names:
-        linux_item = sku_linux.get(sku_name) or sku_fallback.get(sku_name)
+        # Never let a Windows meter stand in as the Linux price — report no
+        # Linux price rather than a silently mislabelled Windows one.
+        fallback_item = sku_fallback.get(sku_name)
+        if fallback_item is not None and 'windows' in fallback_item.get('productName', '').lower():
+            fallback_item = None
+        linux_item = sku_linux.get(sku_name) or fallback_item
         windows_item = sku_windows.get(sku_name)
         spot_item = sku_spot.get(sku_name)
         if not linux_item:
@@ -2202,6 +2223,12 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD') -> Dict[str,
         _compute_windows_ri(pricing)
 
         result[sku_name] = pricing
+
+    if not complete and require_complete:
+        raise RuntimeError(
+            f'Bulk pricing fetch for {location} was incomplete ({page} pages, '
+            f'{len(all_items)} items) — refusing to persist partial pricing.'
+        )
 
     logging.info(f"Bulk pricing fetch for {location}: {len(result)} SKUs from {len(all_items)} price items ({page} pages)")
     return result
@@ -2830,8 +2857,10 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
     
     logging.info(f"Fetching pricing for {len(skus)} SKUs in {region} via bulk API call...")
 
-    # Fetch all pricing for the region in one paginated bulk call
-    pricing_data = fetch_bulk_region_pricing(region)
+    # Fetch all pricing for the region in one paginated bulk call.
+    # require_complete=True: a truncated fetch must abort the refresh rather
+    # than overwrite cached prices with nulls and record phantom history points.
+    pricing_data = fetch_bulk_region_pricing(region, require_complete=True)
 
     entities = []
     timestamp = datetime.now(timezone.utc).isoformat()
