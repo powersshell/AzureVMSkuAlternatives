@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import azure.functions as func
-from azure.data.tables import TableServiceClient
+from azure.data.tables import TableServiceClient, EntityProperty, EdmType
 from azure.identity import DefaultAzureCredential
 
 # Create the Function App instance
@@ -2927,8 +2927,8 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'memoryGB': capabilities['memoryGB'],
                 'maxDataDisks': capabilities['maxDataDisks'],
                 'maxNics': capabilities['maxNics'],
-                'uncachedDiskIOPS': capabilities['uncachedDiskIOPS'],
-                'uncachedDiskBytesPerSecond': capabilities['uncachedDiskBytesPerSecond'],
+                'uncachedDiskIOPS': _table_int(capabilities['uncachedDiskIOPS']),
+                'uncachedDiskBytesPerSecond': _table_int(capabilities['uncachedDiskBytesPerSecond']),
                 'gpuCount': capabilities['gpuCount'],
                 'gpuType': capabilities['gpuType'] or '',
                 'premiumIO': capabilities['premiumIO'],
@@ -2938,7 +2938,7 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'nvme': capabilities['nvme'],
                 'architecture': capabilities['architecture'],
                 'cpuVendor': cpu_vendor,
-                'osVhdSizeMB': capabilities['osVhdSizeMB'],
+                'osVhdSizeMB': _table_int(capabilities['osVhdSizeMB']),
                 'hyperVGenerations': capabilities['hyperVGenerations'],
                 'acu': capabilities['acu'],
                 'vCPUsPerCore': capabilities['vCPUsPerCore'],
@@ -3004,6 +3004,7 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
 
     # Batch upsert in groups of 100 (Azure Table Storage transaction limit)
     count = 0
+    failed_upserts = []
     BATCH_SIZE = 100
     for i in range(0, len(entities), BATCH_SIZE):
         batch = entities[i:i + BATCH_SIZE]
@@ -3018,6 +3019,15 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                     count += 1
                 except Exception as e2:
                     logging.warning(f"Failed to upsert {entity.get('RowKey')}: {e2}")
+                    failed_upserts.append(entity.get('RowKey'))
+
+    # A SKU that fails to upsert disappears from the site entirely, so this is an
+    # error rather than a warning -- it is a silent coverage loss, not a degraded row.
+    if failed_upserts:
+        logging.error(
+            f"{len(failed_upserts)} of {len(entities)} SKUs in {region} failed to persist "
+            f"and are missing from the catalog: {', '.join(sorted(failed_upserts)[:10])}"
+        )
 
     # Record on-change price-history snapshots (I-G)
     if history_client is not None:
@@ -3046,8 +3056,27 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
     
     # Compute coverage stats for this region
     coverage = _compute_region_coverage(region, entities)
-    
+    coverage['skusPersisted'] = count
+    coverage['skusFailedToPersist'] = len(failed_upserts)
+    if failed_upserts:
+        coverage['failedToPersistSkus'] = sorted(failed_upserts)[:50]
+
     return count, coverage
+
+
+INT32_MAX = 2147483647
+
+
+def _table_int(value):
+    """
+    Azure Table Storage defaults Python ints to Edm.Int32. Values above the Int32
+    ceiling are rejected, which previously caused the whole entity upsert to fail --
+    silently dropping every high-throughput VM size (D128/D160/D192 v6/v7 and other
+    large sizes) from the catalog. Tag oversized values as Edm.Int64 so they persist.
+    """
+    if isinstance(value, int) and not isinstance(value, bool) and abs(value) > INT32_MAX:
+        return EntityProperty(value, EdmType.INT64)
+    return value
 
 
 def _get_constrained_base_sku(name: str) -> Optional[str]:

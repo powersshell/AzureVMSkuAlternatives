@@ -1,0 +1,64 @@
+name: Check Catalog Coverage
+
+# Guards against silent catalog loss: VM sizes that Azure offers in a region but
+# that never make it into the served catalog. Such a size is invisible to users --
+# it cannot be found in Browse all VMs and can never be recommended.
+#
+# Written after every size whose uncached disk throughput exceeded the Int32
+# ceiling failed to persist to Table Storage. The failure was logged as a warning
+# and swallowed, so the refresh reported success while 324 East US sizes (24% of
+# the catalog, including the D128/D160/D192 v6 and v7 flagships) were missing.
+#
+# The check validates the LIVE API against Azure's own SKU enumeration, so it also
+# catches the case where a fix has been deployed but the region caches have not
+# been refreshed (rows are written at refresh time, not per request).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'scripts/check_catalog_coverage.py'
+      - '.github/workflows/check-catalog-coverage.yml'
+  pull_request:
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'scripts/check_catalog_coverage.py'
+      - '.github/workflows/check-catalog-coverage.yml'
+  schedule:
+    # Daily, after the other data-quality checks.
+    - cron: '55 15 * * *'
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # Required for federated Azure login
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two regions with different catalogs, so a region-specific cache that was
+        # missed during a refresh still gets caught.
+        location: [eastus, westeurope]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The truth source is the Microsoft.Compute SKUs API, which requires a token.
+      - name: Azure login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Check catalog coverage (${{ matrix.location }})
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: python scripts/check_catalog_coverage.py --location ${{ matrix.location }}
