@@ -1628,6 +1628,32 @@ def _derive_trusted_launch(capabilities: Dict) -> bool:
     return ('V2' in hyperv) and not disabled
 
 
+def _effective_vcpus(capabilities: Dict) -> int:
+    """Return the number of vCPUs a size actually exposes to the guest OS.
+
+    Azure publishes two capabilities: ``vCPUs`` is the physical core count of the
+    underlying parent size, while ``vCPUsAvailable`` is the number actually usable.
+    For the 246 constrained-vCPU sizes (``Standard_E16-4s_v5``, ``Standard_HB368-48rs_v5``)
+    these differ -- the whole point of a constrained size is fewer usable cores with the
+    parent's memory and I/O, so software licensed per-core costs less. Reading ``vCPUs``
+    reports the parent's count and makes a constrained size look identical to its parent.
+
+    ``vCPUsAvailable`` is published for every size and equals ``vCPUs`` for
+    non-constrained sizes, so it is the correct value to use unconditionally.
+    """
+    for key in ('vCPUsAvailable', 'vCPUs'):
+        raw = capabilities.get(key)
+        if raw in (None, ''):
+            continue
+        try:
+            value = int(float(raw))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return 0
+
+
 def extract_capabilities(sku: Dict) -> Dict:
     """Extract capabilities from a SKU"""
     capabilities = {}
@@ -1636,7 +1662,7 @@ def extract_capabilities(sku: Dict) -> Dict:
             capabilities[cap['name']] = cap['value']
 
     return {
-        'vCPUs': int(capabilities.get('vCPUs', 0)),
+        'vCPUs': _effective_vcpus(capabilities),
         'memoryGB': float(capabilities.get('MemoryGB', 0)),
         'maxDataDiskCount': int(capabilities.get('MaxDataDiskCount', 0)),
         'maxNics': int(capabilities.get('MaxNetworkInterfaces', 0)),
@@ -2410,6 +2436,9 @@ CPU_PERFORMANCE_TABLE = {
     # AMD - newer generations (public benchmark ratios)
     '9004': {'score': 122, 'generation': 'Genoa (Zen 4)', 'year': 2023},
     '9V004': {'score': 122, 'generation': 'Genoa (Zen 4)', 'year': 2023},
+    # Custom Azure-exclusive EPYC 9004-series part with HBM3, used by HBv5.
+    # https://learn.microsoft.com/azure/virtual-machines/hbv5-series-overview
+    '9V64H': {'score': 122, 'generation': 'Genoa (Zen 4)', 'year': 2024},
     '9005': {'score': 135, 'generation': 'Turin (Zen 5)', 'year': 2024},
     '9754': {'score': 95, 'generation': 'Bergamo (Zen 4c)', 'year': 2023},
     # ARM — Cobalt 100 score estimated at ~1.25× Ampere Altra based on Microsoft GA blog
@@ -2557,9 +2586,11 @@ SERIES_CPU_MAP = {
     # HPC (including constrained-vCPU 'rs' variants)
     'HBv3': ['7V13'],
     'HBv4': ['9V004'],
+    'HBv5': ['9V64H'],
     'HBv2': ['7V12'],
     'HBrsv3': ['7V13'],
     'HBrsv4': ['9V004'],
+    'HBrsv5': ['9V64H'],
     'HBrsv2': ['7V12'],
     'HC': ['8168'],
     'HX': ['7V13'],
@@ -2629,7 +2660,17 @@ def _get_series_prefix(sku_name: str) -> Optional[str]:
         family = match.group(1)
         modifiers = match.group(2)
         version = match.group(3)
-        return f"{family}{modifiers}v{version}"
+        prefix = f"{family}{modifiers}v{version}"
+        if prefix in SERIES_CPU_MAP:
+            return prefix
+        # The 'i' additive feature means "isolated" -- a dedicated-host variant of
+        # the same silicon (Eisv5 is an isolated Esv5), so it is never mapped
+        # separately. Drop it and reuse the base series' CPU.
+        if 'i' in modifiers:
+            isolated_base = f"{family}{modifiers.replace('i', '', 1)}v{version}"
+            if isolated_base in SERIES_CPU_MAP:
+                return isolated_base
+        return prefix
     # Handle non-versioned series (HC, HB, M, etc.)
     match = re.match(r'^([A-Z]+)[0-9]*([a-z]*)', name, re.IGNORECASE)
     if match:
@@ -3445,7 +3486,7 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
     capabilities = {cap['name']: cap['value'] for cap in sku.get('capabilities', [])}
     
     return {
-        'vCPUs': int(capabilities.get('vCPUs', 0)),
+        'vCPUs': _effective_vcpus(capabilities),
         'memoryGB': float(capabilities.get('MemoryGB', 0)),
         'maxDataDisks': int(capabilities.get('MaxDataDiskCount', 0)),
         'maxNics': int(capabilities.get('MaxNetworkInterfaces', 0)),

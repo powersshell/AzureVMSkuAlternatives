@@ -1,0 +1,47 @@
+name: Check vCPU Consistency
+
+# Guards the vCPU count published for constrained-vCPU sizes
+# (Standard_E16-4s_v5 and friends). Azure publishes both 'vCPUs' (the parent
+# size's physical cores) and 'vCPUsAvailable' (what the guest actually gets);
+# reading the wrong one silently reports the parent's core count, which corrupts
+# the displayed spec, the cost-per-vCPU metric and the similarity ranking.
+#
+# The check validates the LIVE API, so it also catches the case where the fix
+# has been deployed but the region caches have not been refreshed (vCPU counts
+# are computed at cache-write time, not per request).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'scripts/check_vcpu_consistency.py'
+      - '.github/workflows/check-vcpu-consistency.yml'
+  pull_request:
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'scripts/check_vcpu_consistency.py'
+      - '.github/workflows/check-vcpu-consistency.yml'
+  schedule:
+    # Daily, after the pricing/vendor checks.
+    - cron: '45 15 * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two regions with different catalogs, so a region-specific cache that
+        # was missed during a refresh still gets caught.
+        location: [eastus, westeurope]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check vCPU invariants (${{ matrix.location }})
+        run: python scripts/check_vcpu_consistency.py --location ${{ matrix.location }}

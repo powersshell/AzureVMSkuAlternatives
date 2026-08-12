@@ -171,6 +171,9 @@ $script:CpuPerformanceTable = @{
     '7V73X' = @{ Score = 141; Generation = 'Milan-X (Zen 3)'; Year = 2022 }
     '9004' = @{ Score = 122; Generation = 'Genoa (Zen 4)'; Year = 2023 }
     '9V004' = @{ Score = 122; Generation = 'Genoa (Zen 4)'; Year = 2023 }
+    # Custom Azure-exclusive EPYC 9004-series part with HBM3, used by HBv5.
+    # https://learn.microsoft.com/azure/virtual-machines/hbv5-series-overview
+    '9V64H' = @{ Score = 122; Generation = 'Genoa (Zen 4)'; Year = 2024 }
     '9005' = @{ Score = 135; Generation = 'Turin (Zen 5)'; Year = 2024 }
     '9754' = @{ Score = 95; Generation = 'Bergamo (Zen 4c)'; Year = 2023 }
     'Cobalt 100' = @{ Score = 120; Generation = 'Cobalt 100 (Neoverse N2)'; Year = 2023 }
@@ -298,9 +301,11 @@ $script:SeriesCpuMap = @{
     'Bptsv2' = @('Ampere Altra')
     'HBv3' = @('7V13')
     'HBv4' = @('9V004')
+    'HBv5' = @('9V64H')
     'HBv2' = @('7V12')
     'HBrsv3' = @('7V13')
     'HBrsv4' = @('9V004')
+    'HBrsv5' = @('9V64H')
     'HBrsv2' = @('7V12')
     'HC' = @('8168')
     'HX' = @('7V13')
@@ -441,7 +446,21 @@ function Get-SeriesPrefix {
     $ic = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
     $m = [regex]::Match($name, '^([A-Za-z]+)[0-9]*([a-z]*)_v(\d+)', $ic)
     if ($m.Success) {
-        return ('{0}{1}v{2}' -f $m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value)
+        $family = $m.Groups[1].Value
+        $modifiers = $m.Groups[2].Value
+        $version = $m.Groups[3].Value
+        $prefix = '{0}{1}v{2}' -f $family, $modifiers, $version
+        if ($script:SeriesCpuMap.ContainsKey($prefix)) { return $prefix }
+        # The 'i' additive feature means "isolated" -- a dedicated-host variant of
+        # the same silicon (Eisv5 is an isolated Esv5), so it is never mapped
+        # separately. Drop it and reuse the base series' CPU.
+        if ($modifiers.Contains('i')) {
+            $idx = $modifiers.IndexOf('i')
+            $baseModifiers = $modifiers.Remove($idx, 1)
+            $isolatedBase = '{0}{1}v{2}' -f $family, $baseModifiers, $version
+            if ($script:SeriesCpuMap.ContainsKey($isolatedBase)) { return $isolatedBase }
+        }
+        return $prefix
     }
     # Handle non-versioned series (HC, HB, M, etc.)
     $m2 = [regex]::Match($name, '^([A-Za-z]+)[0-9]*([a-z]*)', $ic)
@@ -527,6 +546,31 @@ function Get-CpuVendor {
     if ($features -clike '*p*') { return 'ARM' }
 
     return 'Intel'
+}
+
+function Set-EffectiveVCpus {
+    <#
+    .SYNOPSIS
+        Normalize a capability hashtable so 'vCPUs' reports usable cores.
+    .DESCRIPTION
+        Azure publishes two capabilities: 'vCPUs' is the physical core count of the
+        underlying parent size, while 'vCPUsAvailable' is the number actually usable.
+        For constrained-vCPU sizes (Standard_E16-4s_v5, Standard_HB368-48rs_v5) these
+        differ -- the point of a constrained size is fewer usable cores with the parent's
+        memory and I/O, so per-core software licensing costs less. Reading 'vCPUs' reports
+        the parent's count and makes a constrained size look identical to its parent.
+
+        'vCPUsAvailable' is published for every size and equals 'vCPUs' for
+        non-constrained sizes, so it is correct to use unconditionally.
+        Ported from _effective_vcpus in function_app.py.
+    #>
+    param([Parameter(Mandatory = $true)][hashtable]$Capabilities)
+
+    if (-not $Capabilities.ContainsKey('vCPUsAvailable')) { return }
+    $available = 0
+    if ([int]::TryParse([string]$Capabilities['vCPUsAvailable'], [ref]$available) -and $available -gt 0) {
+        $Capabilities['vCPUs'] = $available
+    }
 }
 
 function Get-RetirementInfo {
@@ -842,6 +886,7 @@ $targetCapabilities = @{}
 foreach ($capability in $targetSku.Capabilities) {
     $targetCapabilities[$capability.Name] = $capability.Value
 }
+Set-EffectiveVCpus -Capabilities $targetCapabilities
 
 # Get availability zones for target SKU
 $targetZones = @()
@@ -1201,6 +1246,7 @@ $similarSkus = $allSkus | Where-Object {
     foreach ($capability in $sku.Capabilities) {
         $skuCapabilities[$capability.Name] = $capability.Value
     }
+    Set-EffectiveVCpus -Capabilities $skuCapabilities
 
     # Get availability zones for this SKU
     $skuZones = @()
