@@ -442,6 +442,12 @@ function Get-SeriesPrefix {
     $name = $SkuName -replace '^Standard_', '' -replace '^Basic_', ''
     # Remove constrained vCPU prefix (e.g., E96-24ads_v6 -> Eads_v6)
     $name = [regex]::Replace($name, '^([A-Za-z]+)\d+-\d+', '$1')
+    # Drop qualifier segments that sit between the size and its version, e.g. the
+    # accelerator in NC4as_T4_v3 / ND96isr_H100_v5 or the confidential-compute
+    # marker in DC32as_cc_v5. They describe the attached device or feature, not
+    # the host CPU, and would otherwise stop the version pattern from matching --
+    # sending the size to the family-only fallback and the wrong CPU entirely.
+    $name = [regex]::Replace($name, '(?:_(?![Vv]\d+$)[A-Za-z0-9]+)+(?=_[Vv]\d+$)', '')
 
     $ic = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
     $m = [regex]::Match($name, '^([A-Za-z]+)[0-9]*([a-z]*)_v(\d+)', $ic)

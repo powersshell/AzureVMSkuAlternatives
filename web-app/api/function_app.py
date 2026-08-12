@@ -2654,6 +2654,12 @@ def _get_series_prefix(sku_name: str) -> Optional[str]:
     name = sku_name.replace('Standard_', '').replace('Basic_', '')
     # Remove constrained vCPU prefix (e.g., E96-24ads_v6 -> Eads_v6, HB120-16rs_v3 -> HBrs_v3)
     name = re.sub(r'^([A-Z]+)\d+-\d+', lambda m: m.group(1), name)
+    # Drop qualifier segments that sit between the size and its version, e.g. the
+    # accelerator in NC4as_T4_v3 / ND96isr_H100_v5 or the confidential-compute
+    # marker in DC32as_cc_v5. They describe the attached device or feature, not
+    # the host CPU, and would otherwise stop the version pattern from matching --
+    # sending the size to the family-only fallback and the wrong CPU entirely.
+    name = re.sub(r'(?:_(?![Vv]\d+$)[A-Za-z0-9]+)+(?=_[Vv]\d+$)', '', name)
     # Match pattern: letter(s) + optional digits + letter modifiers + _v + version
     match = re.match(r'^([A-Z]+)[0-9]*([a-z]*)_v(\d+)', name, re.IGNORECASE)
     if match:
