@@ -1,0 +1,63 @@
+name: Check Vendor Consistency
+
+# Guards against silent CPU-vendor misclassification.
+#
+# Vendor is derived, not reported by Azure, so a wrong verdict produces a
+# plausible-looking label rather than an error. Vendor is also a user-facing
+# filter on the site, in the MCP server and in the PowerShell script, so a
+# mislabelled size is both shown incorrectly and silently omitted from
+# "show me AMD" results.
+#
+# A name-shape regex mislabelled 107 AMD sizes in eastus as Intel -- including
+# Standard_D2a_v4, Standard_F2ams_v6, Standard_NC4as_T4_v3 and the AMD EPYC
+# HB/HX HPC families -- and went unnoticed until 2026-08-12.
+#
+# scripts/check_vendor_consistency.py validates the LIVE API output against the
+# published CPU generation (Zen is AMD-only, Neoverse is Arm-only) and Azure's
+# documented VM name grammar, so it detects the misclassification no matter
+# which code path introduced it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'scripts/check_vendor_consistency.py'
+      - '.github/workflows/check-vendor-consistency.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'scripts/check_vendor_consistency.py'
+      - '.github/workflows/check-vendor-consistency.yml'
+  # Daily sweep. Vendor is computed when a region's cache is refreshed on a
+  # timer, so a bad refresh can corrupt it without any code change --
+  # code-triggered runs alone would not catch that.
+  schedule:
+    - cron: '30 15 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Validate published CPU vendors
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two regions with different size catalogues, so a region-specific
+        # regression is caught rather than assumed absent.
+        location: [eastus, westeurope]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Pure stdlib (urllib, json, re) by design -- no lockfile, no install step.
+
+      - name: Check vendor consistency
+        run: python scripts/check_vendor_consistency.py --location "${{ matrix.location }}"

@@ -3471,31 +3471,82 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
     }
 
 
+# Vendor for each CPU generation in CPU_PERFORMANCE_TABLE. This is the authoritative
+# signal: the generation is resolved from a curated series -> CPU model mapping, so it is
+# correct even for series whose names carry no vendor letter (e.g. the HB/HX HPC families,
+# which run AMD EPYC but are named 'Standard_HB120rs_v3').
+_CPU_VENDOR_BY_GENERATION = {
+    # Intel
+    'Haswell': 'Intel', 'Broadwell': 'Intel', 'Skylake': 'Intel', 'Coffee Lake': 'Intel',
+    'Cascade Lake': 'Intel', 'Ice Lake': 'Intel', 'Sapphire Rapids': 'Intel',
+    'Emerald Rapids': 'Intel',
+    # AMD
+    'Naples (Zen 1)': 'AMD', 'Rome (Zen 2)': 'AMD', 'Milan (Zen 3)': 'AMD',
+    'Milan-X (Zen 3)': 'AMD', 'Genoa (Zen 4)': 'AMD', 'Bergamo (Zen 4c)': 'AMD',
+    'Turin (Zen 5)': 'AMD',
+    # ARM
+    'Ampere Altra (Neoverse N1)': 'ARM', 'Cobalt 100 (Neoverse N2)': 'ARM',
+}
+
+# Azure VM name grammar: [Family][#vCPUs][-Constrained][AdditiveFeatures]_[Version]
+# Family letters are uppercase, additive-feature letters are lowercase, so this is
+# deliberately case-sensitive to stop the family group from swallowing feature letters.
+_SKU_NAME_PARTS_RE = re.compile(r'^(?:Standard|Basic)_([A-Z]+)(\d+)(?:-\d+)?([a-z]*)')
+
+
+def _vendor_from_generation(generation: Optional[str]) -> Optional[str]:
+    """Map a CPU generation name to its vendor, or None when unrecognised."""
+    if not generation:
+        return None
+    vendor = _CPU_VENDOR_BY_GENERATION.get(generation)
+    if vendor:
+        return vendor
+    # Fall back to the naming conventions AMD/ARM generations follow, so a newly added
+    # generation is classified correctly even before it is listed above.
+    lowered = generation.lower()
+    if 'zen' in lowered or 'epyc' in lowered:
+        return 'AMD'
+    if 'neoverse' in lowered or 'ampere' in lowered or 'cobalt' in lowered:
+        return 'ARM'
+    return None
+
+
+def _additive_feature_letters(sku_name: str) -> str:
+    """Return the lowercase additive-feature segment of a VM size name ('' if unparsable)."""
+    match = _SKU_NAME_PARTS_RE.match(sku_name)
+    return match.group(3) if match else ''
+
+
 def detect_cpu_vendor(sku_name: str, architecture: str) -> str:
     """
-    Detect CPU vendor from SKU name and architecture
+    Detect CPU vendor from SKU name and architecture.
     Returns: 'Intel', 'AMD', or 'ARM'
     """
-    
-    sku_lower = sku_name.lower()
-    
-    # ARM - Architecture is Arm64
+    # 1. Architecture reported by the Compute API is definitive for ARM.
     if architecture and architecture.lower() in ['arm64', 'arm']:
         return 'ARM'
-    
-    # AMD - Contains 'a' before 's' in suffix
-    # Patterns: 
-    #   - Standard_D2as_v5 (AMD standard storage)
-    #   - Standard_D2ads_v5 (AMD with disk storage)
-    #   - Standard_D2als_v6 (AMD with local storage)
-    #   - Standard_D2alds_v6 (AMD with local + disk storage)
-    #   - Standard_D2adls_v6 (AMD with disk + local storage)
-    #   - Standard_D2a_v4 (AMD without storage suffix)
-    # Match: 'a' + zero or more ('d' or 'l') + 's' + '_v' + version number
-    if re.search(r'a[dl]*s_v\d', sku_lower) or re.search(r'_a_v\d', sku_lower):
+
+    # 2. The curated CPU generation mapping is the most reliable signal, because it is
+    #    keyed off the actual CPU model Azure documents for the series.
+    cpu_perf = get_cpu_performance(sku_name)
+    if cpu_perf:
+        vendor = _vendor_from_generation(cpu_perf.get('generation'))
+        # Ignore an ARM verdict here: architecture above already settled that, and an
+        # ARM generation paired with an x64 architecture would be a data conflict.
+        if vendor in ('Intel', 'AMD'):
+            return vendor
+
+    # 3. Fall back to the documented additive-feature letters: 'a' = AMD, 'p' = ARM.
+    #    Matching the whole feature segment (rather than a fixed suffix shape) also covers
+    #    names such as Standard_D2a_v4, Standard_F2ams_v6, Standard_B2ats_v2,
+    #    Standard_L2aos_v4 and accelerator-suffixed sizes like Standard_NC4as_T4_v3.
+    features = _additive_feature_letters(sku_name)
+    if 'a' in features:
         return 'AMD'
-    
-    # Intel - Default for x64 that don't match AMD pattern
+    if 'p' in features:
+        return 'ARM'
+
+    # 4. Default for x64 sizes with no vendor marker.
     return 'Intel'
 
 

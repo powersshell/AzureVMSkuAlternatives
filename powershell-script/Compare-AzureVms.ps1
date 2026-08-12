@@ -501,11 +501,30 @@ function Get-CpuVendor {
         [Parameter(Mandatory = $false)][string]$Architecture = ''
     )
 
+    # 1. Architecture reported by the Compute API is definitive for ARM.
     if ($Architecture -and $Architecture.ToLower() -in @('arm64', 'arm')) { return 'ARM' }
 
-    $skuLower = $SkuName.ToLower()
-    # AMD: 'a' + zero or more ('d'/'l') + 's' + '_v' + version, or '_a_v' + version
-    if ($skuLower -match 'a[dl]*s_v\d' -or $skuLower -match '_a_v\d') { return 'AMD' }
+    # 2. The curated CPU generation mapping is the most reliable signal, because it is
+    #    keyed off the actual CPU model Azure documents for the series. It is correct even
+    #    for series whose names carry no vendor letter (e.g. HB/HX run AMD EPYC).
+    $cpuPerf = Get-CpuPerformance -SkuName $SkuName
+    if ($cpuPerf -and $cpuPerf.Generation) {
+        $gen = $cpuPerf.Generation.ToLower()
+        if ($gen -match 'zen|epyc') { return 'AMD' }
+        # An ARM generation with an x64 architecture would be a data conflict; architecture
+        # above already settled ARM, so only Intel/AMD verdicts are trusted here.
+        if ($gen -notmatch 'neoverse|ampere|cobalt') { return 'Intel' }
+    }
+
+    # 3. Fall back to the documented additive-feature letters: 'a' = AMD, 'p' = ARM.
+    #    Azure VM names are [Family][#vCPUs][-Constrained][AdditiveFeatures]_[Version];
+    #    family letters are uppercase and feature letters lowercase, so match case-sensitively.
+    $features = ''
+    if ($SkuName -cmatch '^(?:Standard|Basic)_[A-Z]+\d+(?:-\d+)?([a-z]*)') {
+        $features = $Matches[1]
+    }
+    if ($features -clike '*a*') { return 'AMD' }
+    if ($features -clike '*p*') { return 'ARM' }
 
     return 'Intel'
 }
