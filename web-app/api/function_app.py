@@ -2927,8 +2927,8 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'memoryGB': capabilities['memoryGB'],
                 'maxDataDisks': capabilities['maxDataDisks'],
                 'maxNics': capabilities['maxNics'],
-                'uncachedDiskIOPS': _table_int(capabilities['uncachedDiskIOPS']),
-                'uncachedDiskBytesPerSecond': _table_int(capabilities['uncachedDiskBytesPerSecond']),
+                'uncachedDiskIOPS': capabilities['uncachedDiskIOPS'],
+                'uncachedDiskBytesPerSecond': capabilities['uncachedDiskBytesPerSecond'],
                 'gpuCount': capabilities['gpuCount'],
                 'gpuType': capabilities['gpuType'] or '',
                 'premiumIO': capabilities['premiumIO'],
@@ -2938,7 +2938,7 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'nvme': capabilities['nvme'],
                 'architecture': capabilities['architecture'],
                 'cpuVendor': cpu_vendor,
-                'osVhdSizeMB': _table_int(capabilities['osVhdSizeMB']),
+                'osVhdSizeMB': capabilities['osVhdSizeMB'],
                 'hyperVGenerations': capabilities['hyperVGenerations'],
                 'acu': capabilities['acu'],
                 'vCPUsPerCore': capabilities['vCPUsPerCore'],
@@ -3009,13 +3009,13 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
     for i in range(0, len(entities), BATCH_SIZE):
         batch = entities[i:i + BATCH_SIZE]
         try:
-            table_client.submit_transaction([("upsert", e) for e in batch])
+            table_client.submit_transaction([("upsert", _table_safe(e)) for e in batch])
             count += len(batch)
         except Exception as e:
             logging.warning(f"Batch upsert failed for {region} batch {i // BATCH_SIZE}, falling back to individual upserts: {e}")
             for entity in batch:
                 try:
-                    table_client.upsert_entity(entity)
+                    table_client.upsert_entity(_table_safe(entity))
                     count += 1
                 except Exception as e2:
                     logging.warning(f"Failed to upsert {entity.get('RowKey')}: {e2}")
@@ -3067,16 +3067,23 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
 INT32_MAX = 2147483647
 
 
-def _table_int(value):
+def _table_safe(entity: dict) -> dict:
     """
-    Azure Table Storage defaults Python ints to Edm.Int32. Values above the Int32
-    ceiling are rejected, which previously caused the whole entity upsert to fail --
-    silently dropping every high-throughput VM size (D128/D160/D192 v6/v7 and other
-    large sizes) from the catalog. Tag oversized values as Edm.Int64 so they persist.
+    Azure Table Storage defaults Python ints to Edm.Int32 and rejects anything
+    larger, which previously failed the whole entity upsert -- silently dropping
+    every high-throughput VM size (D128/D160/D192 v6/v7 and other large sizes)
+    from the catalog. Tag oversized values as Edm.Int64 so they persist.
+
+    Applied only at write time: EntityProperty does not support comparison with
+    int, so callers that inspect the entity keep working with plain numbers.
     """
-    if isinstance(value, int) and not isinstance(value, bool) and abs(value) > INT32_MAX:
-        return EntityProperty(value, EdmType.INT64)
-    return value
+    safe = {}
+    for key, value in entity.items():
+        if isinstance(value, int) and not isinstance(value, bool) and abs(value) > INT32_MAX:
+            safe[key] = EntityProperty(value, EdmType.INT64)
+        else:
+            safe[key] = value
+    return safe
 
 
 def _get_constrained_base_sku(name: str) -> Optional[str]:
