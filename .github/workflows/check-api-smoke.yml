@@ -1,0 +1,63 @@
+name: Check API Smoke
+
+# Guards against the primary user flows being broken in production.
+#
+# Every other guard (pricing, vendor, vCPU, catalog coverage) inspects the
+# *contents* of /api/grid. All four can be green while the endpoints a real user
+# actually hits return HTTP 500, because none of them call those endpoints.
+#
+# That is exactly what happened on 2026-08-12: after oversized disk-throughput
+# values began persisting as Edm.Int64, Azure Table Storage round-tripped them
+# back as EntityProperty objects rather than plain ints. /api/grid still
+# rendered, so all four data guards passed -- but int()/str() conversions inside
+# compare_vms raised ValueError and the site's core "find alternatives" flow
+# returned 500 for every single search.
+#
+# scripts/check_api_smoke.py calls each public endpoint the site and MCP server
+# depend on and fails on any non-200, any error payload, or an empty result set.
+# It deliberately includes a large size (Standard_D128s_v6), which only works
+# when Int64 values both persist and round-trip correctly.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'scripts/check_api_smoke.py'
+      - '.github/workflows/check-api-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'scripts/check_api_smoke.py'
+      - '.github/workflows/check-api-smoke.yml'
+  # Frequent sweep. Endpoint health depends on cached data that is rewritten on a
+  # timer, so a bad refresh can break a live endpoint with no code change at all.
+  schedule:
+    - cron: '10 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Validate live API endpoints
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two regions with different size catalogues, so a region-specific
+        # regression is caught rather than assumed absent.
+        location: [eastus, westeurope]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Pure stdlib (urllib, json) by design -- no lockfile, no install step.
+
+      - name: Check API endpoints
+        run: python scripts/check_api_smoke.py --location "${{ matrix.location }}"

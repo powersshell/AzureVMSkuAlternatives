@@ -844,7 +844,7 @@ def get_sku_from_cache(sku_name: str, location: str) -> dict:
         table_client = table_service_client.get_table_client(table_name="vmskus")
         
         # Query for specific SKU
-        entity = table_client.get_entity(partition_key=location, row_key=sku_name)
+        entity = _unwrap_entity(table_client.get_entity(partition_key=location, row_key=sku_name))
         
         # Parse capabilities JSON if present
         if 'capabilities' in entity and entity['capabilities']:
@@ -930,7 +930,7 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
         
         # Query all SKUs for the location
         query_filter = f"PartitionKey eq '{location}'"
-        entities = table_client.query_entities(query_filter=query_filter)
+        entities = (_unwrap_entity(e) for e in table_client.query_entities(query_filter=query_filter))
         
         # Format for frontend dropdown - minimal payload for performance
         skus = []
@@ -1110,7 +1110,7 @@ def grid(req: func.HttpRequest) -> func.HttpResponse:
 
         table_client = table_service.get_table_client("vmskus")
         query_filter = f"PartitionKey eq '{location}'"
-        entities = table_client.query_entities(query_filter=query_filter)
+        entities = (_unwrap_entity(e) for e in table_client.query_entities(query_filter=query_filter))
 
         pricing_by_sku = {}
         if currency != 'USD':
@@ -1256,7 +1256,7 @@ def history(req: func.HttpRequest) -> func.HttpResponse:
         entity_by_sku: Dict[str, Dict] = {}
         for name in sku_names:
             try:
-                entity_by_sku[name] = vmskus_client.get_entity(partition_key=location, row_key=name)
+                entity_by_sku[name] = _unwrap_entity(vmskus_client.get_entity(partition_key=location, row_key=name))
             except Exception:
                 entity_by_sku[name] = None
 
@@ -1964,7 +1964,7 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
             
             table_client = table_service.get_table_client("vmskus")
             query_filter = f"PartitionKey eq '{location}'"
-            entities = table_client.query_entities(query_filter=query_filter)
+            entities = (_unwrap_entity(e) for e in table_client.query_entities(query_filter=query_filter))
             
             skus = []
             for entity in entities:
@@ -3065,6 +3065,22 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
 
 
 INT32_MAX = 2147483647
+
+
+def _plain_value(value):
+    """Unwrap an Edm.Int64 EntityProperty back to a plain Python int."""
+    return value.value if isinstance(value, EntityProperty) else value
+
+
+def _unwrap_entity(entity):
+    """
+    Azure Table Storage round-trips Edm.Int64 columns back as EntityProperty
+    objects rather than plain ints. Downstream code does arithmetic, comparison
+    and str() on these values, so normalise every entity as it leaves storage.
+    """
+    if entity is None:
+        return None
+    return {key: _plain_value(value) for key, value in entity.items()}
 
 
 def _table_safe(entity: dict) -> dict:
