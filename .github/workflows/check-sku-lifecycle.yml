@@ -1,0 +1,68 @@
+name: Check SKU Lifecycle Data
+
+# Guards the two hand-maintained VM lifecycle tables:
+#   web-app/api/function_app.py       -> VM_RETIREMENT_INFO / VM_GROWTH_RESTRICTION_INFO
+#   powershell-script/Compare-AzureVms.ps1 -> $VmRetirementInfo / $VmGrowthRestrictionInfo
+#
+# These are edited by hand whenever Microsoft announces a retirement or a
+# capacity limitation, and the two copies must stay byte-identical. This
+# workflow catches the two failure modes that have actually bitten us:
+#   1. a regex that misses constrained-vCPU '-N' variants (Dsv2 gap)
+#   2. a pattern permanently shadowed by an earlier, broader one (Bls gap)
+#
+# See docs/sku-lifecycle-runbook.md for the maintenance procedure.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'powershell-script/Compare-AzureVms.ps1'
+      - 'scripts/check_sku_lifecycle.py'
+      - '.github/workflows/check-sku-lifecycle.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'powershell-script/Compare-AzureVms.ps1'
+      - 'scripts/check_sku_lifecycle.py'
+      - '.github/workflows/check-sku-lifecycle.yml'
+  # Weekly link-rot sweep. Microsoft has moved these doc paths before, and a
+  # dead migration link is user-visible on every retirement badge.
+  schedule:
+    - cron: '0 14 * * 1'
+  workflow_dispatch:
+    inputs:
+      check_urls:
+        description: 'Also verify documentation URLs resolve'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Reconcile lifecycle tables
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # No dependencies to install -- the script is pure stdlib (ast, re,
+      # urllib) by design, so it runs anywhere without a lockfile.
+
+      # On PRs and pushes this stays offline-tolerant: the script skips the
+      # live-catalogue checks if the API is unreachable rather than failing,
+      # so a Functions cold start can't produce a flaky red build. The parity
+      # and shadowing checks always run and are fully deterministic.
+      - name: Reconcile SKU lifecycle data
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        run: python scripts/check_sku_lifecycle.py
+
+      - name: Reconcile SKU lifecycle data (with URL check)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: python scripts/check_sku_lifecycle.py --check-urls
