@@ -35,6 +35,12 @@
     If the target SKU has GPU support, only show alternatives that also have GPU support
 .PARAMETER CpuVendor
     Filter alternatives by CPU vendor. One or more of: Intel, AMD, ARM. Default: all vendors.
+.PARAMETER PriorityMode
+    How results are ranked. 'balanced' (default) blends technical similarity with generation
+    currency and workload-family continuity. 'cost' shifts weight toward cheaper alternatives.
+.PARAMETER ArchitectureFilter
+    Restrict alternatives by CPU architecture: 'any' (default), 'x64', or 'arm64'.
+    Use 'x64' when application binaries cannot be rebuilt for Arm64.
 .PARAMETER HideRetiring
     Exclude SKUs announced for retirement or already retired (default: $true, matching the website).
     Use -HideRetiring:$false to include retiring SKUs (a similarity-score penalty is applied for ranking).
@@ -117,6 +123,14 @@ param(
     [Parameter(Mandatory = $false)]
     [ValidateSet('Intel', 'AMD', 'ARM')]
     [string[]]$CpuVendor,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('balanced', 'cost')]
+    [string]$PriorityMode = 'balanced',
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('any', 'x64', 'arm64')]
+    [string]$ArchitectureFilter = 'any',
 
     [Parameter(Mandatory = $false)]
     [bool]$HideRetiring = $true,
@@ -656,6 +670,302 @@ function Get-GrowthRestrictionPenalty {
 
     if (Get-GrowthRestrictionInfo -SkuName $SkuName) { return $script:GrowthRestrictionPenalty }
     return 0.0
+}
+
+# ---------------------------------------------------------------------------
+# Generation-aware recommendation scoring
+#
+# Spec similarity alone cannot answer "what should I move to?" -- when vCPU and
+# memory match exactly, dozens of candidates saturate at 100 and ordering falls
+# back to alphabetical. These functions blend similarity with how modern a size
+# is and how closely it matches the source workload family.
+#
+# Ported from function_app.py. Keep the two in sync.
+# Reference: https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-overview
+# ---------------------------------------------------------------------------
+
+# Absolute floor per generation. A lower bound only -- the family-relative score
+# below is what normally drives the value.
+$script:GenerationTier = @{ 7 = 100; 6 = 92; 5 = 78; 4 = 55; 3 = 35; 2 = 20; 1 = 10 }
+
+# Points deducted per generation behind the newest generation the family actually
+# ships in the requested region.
+$script:GenerationDecayPerStep = 22
+
+# CPU performance bands used when a size carries no version at all and its family
+# has no versioned members to compare against. Ordered high to low.
+$script:CpuPerfModernizationBands = @(
+    @(130, 100), @(118, 92), @(100, 78), @(90, 55)
+)
+
+# Workload class per family letter. Drives family affinity so a storage-optimized
+# source is not handed a memory-optimized replacement.
+$script:FamilyWorkloadClass = @{
+    'A' = 'gp'; 'D' = 'gp'
+    'B' = 'burst'
+    'F' = 'compute'; 'FX' = 'compute'
+    'E' = 'mem'; 'M' = 'mem'; 'G' = 'mem'
+    'L' = 'storage'
+    'DC' = 'conf'; 'EC' = 'conf'
+    'NC' = 'gpu'; 'ND' = 'gpu'; 'NV' = 'gpu'; 'NG' = 'gpu'; 'NP' = 'gpu'
+    'HB' = 'hpc'; 'HC' = 'hpc'; 'HX' = 'hpc'; 'H' = 'hpc'
+}
+
+# Workload classes that are reasonable neighbours when no same-class option exists.
+$script:AdjacentWorkloadClasses = @(
+    'compute|gp', 'gp|mem', 'gp|storage', 'mem|storage'
+)
+
+# Blend weights per priority mode: similarity, modernization, family affinity.
+$script:RecommendationModeWeights = @{
+    'balanced' = @{ Similarity = 0.60; Modernization = 0.25; FamilyAffinity = 0.15 }
+    'cost'     = @{ Similarity = 0.55; Modernization = 0.20; FamilyAffinity = 0.15 }
+}
+
+# Maximum bonus (points) awarded in cost mode for the cheapest candidate.
+$script:CostModeSavingBonus = 10.0
+
+# Deduction applied when a candidate is an older generation than the source.
+$script:OlderGenerationPenalty = 8.0
+
+function Get-SkuIdentity {
+    <#
+    .SYNOPSIS
+        Break a SKU name into the family, modifiers and generation used for ranking.
+        Uses the same normalization as Get-SeriesPrefix so both agree on the family.
+        Sizes with no explicit _v<n> are treated as generation 1, which is what they
+        are: Standard_M32ls is the original M-series.
+        Ported from _parse_sku_identity in function_app.py.
+    #>
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$SkuName)
+
+    $empty = [PSCustomObject]@{
+        Family = $null; Modifiers = ''; Version = 1; Versioned = $false; Class = 'gp'
+    }
+    if ([string]::IsNullOrWhiteSpace($SkuName)) { return $empty }
+
+    $name = $SkuName -replace '^Standard_', '' -replace '^Basic_', ''
+    $name = [regex]::Replace($name, '^([A-Z]+)\d+-\d+', '$1')
+    $name = [regex]::Replace($name, '(?:_(?![Vv]\d+$)[A-Za-z0-9]+)+(?=_[Vv]\d+$)', '')
+
+    $m = [regex]::Match($name, '^([A-Z]+)[0-9]*([a-z]*)(?:_[Vv](\d+))?')
+    if (-not $m.Success) { return $empty }
+
+    $family = $m.Groups[1].Value.ToUpper()
+    $modifiers = $m.Groups[2].Value
+    $versioned = $m.Groups[3].Success
+
+    $class = $script:FamilyWorkloadClass[$family]
+    if (-not $class) {
+        # Two-letter families (DC, EC, NC...) are matched above; fall back to the
+        # leading letter so unrecognized families still rank sensibly.
+        $class = $script:FamilyWorkloadClass[$family.Substring(0, 1)]
+        if (-not $class) { $class = 'gp' }
+    }
+
+    return [PSCustomObject]@{
+        Family    = $family
+        Modifiers = $modifiers
+        Version   = if ($versioned) { [int]$m.Groups[3].Value } else { 1 }
+        Versioned = $versioned
+        Class     = $class
+    }
+}
+
+function Build-FamilyGenerationMap {
+    <#
+    .SYNOPSIS
+        Map each VM family to the newest generation available in this region.
+        Computed from the region's own catalog, so a family whose v4 has not landed
+        in the region correctly tops out at v3 there.
+        Ported from build_family_generation_map in function_app.py.
+    #>
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$SkuNames)
+
+    $newest = @{}
+    foreach ($skuName in $SkuNames) {
+        $identity = Get-SkuIdentity -SkuName $skuName
+        if (-not $identity.Family) { continue }
+        $current = $newest[$identity.Family]
+        if (-not $current -or $identity.Version -gt $current) {
+            $newest[$identity.Family] = $identity.Version
+        }
+    }
+    return $newest
+}
+
+function Get-ModernizationScore {
+    <#
+    .SYNOPSIS
+        Score how modern a size is, relative to the newest generation of its own family.
+
+        An absolute "v7 is best" scale permanently punishes families that never shipped
+        a v7 -- L-series tops out at v4 and B-series at v2 -- which pushes unrelated
+        cross-family sizes to the top. Scoring relative to the family's own newest
+        generation keeps a family-current size competitive.
+        Ported from _modernization_score in function_app.py.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][PSCustomObject]$Identity,
+        [Parameter(Mandatory = $true)][hashtable]$FamilyGenerations,
+        [double]$CpuPerfScore = 0
+    )
+
+    $version = $Identity.Version
+    $newest = if ($Identity.Family -and $FamilyGenerations.ContainsKey($Identity.Family)) {
+        $FamilyGenerations[$Identity.Family]
+    } else { $version }
+
+    $behind = [Math]::Max(0, $newest - $version)
+    $relative = 100.0 - ($behind * $script:GenerationDecayPerStep)
+    $absolute = if ($script:GenerationTier.ContainsKey($version)) { [double]$script:GenerationTier[$version] } else { 10.0 }
+    $score = [Math]::Max($absolute, $relative)
+
+    # Unversioned size in a family with no versioned members at all: nothing to
+    # compare against, so fall back to measured CPU performance.
+    if (-not $Identity.Versioned -and $newest -le 1 -and $CpuPerfScore -gt 0) {
+        foreach ($band in $script:CpuPerfModernizationBands) {
+            if ($CpuPerfScore -ge $band[0]) { return [double]$band[1] }
+        }
+        return 35.0
+    }
+
+    return [Math]::Max(0.0, [Math]::Min(100.0, $score))
+}
+
+function Get-FamilyAffinity {
+    <#
+    .SYNOPSIS
+        Score how well a candidate matches the source's workload family.
+        Ported from _family_affinity in function_app.py.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][PSCustomObject]$TargetIdentity,
+        [Parameter(Mandatory = $true)][PSCustomObject]$CandidateIdentity
+    )
+
+    if ($TargetIdentity.Family -and $TargetIdentity.Family -eq $CandidateIdentity.Family) { return 100.0 }
+
+    $targetClass = $TargetIdentity.Class
+    $candidateClass = $CandidateIdentity.Class
+
+    if ($targetClass -eq $candidateClass) { return 75.0 }
+
+    # A GPU size is never a drop-in for a non-GPU workload, and vice versa.
+    if ($targetClass -eq 'gpu' -or $candidateClass -eq 'gpu') { return 0.0 }
+
+    # Specialized classes carry real constraints (interconnect, attestation,
+    # credit-based CPU), so they rank low unless the source is the same class.
+    if ($candidateClass -eq 'hpc') { return 15.0 }
+    if ($candidateClass -eq 'conf') { return 20.0 }
+    if ($candidateClass -eq 'burst') { return 25.0 }
+
+    $pair = (@($targetClass, $candidateClass) | Sort-Object) -join '|'
+    if ($script:AdjacentWorkloadClasses -contains $pair) { return 55.0 }
+
+    return 40.0
+}
+
+function Get-MigrationReadiness {
+    <#
+    .SYNOPSIS
+        Platform-change flags a user must plan for when moving to this size.
+        Mirrors the platform changes called out in the v6/v7 migration guidance.
+        Ported from _migration_readiness in function_app.py.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][PSCustomObject]$Identity,
+        [Parameter(Mandatory = $true)][PSCustomObject]$TargetIdentity,
+        [string]$Architecture = '',
+        [string]$TargetArchitecture = '',
+        [bool]$HasLocalNvmeTempDisk = $false,
+        [string]$HyperVGenerations = ''
+    )
+
+    $supportsGen2 = $HyperVGenerations -match 'V2'
+    $flags = @()
+
+    if ($Identity.Version -gt $TargetIdentity.Version) {
+        $ahead = $Identity.Version - $TargetIdentity.Version
+        $flags += if ($ahead -eq 1) { '1 gen newer' } else { "$ahead gens newer" }
+    }
+    if ($supportsGen2 -and $HyperVGenerations -notmatch 'V1') { $flags += 'Gen 2 only' }
+    # v6 and newer use the Microsoft Azure Network Adapter (MANA); older images
+    # may need updated network drivers.
+    if ($Identity.Version -ge 6) { $flags += 'MANA NIC' }
+    if ($Architecture -and $TargetArchitecture -and $Architecture -ne $TargetArchitecture) {
+        $flags += 'Rebuild required (arch change)'
+    }
+    # Our NVMe flag is NvmeDiskSizeInMiB > 0 -- that is the *local temp* NVMe disk
+    # (the 'd' suffix), not the remote-disk NVMe interface.
+    if ($HasLocalNvmeTempDisk) { $flags += 'Local NVMe temp disk' }
+
+    return ($flags -join '; ')
+}
+
+function Get-MigrationEffort {
+    <#
+    .SYNOPSIS
+        Microsoft's published migration effort rating, keyed on the source generation.
+        Ported from _migration_effort in function_app.py.
+    #>
+    param([Parameter(Mandatory = $true)][PSCustomObject]$TargetIdentity)
+
+    if ($TargetIdentity.Version -ge 5) {
+        return [PSCustomObject]@{ Level = 'Very low'; Detail = 'Already Gen 2 / NVMe-ready; most moves are a resize.' }
+    }
+    if ($TargetIdentity.Version -eq 4) {
+        return [PSCustomObject]@{ Level = 'Low'; Detail = 'Largely current-platform; verify NVMe and network drivers.' }
+    }
+    return [PSCustomObject]@{ Level = 'Moderate'; Detail = 'Expect Gen 2 (UEFI), NVMe disk and MANA network changes.' }
+}
+
+function Get-RecommendationScore {
+    <#
+    .SYNOPSIS
+        Blend spec similarity with modernization and family affinity into a ranking score.
+        Returns the score plus its components so the ranking stays explainable.
+        Ported from calculate_recommendation_score in function_app.py.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][double]$SimilarityScore,
+        [Parameter(Mandatory = $true)][PSCustomObject]$TargetIdentity,
+        [Parameter(Mandatory = $true)][PSCustomObject]$CandidateIdentity,
+        [Parameter(Mandatory = $true)][hashtable]$FamilyGenerations,
+        [string]$Mode = 'balanced',
+        [double]$CpuPerfScore = 0,
+        [double]$SavingPercent = 0
+    )
+
+    $weights = $script:RecommendationModeWeights[$Mode]
+    if (-not $weights) { $weights = $script:RecommendationModeWeights['balanced'] }
+
+    $modernization = Get-ModernizationScore -Identity $CandidateIdentity -FamilyGenerations $FamilyGenerations -CpuPerfScore $CpuPerfScore
+    $affinity = Get-FamilyAffinity -TargetIdentity $TargetIdentity -CandidateIdentity $CandidateIdentity
+
+    $score = ($SimilarityScore * $weights.Similarity) +
+             ($modernization * $weights.Modernization) +
+             ($affinity * $weights.FamilyAffinity)
+
+    $costBonus = 0.0
+    if ($Mode -eq 'cost' -and $SavingPercent -gt 0) {
+        $costBonus = [Math]::Min($SavingPercent, 100.0) / 100.0 * $script:CostModeSavingBonus
+        $score += $costBonus
+    }
+
+    $olderGenerationPenalty = 0.0
+    if ($CandidateIdentity.Version -lt $TargetIdentity.Version) {
+        $olderGenerationPenalty = $script:OlderGenerationPenalty
+        $score -= $olderGenerationPenalty
+    }
+
+    return [PSCustomObject]@{
+        Score                  = [Math]::Round([Math]::Max(0.0, $score), 2)
+        Modernization          = [Math]::Round($modernization, 2)
+        FamilyAffinity         = [Math]::Round($affinity, 2)
+        CostBonus              = [Math]::Round($costBonus, 2)
+        OlderGenerationPenalty = $olderGenerationPenalty
+    }
 }
 
 function Get-SelectedPrice {
@@ -1236,6 +1546,16 @@ Write-Host "`nAnalyzing SKUs..." -ForegroundColor Cyan
 $skuCount = 0
 $totalSkus = ($allSkus | Where-Object { $_.Name -ne $SkuName }).Count
 
+# Generation-aware ranking context. The family map is built from this region's own
+# catalog, so a family whose newest generation has not landed here is correctly
+# treated as topping out at what is actually available.
+$familyGenerations = Build-FamilyGenerationMap -SkuNames @($allSkus | ForEach-Object { $_.Name })
+$targetIdentity = Get-SkuIdentity -SkuName $SkuName
+$targetArchitecture = if ($targetCapabilities.ContainsKey('CpuArchitectureType')) {
+    if ($targetCapabilities['CpuArchitectureType'] -match '(?i)arm') { 'arm64' } else { 'x64' }
+} else { 'x64' }
+$migrationEffort = Get-MigrationEffort -TargetIdentity $targetIdentity
+
 $similarSkus = $allSkus | Where-Object {
     $_.Name -ne $SkuName
 } | ForEach-Object {
@@ -1304,6 +1624,14 @@ $similarSkus = $allSkus | Where-Object {
         $vendorFilterPass = $false
     }
 
+    # CPU architecture filter. Arm64 sizes require application binaries to be
+    # rebuilt, so users who cannot recompile need to exclude them outright.
+    $archFilterPass = $true
+    if ($ArchitectureFilter -ne 'any') {
+        $normalizedArch = if ($skuArch -match '(?i)arm') { 'arm64' } else { 'x64' }
+        if ($normalizedArch -ne $ArchitectureFilter) { $archFilterPass = $false }
+    }
+
     # Retirement filter (hidden by default to match the website)
     $skuRetirement = Get-RetirementInfo -SkuName $sku.Name
     $retirementFilterPass = $true
@@ -1321,7 +1649,7 @@ $similarSkus = $allSkus | Where-Object {
     # Apply basic tolerance filter on CPU, Memory, NVMe, and GPU (if required)
     if ($cores -ge $coreMin -and $cores -le $coreMax -and
         $memoryGB -ge $memoryMin -and $memoryGB -le $memoryMax -and
-        $nvmeFilterPass -and $gpuFilterPass -and $vendorFilterPass -and $retirementFilterPass -and $growthFilterPass) {
+        $nvmeFilterPass -and $gpuFilterPass -and $vendorFilterPass -and $retirementFilterPass -and $growthFilterPass -and $archFilterPass) {
 
         # Calculate weighted similarity score across ALL capabilities
         $weightedScore = 0
@@ -1382,10 +1710,39 @@ $similarSkus = $allSkus | Where-Object {
                 if ($memoryGB -gt 0) { $costPerGB = [Math]::Round($selectedPrice.Hourly / $memoryGB, 4) }
             }
 
+            # Generation-aware ranking. Similarity alone saturates at 100 for dozens
+            # of candidates when vCPU and memory match exactly, so blend in how modern
+            # the size is and how closely it matches the source's workload family.
+            $candidateIdentity = Get-SkuIdentity -SkuName $sku.Name
+            $savingPercent = 0
+            if ($PriorityMode -eq 'cost' -and $targetSelectedPrice -and $selectedPrice -and $targetSelectedPrice.Hourly -gt 0) {
+                $savingPercent = (($targetSelectedPrice.Hourly - $selectedPrice.Hourly) / $targetSelectedPrice.Hourly) * 100
+            }
+            $recommendation = Get-RecommendationScore `
+                -SimilarityScore $similarityScore `
+                -TargetIdentity $targetIdentity `
+                -CandidateIdentity $candidateIdentity `
+                -FamilyGenerations $familyGenerations `
+                -Mode $PriorityMode `
+                -CpuPerfScore $(if ($cpuPerf) { [double]$cpuPerf.Score } else { 0 }) `
+                -SavingPercent $savingPercent
+
+            $migrationReadiness = Get-MigrationReadiness `
+                -Identity $candidateIdentity `
+                -TargetIdentity $targetIdentity `
+                -Architecture $(if ($skuArch -match '(?i)arm') { 'arm64' } else { 'x64' }) `
+                -TargetArchitecture $targetArchitecture `
+                -HasLocalNvmeTempDisk $skuHasNVMe `
+                -HyperVGenerations $(if ($skuCapabilities.ContainsKey('HyperVGenerations')) { $skuCapabilities['HyperVGenerations'] } else { '' })
+
             # Build result object with key capabilities
             $resultObject = [PSCustomObject]@{
                 SkuName                           = $sku.Name
+                RecommendationScore               = $recommendation.Score
                 SimilarityScore                   = $similarityScore
+                ModernizationScore                = $recommendation.Modernization
+                FamilyAffinityScore               = $recommendation.FamilyAffinity
+                MigrationReadiness                = $migrationReadiness
                 CpuVendor                         = $skuVendor
                 CpuGeneration                     = if ($cpuPerf) { $cpuPerf.Generation } else { 'Unknown' }
                 CpuPerfScore                      = if ($cpuPerf) { $cpuPerf.Score } else { 'N/A' }
@@ -1492,7 +1849,11 @@ $similarSkus = $allSkus | Where-Object {
             $resultObject
         }
     }
-} | Sort-Object -Property SimilarityScore -Descending
+} | Sort-Object -Property `
+    @{ Expression = 'RecommendationScore'; Descending = $true }, `
+    @{ Expression = { if ($_.CpuPerfScore -eq 'N/A') { 0 } else { [double]$_.CpuPerfScore } }; Descending = $true }, `
+    @{ Expression = { if ($_."MonthlyPrice($CurrencyCode)" -eq 'N/A') { [double]::MaxValue } else { [double]$_."MonthlyPrice($CurrencyCode)" } }; Descending = $false }, `
+    @{ Expression = 'SkuName'; Descending = $false }
 
 # Remove any SKUs with N/A pricing
 $similarSkus = $similarSkus | Where-Object { $_."MonthlyPrice($($CurrencyCode))" -ne 'N/A' }
@@ -1509,7 +1870,7 @@ if ($similarSkus.Count -gt 0) {
     }
     else {
         # Show condensed view with key metrics - include GPUs if target has them
-        $baseProps = @('SkuName', 'SimilarityScore', 'CpuVendor', 'CpuGeneration', 'vCPUs', 'MemoryGB')
+        $baseProps = @('SkuName', 'RecommendationScore', 'SimilarityScore', 'CpuVendor', 'CpuGeneration', 'vCPUs', 'MemoryGB')
         if ($targetHasGPU) { $baseProps += 'GPUs' }
         $baseProps += @('AvailabilityZones', 'RetirementStatus', @{ Name = 'Limited'; Expression = { $_.GrowthRestricted } }, "MonthlyPrice($CurrencyCode)", "CostPerVCPU($CurrencyCode)")
         if ($CheckRegion) { $baseProps += "AvailableIn_$CheckRegion" }
@@ -1530,8 +1891,15 @@ if ($similarSkus.Count -gt 0) {
 
     # Show summary statistics
     Write-Host "`nSummary Statistics:" -ForegroundColor Cyan
+    Write-Host "  Average Recommendation Score: $([Math]::Round(($similarSkus | Measure-Object -Property RecommendationScore -Average).Average, 2))%"
+    Write-Host "  Highest Recommendation Score: $(($similarSkus | Measure-Object -Property RecommendationScore -Maximum).Maximum)%"
     Write-Host "  Average Similarity Score: $([Math]::Round(($similarSkus | Measure-Object -Property SimilarityScore -Average).Average, 2))%"
     Write-Host "  Highest Similarity Score: $(($similarSkus | Measure-Object -Property SimilarityScore -Maximum).Maximum)%"
+
+    # Migration effort, driven by the source generation (per Microsoft guidance)
+    Write-Host "`nMigration Effort ($SkuName -> current generation): $($migrationEffort.Level)" -ForegroundColor Cyan
+    Write-Host "  $($migrationEffort.Detail)"
+    Write-Host "  Guidance: https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-overview"
 
     # Price comparison if available
     $priceField = "MonthlyPrice($CurrencyCode)"

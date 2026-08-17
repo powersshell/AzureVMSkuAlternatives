@@ -531,7 +531,9 @@ async function handleCompare() {
         weightNetwork: getPriorityWeight('weightNetwork'),
         weightFeatures: getPriorityWeight('weightFeatures'),
         requireNVMeMatch: document.getElementById('requireNVMeMatch').checked,
-        requireGPUMatch: document.getElementById('requireGPUMatch').checked
+        requireGPUMatch: document.getElementById('requireGPUMatch').checked,
+        priorityMode: document.getElementById('priorityMode')?.value || 'balanced',
+        architectureFilter: document.getElementById('architectureFilter')?.value || 'any'
     };
 
     showLoading();
@@ -542,7 +544,9 @@ async function handleCompare() {
     trackEvent('compare_submitted', {
         location,
         currencyCode,
-        targetSku: skuName
+        targetSku: skuName,
+        priorityMode: params.priorityMode,
+        architectureFilter: params.architectureFilter
     }, {
         maxResults: MAX_RESULTS
     });
@@ -807,6 +811,7 @@ function displayResults(data) {
         const filteredAlternatives = filterResults(data.alternatives);
         displayAlternatives(filteredAlternatives);
     }
+    renderMigrationEffortPanel(data);
     // Show cache timestamp if available
     const timestampEl = document.getElementById('cacheTimestamp');
     if (data.dataLastUpdated) {
@@ -1529,6 +1534,107 @@ function renderGrowthRestrictionBadge(alt) {
     return `<span class="growth-badge" title="${escapeHtml(title)}">🔒 Limited growth</span>`;
 }
 
+// Platform-change badges drawn from the v6/v7 migration guidance. These flag the
+// work a move actually requires — they are not quality signals.
+function renderMigrationBadges(alt) {
+    const m = alt.migrationReadiness;
+    if (!m) return '';
+    const badges = [];
+
+    if (m.generationsAhead > 0) {
+        const label = m.generationsAhead === 1 ? '1 gen newer' : `${m.generationsAhead} gens newer`;
+        badges.push(`<span class="migration-badge newer" title="A newer VM generation than your current size.">⬆ ${label}</span>`);
+    }
+    if (m.requiresGen2) {
+        badges.push('<span class="migration-badge gen2" title="Generation 2 only — needs a UEFI-based Gen 2 image. Gen 1 images will not boot.">Gen 2 only</span>');
+    }
+    if (m.usesManaNetworking) {
+        badges.push('<span class="migration-badge mana" title="Uses the Microsoft Azure Network Adapter (MANA). Older images may need updated network drivers.">MANA NIC</span>');
+    }
+    if (m.architectureChange) {
+        badges.push('<span class="migration-badge arch" title="Different CPU architecture from your current size — application binaries must be rebuilt or replaced with an Arm64 build.">Rebuild required</span>');
+    }
+    return badges.join('');
+}
+
+// Explain how a recommendation was ranked, so the ordering is auditable.
+function renderScoreExplanation(alt) {
+    const b = alt.scoreBreakdown;
+    if (!b || !b.weights) return '';
+
+    const rows = [
+        ['Spec similarity', b.similarity, b.weights.similarity],
+        ['Modernization', b.modernization, b.weights.modernization],
+        ['Family affinity', b.familyAffinity, b.weights.familyAffinity]
+    ].map(([label, value, weight]) => `
+        <div class="score-row">
+            <span class="score-row-label">${label}</span>
+            <span class="score-row-bar"><span style="width:${Math.max(0, Math.min(100, value))}%"></span></span>
+            <span class="score-row-val">${value.toFixed(0)} × ${weight}</span>
+        </div>`).join('');
+
+    const adjustments = [];
+    if (b.costBonus > 0) {
+        adjustments.push(`<li>+${b.costBonus.toFixed(1)} cost saving bonus</li>`);
+    }
+    if (b.olderGenerationPenalty > 0) {
+        adjustments.push(`<li>−${b.olderGenerationPenalty.toFixed(0)} older generation than your current size</li>`);
+    }
+    if (alt.originalSimilarityScore != null) {
+        const applied = (alt.originalSimilarityScore - alt.similarityScore).toFixed(1);
+        adjustments.push(`<li>−${applied} retirement / capacity limitation</li>`);
+    }
+
+    return `
+        <div class="score-explain">
+            <div class="score-explain-head">Why this ranking?</div>
+            ${rows}
+            ${adjustments.length ? `<ul class="score-adjustments">${adjustments.join('')}</ul>` : ''}
+            <div class="score-explain-total">Recommendation score <strong>${(alt.recommendationScore ?? 0).toFixed(1)}</strong></div>
+        </div>`;
+}
+
+// Microsoft's migration journey, keyed to the effort rating for the source size.
+const MIGRATION_JOURNEY = [
+    ['Assess', 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-assess'],
+    ['Plan', 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-plan'],
+    ['Migrate', 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-migrate'],
+    ['Validate', 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-validate']
+];
+
+function renderMigrationEffortPanel(data) {
+    const panel = document.getElementById('migrationEffortPanel');
+    if (!panel) return;
+
+    const effort = data?.migrationEffort;
+    if (!effort) {
+        panel.classList.add('hidden');
+        panel.innerHTML = '';
+        return;
+    }
+
+    const level = effort.level.toLowerCase().replace(/\s+/g, '-');
+    const steps = MIGRATION_JOURNEY.map(([label, url]) =>
+        `<a class="journey-step" href="${url}" target="_blank" rel="noopener">${label}</a>`
+    ).join('<span class="journey-sep" aria-hidden="true">→</span>');
+
+    panel.innerHTML = `
+        <div class="migration-effort-head">
+            <span class="migration-effort-title">Before you migrate</span>
+            <span class="effort-chip effort-${level}">${escapeHtml(effort.level)} effort</span>
+        </div>
+        <p class="migration-effort-detail">${escapeHtml(effort.detail)}</p>
+        <ul class="migration-checklist">
+            <li>Use a Generation 2 image — newer sizes are UEFI-based and Trusted Launch capable.</li>
+            <li>Confirm your image includes current NVMe and MANA network drivers.</li>
+            <li>A local temp disk exists only on <code>d</code>-suffixed sizes. Move temp data to a data disk if you drop it.</li>
+            <li>Re-plan any family-scoped reservations or savings plans before you resize.</li>
+        </ul>
+        <div class="migration-journey">${steps}</div>
+        <a class="migration-effort-link" href="${effort.guidanceUrl}" target="_blank" rel="noopener">Read the full migration guidance →</a>`;
+    panel.classList.remove('hidden');
+}
+
 // Get CPU performance direction indicator
 function getCpuPerfIndicator(targetScore, altScore) {
     if (targetScore == null || altScore == null) {
@@ -1648,7 +1754,7 @@ function updateResultsCaption(alternatives) {
     }
 
     if (note) {
-        const topScore = shown > 0 ? alternatives[0].similarityScore : null;
+        const topScore = shown > 0 ? (alternatives[0].recommendationScore ?? alternatives[0].similarityScore) : null;
         if (topScore != null && topScore < STRONG_MATCH) {
             note.textContent = 'No strong matches for this SKU — these are the closest available alternatives. Check the match score on each card.';
             note.classList.remove('hidden');
@@ -1677,9 +1783,13 @@ function displayAlternatives(alternatives) {
     const targetSku = currentResults?.targetSku;
 
     alternatives.forEach((alt, index) => {
-        const scoreClass = alt.similarityScore >= 90 ? 'high' :
-                          alt.similarityScore >= 85 ? 'mid' : 'low';
-        const scorePercent = alt.similarityScore.toFixed(1);
+        // Rank order is driven by recommendationScore, so the headline number must
+        // be the same one — otherwise the cards look mis-sorted. Falls back to
+        // similarityScore if the API has not been updated yet.
+        const headlineScore = alt.recommendationScore ?? alt.similarityScore;
+        const scoreClass = headlineScore >= 90 ? 'high' :
+                          headlineScore >= 85 ? 'mid' : 'low';
+        const scorePercent = headlineScore.toFixed(1);
 
         // Calculate price delta
         let deltaHtml = '';
@@ -1709,7 +1819,7 @@ function displayAlternatives(alternatives) {
             ? `<div class="mini-spec" title="Azure Compute Unit — relative CPU performance"><div class="mini-spec-val">${caps.acu}</div><div class="mini-spec-lbl">ACU</div></div>`
             : '';
         const nvmeBadge = caps.nvme
-            ? `<span class="feature-badge nvme-badge" title="Supports the NVMe disk interface">NVMe</span>`
+            ? `<span class="feature-badge nvme-badge" title="Has a local NVMe temp disk (the 'd' suffix). This is the temporary disk, not the remote-disk interface.">Local NVMe</span>`
             : '';
 
         // Region availability
@@ -1724,7 +1834,7 @@ function displayAlternatives(alternatives) {
 
         card.innerHTML = `
             <div class="card-sku-info">
-                <div class="card-sku-name">${alt.name} ${renderRetirementBadge(alt)}${renderGrowthRestrictionBadge(alt)}${nvmeBadge}</div>
+                <div class="card-sku-name">${alt.name} ${renderRetirementBadge(alt)}${renderGrowthRestrictionBadge(alt)}${renderMigrationBadges(alt)}${nvmeBadge}</div>
                 <div class="card-sku-cpu">${cpuInfo}</div>
                 <div class="card-score-bar">
                     <div class="score-track"><div class="score-fill ${scoreClass}" style="width:${scorePercent}%"></div></div>
@@ -1758,7 +1868,7 @@ function displayAlternatives(alternatives) {
         detailsDiv.classList.add('details-row', 'hidden');
         detailsDiv.dataset.index = index;
         detailsDiv.dataset.skuName = alt.name;
-        detailsDiv.innerHTML = `<div class="details-content"></div>`;
+        detailsDiv.innerHTML = `${renderScoreExplanation(alt)}<div class="details-content"></div>`;
         resultsTableBody.appendChild(detailsDiv);
     });
 
@@ -2362,6 +2472,7 @@ function buildComparisonExportModel() {
         'Target SKU',
         'SKU Name',
         'Similarity Score (%)',
+        'Recommendation Score (%)',
         'CPU Vendor',
         'Architecture',
         'CPU Generation',
@@ -2405,6 +2516,7 @@ function buildComparisonExportModel() {
             targetSku.name || 'N/A',
             alt.name || 'N/A',
             alt.similarityScore != null ? alt.similarityScore.toFixed(1) : 'N/A',
+            alt.recommendationScore != null ? alt.recommendationScore.toFixed(1) : 'N/A',
             alt.cpuVendor || 'N/A',
             alt.architecture || 'N/A',
             alt.cpuGeneration || 'N/A',

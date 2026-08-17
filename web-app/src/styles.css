@@ -935,6 +935,124 @@ body {
     color: #10405f;
     cursor: help;
 }
+/* Migration readiness badges: platform changes a resize implies, not quality signals */
+.migration-badge {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+    margin-left: 4px;
+    cursor: help;
+    white-space: nowrap;
+    border: 1px solid transparent;
+}
+.migration-badge.newer { background: #dff6dd; color: #0b6a0b; }
+.migration-badge.gen2 { background: #fff4ce; color: #8a6100; }
+.migration-badge.mana { background: #eff6fc; color: #10405f; }
+.migration-badge.arch { background: #fde7e9; color: #a4262c; }
+
+/* "Why this ranking?" breakdown inside an expanded result */
+.score-explain {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color, #e1dfdd);
+    background: var(--surface-alt, #faf9f8);
+}
+.score-explain-head {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    margin-bottom: 8px;
+    opacity: .75;
+}
+.score-row {
+    display: grid;
+    grid-template-columns: 130px 1fr 76px;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    margin-bottom: 5px;
+}
+.score-row-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(128, 128, 128, .22);
+    overflow: hidden;
+}
+.score-row-bar > span {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: #0078d4;
+}
+.score-row-val {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    opacity: .75;
+}
+.score-adjustments {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    font-size: 12px;
+    opacity: .8;
+}
+.score-explain-total {
+    margin-top: 8px;
+    font-size: 12px;
+}
+
+/* "Before you migrate" panel */
+.migration-effort-panel {
+    border: 1px solid var(--border-color, #e1dfdd);
+    border-left: 3px solid #0078d4;
+    border-radius: 4px;
+    padding: 14px 16px;
+    margin: 0 0 14px;
+    background: var(--surface-alt, #faf9f8);
+}
+.migration-effort-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.migration-effort-title { font-weight: 600; font-size: 14px; }
+.effort-chip {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+.effort-chip.effort-very-low { background: #dff6dd; color: #0b6a0b; }
+.effort-chip.effort-low { background: #dff6dd; color: #0b6a0b; }
+.effort-chip.effort-moderate { background: #fff4ce; color: #8a6100; }
+.migration-effort-detail { margin: 6px 0 8px; font-size: 13px; opacity: .85; }
+.migration-checklist {
+    margin: 0 0 10px;
+    padding-left: 20px;
+    font-size: 12.5px;
+    line-height: 1.65;
+    opacity: .9;
+}
+.migration-journey {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.journey-step {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border: 1px solid var(--border-color, #e1dfdd);
+    border-radius: 12px;
+    text-decoration: none;
+    color: #0078d4;
+}
+.journey-step:hover { background: #eff6fc; }
+.journey-sep { opacity: .45; font-size: 12px; }
+.migration-effort-link { font-size: 12.5px; }
 .feature-badge {
     font-size: 10px;
     padding: 1px 5px;

@@ -154,6 +154,21 @@
             <summary>Advanced Options</summary>
             <div class="advanced-grid">
                 <div class="adv-field">
+                    <label for="priorityMode">Ranking Priority</label>
+                    <select id="priorityMode">
+                        <option value="balanced" selected>Balanced</option>
+                        <option value="cost">Lowest cost</option>
+                    </select>
+                </div>
+                <div class="adv-field">
+                    <label for="architectureFilter">CPU Architecture</label>
+                    <select id="architectureFilter">
+                        <option value="any" selected>Any</option>
+                        <option value="x64">x64 only</option>
+                        <option value="arm64">Arm64 only</option>
+                    </select>
+                </div>
+                <div class="adv-field">
                     <label for="weightCPU">CPU Priority</label>
                     <select id="weightCPU">
                         <option value="low">Low</option>
@@ -325,6 +340,9 @@
                     </div>
                     <div class="gen-filter-options" id="genFilterOptions"></div>
                 </details>
+
+                <!-- v6/v7 migration considerations for the selected source size -->
+                <div class="migration-effort-panel hidden" id="migrationEffortPanel"></div>
 
                 <!-- Cross-Region Availability -->
                 <div class="region-check-bar hidden" id="regionCheckBar">
