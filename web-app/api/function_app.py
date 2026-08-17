@@ -24,6 +24,39 @@ HISTORY_TABLE = "vmskuhistory"
 HISTORY_RETENTION_DAYS = 365
 
 
+def normalize_location(location):
+    """
+    Normalize an Azure region to its ARM slug form.
+
+    The SKU cache in Table Storage is partitioned on the exact ARM slug
+    ("centralus"), so any other spelling misses the cache entirely and falls
+    through to the live Azure API - which is ~10x slower and returns a slightly
+    different SKU set. Callers (agents especially) frequently pass the portal
+    display name instead, so fold every common spelling onto the slug.
+
+    Azure slugs are the display name lowercased with separators removed, so a
+    single transform covers essentially every public region:
+        "Central US" / "central us" / "Central-US" -> "centralus"
+        "East US 2" -> "eastus2"
+        "UK South" -> "uksouth"
+
+    Returns the input unchanged if it is falsy or not a string.
+    """
+    if not location or not isinstance(location, str):
+        return location
+    return re.sub(r'[^a-z0-9]', '', location.strip().lower())
+
+
+def odata_quote(value):
+    """
+    Escape a value for use inside a single-quoted OData filter literal.
+
+    Table Storage escapes a single quote by doubling it. Without this, a value
+    containing a quote breaks the filter or widens it into a full table scan.
+    """
+    return str(value).replace("'", "''")
+
+
 # ============================================================================
 # HTTP Route: /compare_vms - Compare VM SKUs
 # ============================================================================
@@ -62,7 +95,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
 
         # Extract parameters with defaults
         sku_name = req_body.get('skuName')
-        location = req_body.get('location')
+        location = normalize_location(req_body.get('location'))
         min_similarity_score = req_body.get('minSimilarityScore', 60)
         max_results = req_body.get('maxResults')
         currency_code = req_body.get('currencyCode', 'USD')
@@ -471,7 +504,7 @@ def compare_details(req: func.HttpRequest) -> func.HttpResponse:
         # Get parameters
         target_name = req.params.get('target')
         alternative_name = req.params.get('alternative')
-        location = req.params.get('location')
+        location = normalize_location(req.params.get('location'))
         currency_code = req.params.get('currency', 'USD')
         
         if not target_name or not alternative_name or not location:
@@ -604,7 +637,7 @@ def check_region_availability(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         sku_names = req_body.get('skuNames', [])
-        region = req_body.get('region', '')
+        region = normalize_location(req_body.get('region', ''))
 
         # Validate inputs
         if not sku_names or not isinstance(sku_names, list):
@@ -950,7 +983,7 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Processing list SKUs request')
     
     # Get location from query parameters
-    location = req.params.get('location')
+    location = normalize_location(req.params.get('location'))
     
     if not location:
         return func.HttpResponse(
@@ -1125,7 +1158,7 @@ def grid(req: func.HttpRequest) -> func.HttpResponse:
     """
     logging.info('Processing VM grid request')
 
-    location = req.params.get('location')
+    location = normalize_location(req.params.get('location'))
     currency = req.params.get('currency', 'USD')
 
     if not location:
@@ -1222,7 +1255,9 @@ def _build_history_series(history_client, sku_entity: Optional[Dict], region: st
     """
     points = []
     try:
-        rows = history_client.query_entities(query_filter=f"PartitionKey eq '{region}|{sku}'")
+        rows = history_client.query_entities(
+            query_filter=f"PartitionKey eq '{odata_quote(region)}|{odata_quote(sku)}'"
+        )
         for r in rows:
             points.append({
                 'date': r.get('RowKey'),
@@ -1268,7 +1303,7 @@ def history(req: func.HttpRequest) -> func.HttpResponse:
     """
     logging.info('Processing price-history request')
 
-    location = req.params.get('location')
+    location = normalize_location(req.params.get('location'))
     single = req.params.get('sku')
     batch = req.params.get('skus')
 
@@ -1615,7 +1650,7 @@ def admin_refresh_region(req: func.HttpRequest) -> func.HttpResponse:
     """
     logging.info('Processing manual cache refresh request')
     
-    region = req.params.get('region')
+    region = normalize_location(req.params.get('region'))
     if not region:
         return func.HttpResponse(
             json.dumps({'error': 'region parameter is required'}),
@@ -2262,6 +2297,9 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
     Returns: (list of SKUs, data_source)
     data_source: 'cache' or 'live_api'
     """
+    # Defensive: the cache is partitioned on the exact ARM slug, so a display
+    # name here would silently miss and fall through to the slow live API.
+    location = normalize_location(location)
     storage_account_name = os.environ.get('SKU_CACHE_STORAGE_ACCOUNT')
     
     # Try cache first

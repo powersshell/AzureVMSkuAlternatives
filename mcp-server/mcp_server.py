@@ -32,6 +32,7 @@ Setup: see README.md
 
 import os
 import json
+import re
 import time
 import logging
 import httpx
@@ -43,6 +44,26 @@ API_BASE = "https://vmsku-api-func-cus.azurewebsites.net/api"
 
 # Azure Functions Flex Consumption can have a cold start of 3-5s on first call
 HTTP_TIMEOUT = 60.0
+
+
+def normalize_location(location):
+    """Normalize an Azure region to its ARM slug form.
+
+    Calling agents routinely pass the portal display name ("Central US") rather than
+    the ARM slug ("centralus"). The upstream SKU cache is partitioned on the exact
+    slug, so an unnormalized value misses the cache and falls through to a live Azure
+    lookup that takes ~40-50s — close enough to HTTP_TIMEOUT that the call often fails
+    with a confusing timeout instead of an answer.
+
+    Azure slugs are the display name lowercased with separators removed, so one
+    transform covers essentially every public region:
+        "Central US" / "central us" / "Central-US" -> "centralus"
+        "East US 2" -> "eastus2"
+    """
+    if not location or not isinstance(location, str):
+        return location
+    return re.sub(r"[^a-z0-9]", "", location.strip().lower())
+
 
 # Transport is resolved once at import so telemetry records can tag it.
 TRANSPORT = "http" if os.environ.get("MCP_TRANSPORT") == "http" else "stdio"
@@ -118,7 +139,9 @@ mcp = FastMCP(
         "workload that needs to scale or for a new subscription. Each SKU includes a CPU performance "
         "score (normalized to Ice Lake = 100) for cross-architecture comparison "
         "(Intel vs AMD vs ARM). Azure region slugs look like: "
-        "eastus, westus2, westeurope, eastasia, australiaeast."
+        "eastus, westus2, westeurope, eastasia, australiaeast. Portal display names "
+        "such as \"Central US\" are also accepted and are folded onto the slug "
+        "automatically, but passing the slug directly is faster."
     ),
 )
 
@@ -200,10 +223,11 @@ async def list_vm_skus(location: str) -> dict:
     vendors/families are available.
 
     Args:
-        location: Azure region slug, e.g. "eastus", "westeurope", "southeastasia"
+        location: Azure region slug, e.g. "eastus", "westeurope", "southeastasia".
+                  Display names such as "Central US" are normalized automatically.
     """
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-        resp = await client.get(f"{API_BASE}/skus", params={"location": location})
+        resp = await client.get(f"{API_BASE}/skus", params={"location": normalize_location(location)})
         resp.raise_for_status()
         return resp.json()
 
@@ -275,7 +299,8 @@ async def find_alternative_skus(
 
     Args:
         target_sku:           Target VM SKU name, e.g. "Standard_D4s_v5"
-        location:             Azure region slug, e.g. "eastus"
+        location:             Azure region slug, e.g. "eastus" (display names like
+                              "Central US" are normalized automatically)
         min_similarity_score: Minimum score to include (0-100). Default 60. Use 80+ for very close matches.
         weight_cpu:           Importance of CPU match (0-10). Default 2.0.
         weight_memory:        Importance of memory match (0-10). Default 2.0.
@@ -296,7 +321,7 @@ async def find_alternative_skus(
             f"{API_BASE}/compare_vms",
             json={
                 "skuName": target_sku,
-                "location": location,
+                "location": normalize_location(location),
                 "minSimilarityScore": min_similarity_score,
                 "currencyCode": "USD",
                 "weightCPU": weight_cpu,
@@ -349,7 +374,7 @@ async def compare_sku_details(
             params={
                 "target": target_sku,
                 "alternative": alternative_sku,
-                "location": location,
+                "location": normalize_location(location),
                 "currency": "USD",
             },
         )
@@ -375,7 +400,7 @@ async def check_region_availability(
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         resp = await client.post(
             f"{API_BASE}/check_region_availability",
-            json={"skuNames": sku_names, "region": region},
+            json={"skuNames": sku_names, "region": normalize_location(region)},
         )
         resp.raise_for_status()
         return resp.json()
@@ -434,7 +459,7 @@ async def list_region_vm_grid(
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         resp = await client.get(
             f"{API_BASE}/grid",
-            params={"location": location, "currency": currency},
+            params={"location": normalize_location(location), "currency": currency},
         )
         resp.raise_for_status()
         return resp.json()
@@ -462,7 +487,7 @@ async def get_sku_price_history(
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         resp = await client.get(
             f"{API_BASE}/history",
-            params={"location": location, "skus": ",".join(skus)},
+            params={"location": normalize_location(location), "skus": ",".join(skus)},
         )
         resp.raise_for_status()
         return resp.json()

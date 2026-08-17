@@ -110,6 +110,24 @@ async def main(url, location):
             check("multiple CPU vendors present", len({v for v in vendors if v}) >= 2,
                   ", ".join(sorted(str(v) for v in vendors if v)))
 
+        # ---- region name normalization ------------------------------------
+        # Regression guard for the Scout failure: the SKU cache is partitioned on
+        # the exact ARM slug, so a portal display name ("Central US") used to miss
+        # the cache and fall through to a ~40-50s live Azure lookup -- close enough
+        # to the server's 60s HTTP timeout that the call frequently failed outright.
+        # This suite only ever ran "eastus", so a region-shaped bug was invisible.
+        canonical = None
+        for variant in ("centralus", "Central US", "central us", "CentralUS", "Central-US"):
+            v = payload(await client.call_tool("list_vm_skus", {"location": variant}))
+            count = len(v.get("skus") or [])
+            if canonical is None:
+                canonical = count
+                check("region slug 'centralus' resolves", count > 500, str(count) + " sizes")
+            else:
+                check("region variant %r matches the slug" % variant,
+                      count == canonical,
+                      "%d vs %d sizes" % (count, canonical))
+
         # ---- find_alternative_skus: today's scoring surface ---------------
         target = "Standard_D2_v3"
         r = payload(await client.call_tool("find_alternative_skus", {
