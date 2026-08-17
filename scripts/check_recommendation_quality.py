@@ -42,9 +42,13 @@ TIMEOUT = 120
 # How many leading results each structural assertion inspects.
 TOP_N = 5
 
-# Minimum distinct recommendation scores required across the top N. Guards the
-# tie-collapse that made ordering alphabetical.
-MIN_DISTINCT_SCORES = 3
+# Minimum distinct recommendation scores required across the whole returned set.
+# Guards the tie-collapse that made ordering alphabetical: before generation-aware
+# scoring a request like Standard_D2_v3 returned 25 results sharing just 2 distinct
+# scores. Measured over the full result set rather than the top 5, because a tie
+# among same-family same-generation siblings (four D-series v7s all at 100) is
+# legitimate -- those are equally good answers and cpuPerfScore orders them.
+MIN_DISTINCT_SCORES = 4
 
 # (source size, family its own recommendations must lead with)
 #
@@ -200,12 +204,12 @@ def main():
         if first.get("growthRestricted"):
             problems.append("#1 {} is growth-restricted".format(first_name))
 
-        # 7. The top of the list must not be a flat tie broken alphabetically.
-        distinct = len({s for s in scores[:TOP_N] if s is not None})
+        # 7. The list as a whole must not be a flat tie broken alphabetically.
+        distinct = len({s for s in scores if s is not None})
         if distinct < MIN_DISTINCT_SCORES:
             problems.append(
-                "top {} had only {} distinct scores (expected >= {})".format(
-                    TOP_N, distinct, MIN_DISTINCT_SCORES
+                "only {} distinct scores across {} results (expected >= {})".format(
+                    distinct, len(scores), MIN_DISTINCT_SCORES
                 )
             )
 
