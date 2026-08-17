@@ -1,0 +1,61 @@
+name: Check Recommendation Quality
+
+# Guards the *ordering* of /api/compare_vms results.
+#
+# The other API guards assert that data is present and internally correct. None
+# of them assert that the list comes back in a sensible order -- and for a tool
+# whose entire job is "what should I move to?", the order IS the product.
+#
+# Before 2026-08-17 that order was effectively alphabetical. Similarity alone
+# saturates at 100 whenever vCPU and memory match the target exactly, so a
+# Standard_D2_v3 search returned 189 candidates sharing 18 distinct scores with
+# 24 tied at exactly 100.00. Python's sort is stable, so the tie fell back to
+# input order -- and a burstable v2 (Standard_B2as_v2) was recommended as the #1
+# replacement for a general-purpose v3. Standard_E8s_v4 was answered with an
+# older v3 confidential-computing size. Every data guard was green throughout.
+#
+# scripts/check_recommendation_quality.py asserts the properties the generation-
+# and family-aware scoring depends on: a source's own family leads, burstable
+# never leads for a non-burstable source, #1 is never older / retired /
+# capacity-limited, cost mode actually reorders, and the top 5 holds at least 3
+# distinct scores. The L-series and B-series cases are the important ones --
+# neither family ships anything near v7, so an absolute "newest wins" scale
+# sends them to unrelated families.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-app/api/function_app.py'
+      - 'scripts/check_recommendation_quality.py'
+      - '.github/workflows/check-recommendation-quality.yml'
+  # Deliberately no pull_request trigger. This guard asserts against the LIVE
+  # deployed API, and the scoring it checks only exists in production after the
+  # API deploys on merge -- so on a PR it would fail by design and report a
+  # regression that isn't one. Runs on merge to main and daily thereafter.
+  #
+  # Ranking depends on the per-region catalogue, which a cached refresh rewrites
+  # on a timer. If a family's newest generation drops out of a region, the
+  # family-relative modernization baseline shifts with no code change at all.
+  schedule:
+    - cron: '25 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Validate recommendation ordering
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Pure stdlib (urllib, json, re) by design -- no lockfile, no install step.
+
+      - name: Check recommendation ordering
+        run: python scripts/check_recommendation_quality.py --location eastus

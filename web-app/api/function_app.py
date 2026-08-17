@@ -74,6 +74,11 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         weight_features = req_body.get('weightFeatures', 0.5)
         require_nvme_match = req_body.get('requireNVMeMatch', False)
         require_gpu_match = req_body.get('requireGPUMatch', False)
+        priority_mode = str(req_body.get('priorityMode', 'balanced')).lower()
+        if priority_mode not in RECOMMENDATION_MODE_WEIGHTS:
+            priority_mode = 'balanced'
+        # 'any' (default) keeps every architecture; 'x64'/'arm64' restrict the pool.
+        architecture_filter = str(req_body.get('architectureFilter', 'any')).lower()
 
         # Validate inputs
         if not sku_name or not location:
@@ -145,6 +150,12 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         # Get availability zones
         target_zones = get_availability_zones(target_sku, location)
 
+        # Generation-aware ranking context: what generation each family tops out
+        # at in *this* region, and the source size's own family/generation.
+        family_generations = build_family_generation_map(all_skus)
+        target_identity = _parse_sku_identity(sku_name)
+        target_architecture = target_sku.get('architecture', 'x64')
+
         # Compare with all other SKUs
         alternatives = []
         for sku in all_skus:
@@ -152,11 +163,14 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 continue  # Skip the target itself
 
             sku_capabilities = extract_capabilities(sku)
+            sku_architecture = sku.get('architecture', 'x64')
 
             # Apply filters
             if require_nvme_match and target_capabilities['nvme'] and not sku_capabilities['nvme']:
                 continue
             if require_gpu_match and target_capabilities['gpuCount'] > 0 and sku_capabilities['gpuCount'] == 0:
+                continue
+            if architecture_filter in ('x64', 'arm64') and sku_architecture.lower() != architecture_filter:
                 continue
 
             # Calculate similarity score
@@ -186,7 +200,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                     'name': sku['name'],
                     'similarityScore': round(similarity_score, 2),
                     'cpuVendor': sku.get('cpuVendor', 'Intel'),
-                    'architecture': sku.get('architecture', 'x64'),
+                    'architecture': sku_architecture,
                     'cpuPerfScore': sku.get('cpuPerfScore'),
                     'cpuGeneration': sku.get('cpuGeneration'),
                     'vCPUs': sku_capabilities['vCPUs'],
@@ -212,10 +226,44 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                     alt['originalSimilarityScore'] = alt['similarityScore']
                     alt['similarityScore'] = round(max(0, alt['similarityScore'] - penalty), 2)
 
+                # Generation-aware recommendation ranking. Kept separate from
+                # similarityScore so the "how close are the specs" number keeps
+                # its existing meaning for any consumer that relies on it.
+                candidate_identity = _parse_sku_identity(sku['name'])
+                saving_percent = None
+                target_monthly = (target_pricing or {}).get('monthlyPrice')
+                alt_monthly = (pricing or {}).get('monthlyPrice')
+                if target_monthly and alt_monthly and target_monthly > 0:
+                    saving_percent = (target_monthly - alt_monthly) / target_monthly * 100
+
+                recommendation = calculate_recommendation_score(
+                    alt['similarityScore'],
+                    target_identity,
+                    candidate_identity,
+                    family_generations,
+                    mode=priority_mode,
+                    cpu_perf_score=alt.get('cpuPerfScore'),
+                    saving_percent=saving_percent,
+                )
+                alt['recommendationScore'] = round(recommendation['score'], 2)
+                alt['scoreBreakdown'] = recommendation['components']
+                alt['migrationReadiness'] = _migration_readiness(
+                    sku['name'], sku_capabilities, candidate_identity,
+                    target_identity, sku_architecture, target_architecture
+                )
+
                 alternatives.append(alt)
 
-        # Sort by similarity score
-        alternatives.sort(key=lambda x: x['similarityScore'], reverse=True)
+        # Rank by recommendation score. The sort is fully deterministic --
+        # previously a single-key sort left large blocks of tied scores to fall
+        # back on alphabetical order, which is why burstable sizes surfaced above
+        # better matches.
+        alternatives.sort(key=lambda x: (
+            -x['recommendationScore'],
+            -(x.get('cpuPerfScore') or 0),
+            (x.get('pricing') or {}).get('monthlyPrice') or float('inf'),
+            x['name'],
+        ))
 
         # Total number of candidates above the floor, before any top-N capping
         total_matches = len(alternatives)
@@ -317,10 +365,13 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
             'totalMatches': total_matches,
             'dataLastUpdated': data_last_updated,
             'dataSource': data_source,
+            'migrationEffort': _migration_effort(target_identity),
             'searchParameters': {
                 'location': location,
                 'minSimilarityScore': min_similarity_score,
                 'maxResults': max_results,
+                'priorityMode': priority_mode,
+                'architectureFilter': architecture_filter,
                 'weights': {
                     'cpu': weight_cpu,
                     'memory': weight_memory,
@@ -1765,6 +1816,267 @@ def calculate_similarity(target: Dict, candidate: Dict, weights: Dict) -> float:
     total_weight += weights['weightFeatures']
 
     return total_score / total_weight if total_weight > 0 else 0
+
+
+# ---------------------------------------------------------------------------
+# Generation-aware recommendation scoring
+#
+# ``similarityScore`` answers "how close are the specs?" and is deliberately
+# left unchanged for backward compatibility. ``recommendationScore`` answers
+# the question users actually ask -- "what should I move to?" -- by blending
+# spec similarity with how modern the size is and how closely it matches the
+# source workload family.
+#
+# Reference: https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-overview
+# ---------------------------------------------------------------------------
+
+# Absolute floor for each generation. Acts as a lower bound only -- the
+# family-relative score below is what normally drives the value.
+GENERATION_TIER = {7: 100, 6: 92, 5: 78, 4: 55, 3: 35, 2: 20, 1: 10}
+
+# Points deducted per generation behind the newest generation the family
+# actually ships in the requested region. A "family-current" size therefore
+# scores ~100 even when that family has never shipped a v6/v7.
+GENERATION_DECAY_PER_STEP = 22
+
+# CPU performance score bands used when a size carries no version at all and
+# its family has no versioned members to compare against.
+_CPU_PERF_MODERNIZATION_BANDS = ((130, 100), (118, 92), (100, 78), (90, 55))
+
+# Workload class per family letter. Drives family affinity so a storage-
+# optimized source is not handed a memory-optimized replacement.
+_FAMILY_WORKLOAD_CLASS = {
+    'A': 'gp', 'D': 'gp',
+    'B': 'burst',
+    'F': 'compute', 'FX': 'compute',
+    'E': 'mem', 'M': 'mem', 'G': 'mem',
+    'L': 'storage',
+    'DC': 'conf', 'EC': 'conf',
+    'NC': 'gpu', 'ND': 'gpu', 'NV': 'gpu', 'NG': 'gpu', 'NP': 'gpu',
+    'HB': 'hpc', 'HC': 'hpc', 'HX': 'hpc', 'H': 'hpc',
+}
+
+# Workload classes that are reasonable neighbours when no same-class option
+# exists. Anything outside these pairs is treated as a genuine workload change.
+_ADJACENT_WORKLOAD_CLASSES = frozenset({
+    frozenset({'gp', 'compute'}),
+    frozenset({'gp', 'mem'}),
+    frozenset({'gp', 'storage'}),
+    frozenset({'mem', 'storage'}),
+})
+
+# Blend weights per priority mode: (similarity, modernization, familyAffinity).
+RECOMMENDATION_MODE_WEIGHTS = {
+    'balanced': (0.60, 0.25, 0.15),
+    'cost': (0.55, 0.20, 0.15),
+}
+
+# Maximum bonus (in points) awarded in cost mode for the cheapest candidate.
+COST_MODE_SAVING_BONUS = 10.0
+
+# Deduction applied when a candidate is an older generation than the source.
+OLDER_GENERATION_PENALTY = 8.0
+
+
+def _parse_sku_identity(sku_name: str) -> Dict:
+    """Break a SKU name into the family, modifiers and generation used for ranking.
+
+    Reuses the same normalization as :func:`_get_series_prefix` (constrained-vCPU
+    prefixes and accelerator segments are stripped) so both agree on what the
+    family is. Sizes with no explicit ``_v<n>`` are treated as generation 1,
+    which is what they are: ``Standard_M32ls`` is the original M-series, and
+    ``Standard_B2s`` the original B-series.
+    """
+    name = sku_name.replace('Standard_', '').replace('Basic_', '')
+    name = re.sub(r'^([A-Z]+)\d+-\d+', lambda m: m.group(1), name)
+    name = re.sub(r'(?:_(?![Vv]\d+$)[A-Za-z0-9]+)+(?=_[Vv]\d+$)', '', name)
+
+    match = re.match(r'^([A-Z]+)[0-9]*([a-z]*)(?:_[Vv](\d+))?', name)
+    if not match:
+        return {'family': None, 'modifiers': '', 'version': 1, 'versioned': False, 'class': 'gp'}
+
+    family = match.group(1).upper()
+    modifiers = match.group(2) or ''
+    version_raw = match.group(3)
+
+    workload_class = _FAMILY_WORKLOAD_CLASS.get(family)
+    if workload_class is None:
+        # Two-letter families (DC, EC, NC...) are matched above; fall back to the
+        # leading letter for anything unrecognized so new families still rank.
+        workload_class = _FAMILY_WORKLOAD_CLASS.get(family[:1], 'gp')
+
+    return {
+        'family': family,
+        'modifiers': modifiers,
+        'version': int(version_raw) if version_raw else 1,
+        'versioned': version_raw is not None,
+        'class': workload_class,
+    }
+
+
+def build_family_generation_map(all_skus: List[Dict]) -> Dict[str, int]:
+    """Map each VM family to the newest generation available in this region.
+
+    Computed from the region's own catalog, so a family whose v4 has not landed
+    in the region is correctly treated as topping out at v3 there.
+    """
+    newest: Dict[str, int] = {}
+    for sku in all_skus:
+        identity = _parse_sku_identity(sku.get('name', ''))
+        family = identity['family']
+        if not family:
+            continue
+        if identity['version'] > newest.get(family, 0):
+            newest[family] = identity['version']
+    return newest
+
+
+def _modernization_score(identity: Dict, family_generations: Dict[str, int],
+                         cpu_perf_score: Optional[float] = None) -> float:
+    """Score how modern a size is, relative to the newest generation of its own family.
+
+    An absolute "v7 is best" scale permanently punishes families that have never
+    shipped a v7 -- L-series tops out at v4 and B-series at v2 -- which pushes
+    unrelated cross-family sizes to the top. Scoring relative to the family's own
+    newest generation keeps a family-current size competitive.
+    """
+    family = identity['family']
+    version = identity['version']
+    newest = family_generations.get(family, version) if family else version
+
+    relative = 100.0 - max(0, newest - version) * GENERATION_DECAY_PER_STEP
+    absolute = float(GENERATION_TIER.get(version, 10))
+    score = max(absolute, relative)
+
+    # Unversioned size in a family with no versioned members at all: nothing to
+    # compare against, so fall back to measured CPU performance.
+    if not identity['versioned'] and newest <= 1 and cpu_perf_score:
+        for threshold, banded in _CPU_PERF_MODERNIZATION_BANDS:
+            if cpu_perf_score >= threshold:
+                return float(banded)
+        return 35.0
+
+    return max(0.0, min(100.0, score))
+
+
+def _family_affinity(target_identity: Dict, candidate_identity: Dict) -> float:
+    """Score how well a candidate matches the source's workload family."""
+    if target_identity['family'] and target_identity['family'] == candidate_identity['family']:
+        return 100.0
+
+    target_class = target_identity['class']
+    candidate_class = candidate_identity['class']
+
+    if target_class == candidate_class:
+        return 75.0
+
+    # A GPU size is never a drop-in for a non-GPU workload, and vice versa.
+    if 'gpu' in (target_class, candidate_class):
+        return 0.0
+
+    # Specialized classes carry real constraints (interconnect, attestation,
+    # credit-based CPU), so they rank low unless the source is the same class.
+    if candidate_class == 'hpc':
+        return 15.0
+    if candidate_class == 'conf':
+        return 20.0
+    if candidate_class == 'burst':
+        return 25.0
+
+    if frozenset({target_class, candidate_class}) in _ADJACENT_WORKLOAD_CLASSES:
+        return 55.0
+
+    return 40.0
+
+
+def _migration_readiness(sku_name: str, capabilities: Dict, identity: Dict,
+                         target_identity: Dict, architecture: str,
+                         target_architecture: str) -> Dict:
+    """Platform-change flags a user must plan for when moving to this size.
+
+    Mirrors the platform changes called out in the v6/v7 migration guidance.
+    """
+    hyperv = (capabilities.get('hyperVGenerations') or '')
+    supports_gen2 = 'V2' in hyperv
+    gen1_only = bool(hyperv) and 'V2' not in hyperv
+
+    return {
+        'requiresGen2': supports_gen2 and 'V1' not in hyperv,
+        'supportsGen2': supports_gen2,
+        'gen1Only': gen1_only,
+        # Our stored flag is NvmeDiskSizeInMiB > 0 -- that is the *local temp*
+        # NVMe disk (the 'd' suffix), not the remote-disk NVMe interface. Named
+        # accordingly so the badge does not overstate what we actually know.
+        'hasLocalNvmeTempDisk': bool(capabilities.get('nvme')),
+        # v6 and newer use the Microsoft Azure Network Adapter (MANA); older
+        # images may need updated drivers.
+        'usesManaNetworking': identity['version'] >= 6,
+        'architectureChange': bool(
+            architecture and target_architecture and architecture != target_architecture
+        ),
+        'familyChange': identity['family'] != target_identity['family'],
+        'generationsAhead': identity['version'] - target_identity['version'],
+    }
+
+
+def _migration_effort(target_identity: Dict) -> Dict:
+    """Microsoft's published migration effort rating, keyed on the source generation."""
+    version = target_identity['version']
+    if version >= 5:
+        level, detail = 'Very low', 'Already Gen 2 / NVMe-ready; most moves are a resize.'
+    elif version == 4:
+        level, detail = 'Low', 'Largely current-platform; verify NVMe and network drivers.'
+    else:
+        level, detail = 'Moderate', 'Expect Gen 2 (UEFI), NVMe disk and MANA network changes.'
+    return {
+        'level': level,
+        'detail': detail,
+        'guidanceUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-overview',
+    }
+
+
+def calculate_recommendation_score(similarity_score: float, target_identity: Dict,
+                                   candidate_identity: Dict, family_generations: Dict[str, int],
+                                   mode: str = 'balanced',
+                                   cpu_perf_score: Optional[float] = None,
+                                   saving_percent: Optional[float] = None) -> Dict:
+    """Blend spec similarity with modernization and family affinity into a ranking score.
+
+    Returns the score plus its components so the UI can explain the ranking.
+    """
+    weights = RECOMMENDATION_MODE_WEIGHTS.get(mode, RECOMMENDATION_MODE_WEIGHTS['balanced'])
+    w_similarity, w_modern, w_affinity = weights
+
+    modernization = _modernization_score(candidate_identity, family_generations, cpu_perf_score)
+    affinity = _family_affinity(target_identity, candidate_identity)
+
+    score = (similarity_score * w_similarity) + (modernization * w_modern) + (affinity * w_affinity)
+
+    cost_bonus = 0.0
+    if mode == 'cost' and saving_percent and saving_percent > 0:
+        cost_bonus = min(saving_percent, 100.0) / 100.0 * COST_MODE_SAVING_BONUS
+        score += cost_bonus
+
+    older_generation_penalty = 0.0
+    if candidate_identity['version'] < target_identity['version']:
+        older_generation_penalty = OLDER_GENERATION_PENALTY
+        score -= older_generation_penalty
+
+    return {
+        'score': max(0.0, score),
+        'components': {
+            'similarity': round(similarity_score, 2),
+            'modernization': round(modernization, 2),
+            'familyAffinity': round(affinity, 2),
+            'costBonus': round(cost_bonus, 2),
+            'olderGenerationPenalty': older_generation_penalty,
+            'weights': {
+                'similarity': w_similarity,
+                'modernization': w_modern,
+                'familyAffinity': w_affinity,
+            },
+        },
+    }
 
 
 def _pricing_has_ri(pricing: Optional[Dict]) -> bool:

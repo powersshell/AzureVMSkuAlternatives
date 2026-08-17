@@ -219,15 +219,42 @@ async def find_alternative_skus(
     weight_network: float = 1.0,
     require_nvme_match: bool = False,
     require_gpu_match: bool = False,
+    priority_mode: str = "balanced",
+    architecture_filter: str = "any",
 ) -> dict:
     """
-    Find Azure VM SKUs similar to a target SKU, ranked by similarity score (0-100).
+    Find Azure VM SKUs similar to a target SKU, ranked by recommendationScore (0-100).
 
-    Returns the target SKU details and a list of alternatives sorted by how closely
-    they match — considering vCPUs, memory, storage, networking, and features.
-    Each alternative includes its similarity score, vCPUs, memory, CPU vendor,
-    CPU generation, CPU performance score (normalized to Ice Lake = 100, comparable
-    across Intel/AMD/ARM), pricing (hourly/monthly USD), and availability zones.
+    Returns the target SKU details and a list of alternatives sorted best-first.
+    Each alternative includes its vCPUs, memory, CPU vendor, CPU generation, CPU
+    performance score (normalized to Ice Lake = 100, comparable across
+    Intel/AMD/ARM), pricing (hourly/monthly USD), and availability zones.
+
+    TWO SCORES ARE RETURNED AND THEY MEAN DIFFERENT THINGS:
+      * similarityScore     — pure technical spec fit (vCPU, memory, storage, network,
+                              features), minus retirement/growth penalties. This is what
+                              min_similarity_score filters on.
+      * recommendationScore — THE RANKING SCORE, and the one to quote to a user. It blends
+                              similarityScore with generation currency (modernization) and
+                              workload-family continuity, so v5/v6/v7 sizes and same-family
+                              sizes rank above older or off-family ones that happen to have
+                              identical specs. Read scoreBreakdown for the component values.
+
+    Modernization is scored RELATIVE TO THE NEWEST GENERATION THAT FAMILY ACTUALLY SHIPS
+    in that region — not on an absolute v7 scale. Some families have no modern generation
+    (L-series tops out at v4, B-series at v2), so a family-current L v4 correctly scores as
+    "current" instead of being buried under a cross-family v7.
+
+    Each alternative also carries migrationReadiness, which describes the work a move
+    actually requires: requiresGen2 (needs a UEFI Gen 2 image), gen1Only, usesManaNetworking
+    (needs current MANA network drivers), hasLocalNvmeTempDisk (a local temp disk exists only
+    on 'd'-suffixed sizes), architectureChange (x64 <-> Arm64 means binaries must be rebuilt),
+    familyChange, and generationsAhead. Surface these when recommending — a newer size is
+    usually the right answer but is not always a drop-in resize.
+
+    The response root includes migrationEffort (level / detail / guidanceUrl), Microsoft's
+    published effort rating keyed on the SOURCE generation: v5+ = Very low, v4 = Low,
+    v2-v3 = Moderate.
 
     SKUs announced for retirement receive a ranking penalty (lower similarityScore).
     Check the retirementStatus field: 'Announced' means planned for retirement,
@@ -256,6 +283,13 @@ async def find_alternative_skus(
         weight_network:       Importance of NIC count match (0-10). Default 1.0.
         require_nvme_match:   If True, only return SKUs with NVMe if the target has NVMe.
         require_gpu_match:    If True, only return GPU SKUs if the target has a GPU.
+        priority_mode:        Ranking emphasis. "balanced" (default) weights technical fit
+                              most heavily, then modernization, then family continuity.
+                              "cost" keeps the same shape but adds a bonus for cheaper
+                              options — use it when the user asks to minimize spend.
+        architecture_filter:  Restrict the result set by CPU architecture: "any" (default),
+                              "x64", or "arm64". Use "x64" when the workload cannot be
+                              recompiled for Arm64.
     """
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         resp = await client.post(
@@ -273,6 +307,8 @@ async def find_alternative_skus(
                 "weightFeatures": 0.5,
                 "requireNVMeMatch": require_nvme_match,
                 "requireGPUMatch": require_gpu_match,
+                "priorityMode": priority_mode,
+                "architectureFilter": architecture_filter,
             },
         )
         resp.raise_for_status()
