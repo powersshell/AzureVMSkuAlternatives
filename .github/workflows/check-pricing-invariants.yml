@@ -30,8 +30,14 @@ on:
   # Daily sweep. The cached price data is refreshed on a timer, so a bad
   # refresh can corrupt prices without any code change -- code-triggered runs
   # alone would not catch that.
+  #
+  # Timed for 03:00 UTC, ~1h after the cache refresh timer at 02:00 UTC
+  # (function_app.py, schedule "0 0 2 * * *"). Azure reprices Spot meters
+  # continuously, so every hour between the refresh and this run is a window in
+  # which a published price can go stale through no fault of ours. Running at
+  # 15:00 UTC left a 13-hour window and produced a false failure on 2026-08-19.
   schedule:
-    - cron: '0 15 * * *'
+    - cron: '0 3 * * *'
   workflow_dispatch:
 
 permissions:

@@ -369,6 +369,9 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         # Return results
         # Determine cache freshness from target SKU's lastUpdated field
         data_last_updated = target_sku.get('lastUpdated')
+        # Prices move independently of (and far more often than) the hardware
+        # facts, so they carry their own stamp.
+        prices_as_of = target_sku.get('pricingLastUpdated') or data_last_updated
         target_sku_data = {
                 'name': target_sku['name'],
                 'cpuVendor': target_sku.get('cpuVendor', 'Intel'),
@@ -397,6 +400,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
             'alternatives': alternatives,
             'totalMatches': total_matches,
             'dataLastUpdated': data_last_updated,
+            'pricesAsOf': prices_as_of,
             'dataSource': data_source,
             'migrationEffort': _migration_effort(target_identity),
             'searchParameters': {
@@ -1201,9 +1205,13 @@ def grid(req: func.HttpRequest) -> func.HttpResponse:
             pricing_by_sku = fetch_bulk_region_pricing(location, currency)
 
         skus = []
+        prices_as_of = None
         for entity in entities:
             pricing_override = pricing_by_sku.get(entity.get('name')) if currency != 'USD' else None
             skus.append(build_grid_row(entity, pricing_override=pricing_override))
+            stamp = entity.get('pricingLastUpdated') or entity.get('lastUpdated')
+            if stamp and (prices_as_of is None or stamp > prices_as_of):
+                prices_as_of = stamp
 
         skus.sort(key=lambda x: (x['vCPUs'], x['memoryGB']))
 
@@ -1211,6 +1219,10 @@ def grid(req: func.HttpRequest) -> func.HttpResponse:
             'location': location,
             'currency': currency,
             'count': len(skus),
+            # Spot prices in particular are repriced by Azure continuously while
+            # this cache refreshes once a day, so consumers need to know how old
+            # the numbers are rather than assume they are live.
+            'pricesAsOf': prices_as_of,
             'skus': skus
         }
 

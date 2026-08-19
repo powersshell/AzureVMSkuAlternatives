@@ -814,13 +814,13 @@ function displayResults(data) {
     renderMigrationEffortPanel(data);
     // Show cache timestamp if available
     const timestampEl = document.getElementById('cacheTimestamp');
-    if (data.dataLastUpdated) {
-        const d = new Date(data.dataLastUpdated);
-        const formatted = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
-            + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
-        timestampEl.textContent = `Data last refreshed: ${formatted}`;
+    const freshness = data.pricesAsOf || data.dataLastUpdated;
+    if (freshness) {
+        timestampEl.textContent = `Prices as of ${formatFreshness(freshness)}`;
+        timestampEl.title = PRICE_FRESHNESS_HINT;
     } else {
         timestampEl.textContent = '';
+        timestampEl.removeAttribute('title');
     }
     resultsSection.classList.remove('hidden');
     hideGettingStarted();
@@ -2893,6 +2893,7 @@ let currentMode = 'compare';
 let gridRows = [];
 let gridRegionLoaded = null;
 let gridCurrencyLoaded = null;
+let gridPricesAsOf = null;
 let gridSort = { col: 'vCPUs', dir: 'asc' };
 let gridPage = 1;
 const GRID_PAGE_SIZE = 50;
@@ -2960,6 +2961,7 @@ async function loadGrid() {
         gridRows = Array.isArray(data.skus) ? data.skus : [];
         gridRegionLoaded = region;
         gridCurrencyLoaded = data.currency || currency;
+        gridPricesAsOf = data.pricesAsOf || null;
         gridPage = 1;
         gridSelectedFamilies.clear();
         renderGridFacets();
@@ -3115,6 +3117,19 @@ function sortGridRows(rows) {
     });
 }
 
+// Prices are served from a cache refreshed daily at 02:00 UTC. Hardware facts
+// never move, but Azure reprices Spot meters continuously, so how old a price
+// is matters and is shown rather than left to assumption.
+const PRICE_FRESHNESS_HINT = 'Prices come from a cache refreshed daily at 02:00 UTC. '
+    + 'Spot prices in particular can change between refreshes — confirm current pricing before committing to a budget.';
+
+function formatFreshness(value) {
+    const d = new Date(value);
+    if (isNaN(d)) return '';
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+        + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+}
+
 function renderGrid() {
     if (!gridRows.length) return;
     const filtered = sortGridRows(applyGridFilters(gridRows));
@@ -3140,6 +3155,13 @@ function renderGrid() {
         status.textContent = `0 of ${total} VM sizes`;
     } else {
         status.textContent = `Showing ${start + 1}–${start + pageRows.length} of ${matched}${matched !== total ? ` (filtered from ${total})` : ''}`;
+    }
+    const asOf = gridPricesAsOf ? formatFreshness(gridPricesAsOf) : '';
+    if (asOf) {
+        status.textContent += ` · Prices as of ${asOf}`;
+        status.title = PRICE_FRESHNESS_HINT;
+    } else {
+        status.removeAttribute('title');
     }
 
     renderGridPagination(pageCount, matched);

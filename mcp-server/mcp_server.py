@@ -280,6 +280,11 @@ async def find_alternative_skus(
     published effort rating keyed on the SOURCE generation: v5+ = Very low, v4 = Low,
     v2-v3 = Moderate.
 
+    The response root also carries a `pricesAsOf` UTC timestamp. Prices are cached and
+    refreshed daily, and Azure reprices Spot meters continuously, so quote that timestamp
+    alongside any price and tell the user to confirm current pricing before committing to
+    a budget.
+
     SKUs announced for retirement receive a ranking penalty (lower similarityScore).
     Check the retirementStatus field: 'Announced' means planned for retirement,
     'Retired' means no longer available. retirementDate shows the planned date,
@@ -451,6 +456,11 @@ async def list_region_vm_grid(
     reserved-instance prices (hourly and monthly). Use this to browse, filter, or rank
     an entire region; for a focused set of alternatives to a specific size use
     find_alternative_skus instead.
+
+    The response carries a top-level `pricesAsOf` UTC timestamp. Prices are cached
+    and refreshed daily, and Azure reprices Spot meters continuously, so quote that
+    timestamp alongside any price and tell the user to confirm current pricing
+    before committing to a budget.
 
     Args:
         location: Azure region slug, e.g. "eastus", "westeurope"
