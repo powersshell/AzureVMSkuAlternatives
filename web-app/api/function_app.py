@@ -2338,6 +2338,7 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                     'cpuPerfScore': entity.get('cpuPerfScore'),
                     'cpuGeneration': entity.get('cpuGeneration'),
                     'lastUpdated': entity.get('lastUpdated'),
+                    'pricingLastUpdated': entity.get('pricingLastUpdated'),
                     'capabilities': [
                         {'name': 'vCPUs', 'value': str(entity['vCPUs'])},
                         {'name': 'MemoryGB', 'value': str(entity['memoryGB'])},
