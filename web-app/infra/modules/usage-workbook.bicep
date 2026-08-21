@@ -13,7 +13,18 @@ param location string
 param tags object = {}
 
 // Deterministic GUID so redeployments update in place
-// Bump the suffix to force ARM to replace the workbook resource with fresh content
+// Bump the suffix to force ARM to replace the workbook resource with fresh content.
+//
+// ⚠️ Bumping the suffix creates a NEW workbook resource and ORPHANS the previous one.
+// Both keep the same displayName, so the portal shows two identically-named workbooks
+// and it is easy to open the stale one and conclude a fix did not land. After a bump,
+// delete the old resource:
+//   az resource list -g <rg> --resource-type microsoft.insights/workbooks \
+//     --query "[].name" -o tsv
+//   # identify the stale one by properties.timeModified, then:
+//   az resource delete -g <rg> -n <old-guid> \
+//     --resource-type microsoft.insights/workbooks --api-version 2022-04-01
+// (v3 was orphaned and removed this way on 2026-08-21.)
 var workbookId = guid(resourceGroup().id, 'vmsku-usage-workbook-v4')
 
 var serializedData = '''
