@@ -14,7 +14,7 @@ param tags object = {}
 
 // Deterministic GUID so redeployments update in place
 // Bump the suffix to force ARM to replace the workbook resource with fresh content
-var workbookId = guid(resourceGroup().id, 'vmsku-usage-workbook-v3')
+var workbookId = guid(resourceGroup().id, 'vmsku-usage-workbook-v4')
 
 var serializedData = '''
 {
@@ -164,7 +164,7 @@ var serializedData = '''
     {
       "type": 1,
       "content": {
-        "json": "### Errors & Exceptions"
+        "json": "### Errors & Exceptions\nApplication-level faults only. Azure Functions host worker-recycle events (`python exited with code 143` / SIGTERM) are **excluded** here because they are normal platform scale-down activity, are not attached to any request, and would otherwise bury genuine errors. See the *Platform Health* section below for that signal.\n\nAll tiles are split by `AppRoleName` — `vmsku-api-func-cus` is the Functions API, `vmsku-mcp-server` is the hosted MCP server. They share this workspace but are unrelated systems."
       },
       "name": "section6-header"
     },
@@ -172,12 +172,12 @@ var serializedData = '''
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AppExceptions\n| where TimeGenerated {TimeRange}\n| summarize ExceptionCount = count() by bin(TimeGenerated, 1d)\n| order by TimeGenerated asc",
+        "query": "AppExceptions\n| where TimeGenerated {TimeRange}\n| where OuterMessage !contains 'Language Worker Process exited'\n| where ProblemId !contains 'WorkerProcess.ThrowIfExitError'\n| summarize ExceptionCount = count() by bin(TimeGenerated, 1d), AppRoleName\n| order by TimeGenerated asc",
         "size": 0,
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "timechart",
-        "title": "Exceptions Over Time"
+        "title": "Application Exceptions Over Time (by service)"
       },
       "name": "exceptions-chart"
     },
@@ -185,12 +185,12 @@ var serializedData = '''
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AppExceptions\n| where TimeGenerated {TimeRange}\n| summarize Count = count(), LastSeen = max(TimeGenerated) by ExceptionType, OuterMessage\n| order by Count desc\n| take 25\n| project ExceptionType, OuterMessage, Count, LastSeen",
+        "query": "AppExceptions\n| where TimeGenerated {TimeRange}\n| where OuterMessage !contains 'Language Worker Process exited'\n| where ProblemId !contains 'WorkerProcess.ThrowIfExitError'\n| summarize Count = count(), LastSeen = max(TimeGenerated) by AppRoleName, ExceptionType, OuterMessage\n| order by Count desc\n| take 25\n| project AppRoleName, ExceptionType, OuterMessage, Count, LastSeen",
         "size": 0,
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "table",
-        "title": "Top Exceptions (Last 25)"
+        "title": "Top Application Exceptions (Last 25)"
       },
       "name": "exceptions-table"
     },
@@ -198,12 +198,12 @@ var serializedData = '''
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "AppRequests\n| where TimeGenerated {TimeRange}\n| where Success == false\n| summarize FailedCount = count(), LastSeen = max(TimeGenerated) by Name, ResultCode\n| order by FailedCount desc\n| take 25\n| project Name, ResultCode, FailedCount, LastSeen",
+        "query": "AppRequests\n| where TimeGenerated {TimeRange}\n| where Success == false\n| summarize FailedCount = count(), LastSeen = max(TimeGenerated), AvgDurationMs = round(avg(DurationMs)), MaxDurationMs = round(max(DurationMs)), SampleOperationId = any(OperationId) by AppRoleName, Name, ResultCode\n| order by FailedCount desc\n| take 25\n| project AppRoleName, Name, ResultCode, FailedCount, AvgDurationMs, MaxDurationMs, LastSeen, SampleOperationId",
         "size": 0,
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "visualization": "table",
-        "title": "Failed HTTP Requests"
+        "title": "Failed HTTP Requests (by service)"
       },
       "name": "failed-requests-table"
     },
@@ -219,6 +219,65 @@ var serializedData = '''
         "title": "Frontend Error Events"
       },
       "name": "frontend-errors-table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Platform Health\nAzure Functions Flex Consumption recycles the Python language worker as it scales instances up and down. Each recycle is logged by the host as `System.Exception: python exited with code 143` — **143 = 128 + 15 = SIGTERM, a graceful shutdown, not a crash** (an out-of-memory kill would be 137). These events carry no `OperationName`, so they are never attached to a user request and cannot cause a failed call.\n\nThey are shown here as **instance churn** because that is what they actually measure. A rising line means the platform is cycling instances more aggressively; it is a scaling signal, not an error signal. Correlate against the Failed HTTP Requests tile above — if churn rises but failures stay at zero, there is no user impact.\n\n#### Nightly cache refresh\nThe tiles below track the `refresh_sku_cache` timer. Duration is normally in the **245–355 s** band and is noisy rather than monotonic — treat a single high reading as variance and only investigate a sustained climb toward the host timeout. **A missing day in the duration table means the invocation never completed** and should be treated as a failure.\n\nThe region tiles are the important ones: a region can fail its pricing fetch while the run still finishes, which leaves that region serving **stale prices** with no other visible signal (issue #21). Any row in *regions that failed to refresh*, or any `PricedPct` of 0 in *latest per-region outcome*, means that region's pricing is out of date."
+      },
+      "name": "platform-health-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppExceptions\n| where TimeGenerated {TimeRange}\n| where OuterMessage contains 'Language Worker Process exited' or ProblemId contains 'WorkerProcess.ThrowIfExitError'\n| extend HostInstance = tostring(parse_json(tostring(Properties)).HostInstanceId)\n| summarize InstanceRecycles = dcount(HostInstance) by bin(TimeGenerated, 1h), AppRoleName\n| order by TimeGenerated asc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart",
+        "title": "Worker Instance Churn (recycles per hour)"
+      },
+      "name": "platform-churn-chart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppRequests\n| where TimeGenerated {TimeRange}\n| where Name == 'refresh_sku_cache'\n| summarize DurationSec = round(max(DurationMs) / 1000.0, 1), Outcome = any(ResultCode), Succeeded = any(Success) by bin(TimeGenerated, 1d)\n| order by TimeGenerated desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Nightly Cache Refresh — duration by day (a missing day = a lost invocation)"
+      },
+      "name": "refresh-duration-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where TimeGenerated {TimeRange}\n| where Message contains 'Error processing region' or Message contains 'Retry failed for region'\n| extend Region = extract('region ([a-z0-9]+)', 1, Message)\n| summarize Failures = count(), DaysAffected = dcount(bin(TimeGenerated, 1d)), LastFailure = max(TimeGenerated) by Region\n| order by Failures desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Nightly Cache Refresh — regions that failed to refresh (stale pricing risk)"
+      },
+      "name": "refresh-region-failures"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AppTraces\n| where TimeGenerated {TimeRange}\n| where Message has 'sku_refresh_region'\n| extend d = parse_json(Message)\n| where tostring(d.event_type) == 'sku_refresh_region'\n| summarize arg_max(TimeGenerated, d) by Region = tostring(d.region)\n| project Region, Status = tostring(d.status), PricedSkus = toint(d.pricedSkus), TotalSkus = toint(d.totalSkus), PricedPct = todouble(d.pricedPct), DurationSec = todouble(d.durationSec), LastRun = TimeGenerated\n| order by PricedPct asc, Region asc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "title": "Nightly Cache Refresh — latest per-region outcome"
+      },
+      "name": "refresh-region-outcomes"
     },
     {
       "type": 1,

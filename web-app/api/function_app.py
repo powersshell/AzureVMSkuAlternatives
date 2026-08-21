@@ -1577,6 +1577,9 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
     total_updated = 0
     total_errors = 0
     all_region_coverage = []
+    # P2.1 — per-region outcomes so a partial failure is visible instead of silent (issue #21)
+    run_started = time.time()
+    region_outcomes: Dict[str, Dict] = {}
 
     # Fetch network bandwidth data once before parallel region processing
     network_bw = fetch_network_bandwidth()
@@ -1589,8 +1592,15 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
 
     def process_region(region):
         logging.info(f"Processing region: {region}")
-        count, coverage = refresh_region(region, subscription_id, token, table_client, network_bw, history_client)
-        logging.info(f"Updated {count} SKUs for region {region}")
+        started = time.time()
+        try:
+            count, coverage = refresh_region(region, subscription_id, token, table_client, network_bw, history_client)
+        except Exception:
+            _record_region_outcome(region_outcomes, region, 'failed', time.time() - started, 0, None)
+            raise
+        elapsed = time.time() - started
+        logging.info(f"Updated {count} SKUs for region {region} in {elapsed:.1f}s")
+        _record_region_outcome(region_outcomes, region, 'ok', elapsed, count, coverage)
         return count, region, coverage
 
     with ThreadPoolExecutor(max_workers=5) as executor:
@@ -1605,14 +1615,23 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
             except Exception as e:
                 logging.error(f"Error processing region {region}: {e}")
                 total_errors += 1
+                if region in region_outcomes:
+                    region_outcomes[region]['error'] = str(e)[:300]
 
     # Delayed retry: re-process regions that got 0 pricing (likely transient API failure)
-    failed_regions = [
+    # or that raised outright. A raised region appends no coverage row, so before this
+    # it fell straight through the retry and silently kept stale prices (issue #21) --
+    # exactly what happened to westus2 on 2026-08-17/08-21 and eastus on 2026-08-19.
+    unpriced_regions = [
         c['region'] for c in all_region_coverage
         if c.get('paygLinux', 0) == 0 and c.get('totalSkus', 0) > 0
     ]
+    raised_regions = [
+        r for r, o in region_outcomes.items() if o.get('status') != 'ok'
+    ]
+    failed_regions = sorted(set(unpriced_regions) | set(raised_regions))
     if failed_regions:
-        logging.warning(f"Retrying {len(failed_regions)} regions with 0 pricing after 30s delay: {failed_regions}")
+        logging.warning(f"Retrying {len(failed_regions)} degraded regions after 30s delay: {failed_regions}")
         time.sleep(30)
         for cov in list(all_region_coverage):
             if cov['region'] in failed_regions:
@@ -1630,6 +1649,8 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
                 except Exception as e:
                     logging.error(f"Retry failed for region {region}: {e}")
                     total_errors += 1
+                    if region in region_outcomes:
+                        region_outcomes[region]['error'] = str(e)[:300]
 
     logging.info(f"SKU cache refresh completed. Updated: {total_updated}, Errors: {total_errors}")
 
@@ -1642,6 +1663,28 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
 
     # Emit coverage telemetry for workbook visualization
     _emit_coverage_telemetry(all_region_coverage)
+
+    # P2.1 — emit per-region outcomes and a run summary, then surface partial failure.
+    # Previously this function returned success unconditionally, so a region that
+    # silently produced no pricing left stale data behind with a green checkmark
+    # (issue #21). Now the run fails loudly when any region did not land.
+    run_elapsed = time.time() - run_started
+    _emit_refresh_run_telemetry(region_outcomes, regions, run_elapsed, total_updated, total_errors)
+
+    degraded = sorted(
+        r for r, o in region_outcomes.items()
+        if o.get('status') != 'ok'
+        or (o.get('pricedSkus', 0) == 0 and o.get('totalSkus', 0) > 0)
+    )
+    missing = sorted(set(regions) - set(region_outcomes))
+    problem_regions = sorted(set(degraded) | set(missing))
+
+    if problem_regions:
+        raise RuntimeError(
+            f"SKU cache refresh completed with {len(problem_regions)} of {len(regions)} "
+            f"region(s) not refreshed: {', '.join(problem_regions)}. "
+            f"Updated {total_updated} SKUs in {run_elapsed:.0f}s."
+        )
 
 
 # ============================================================================
@@ -3817,6 +3860,71 @@ def _compute_region_coverage(region: str, entities: List[Dict]) -> Dict:
         'missingRiSkus': missing_ri[:50],
         'missingNetworkSkus': missing_network[:50],
     }
+
+
+def _record_region_outcome(outcomes: Dict[str, Dict], region: str, status: str,
+                           elapsed: float, count: int, coverage: Optional[Dict]) -> None:
+    """
+    Record the result of one region refresh.
+
+    Exists so the run can report *partial* failure (issue #21). A region that
+    completes without raising but produces no pricing used to leave stale data
+    behind while the timer still reported success.
+    """
+    priced = int(coverage.get('paygLinux', 0)) if coverage else 0
+    total = int(coverage.get('totalSkus', 0)) if coverage else 0
+    outcomes[region] = {
+        'region': region,
+        'status': status,
+        'durationSec': round(elapsed, 1),
+        'updatedSkus': int(count or 0),
+        'totalSkus': total,
+        'pricedSkus': priced,
+        'pricedPct': round(priced / total * 100, 1) if total else 0.0,
+    }
+
+
+def _emit_refresh_run_telemetry(outcomes: Dict[str, Dict], regions: List[str], run_elapsed: float,
+                                total_updated: int, total_errors: int) -> None:
+    """
+    Emit one event per region plus a run summary.
+
+    Flex Consumption drops extra={'custom_dimensions': ...}, so the payload is
+    embedded as JSON in the message and read back with parse_json(Message) in KQL.
+    """
+    for region in regions:
+        payload = dict(outcomes.get(region) or {
+            'region': region, 'status': 'missing', 'durationSec': 0.0,
+            'updatedSkus': 0, 'totalSkus': 0, 'pricedSkus': 0, 'pricedPct': 0.0,
+        })
+        payload['event_type'] = 'sku_refresh_region'
+        logging.info(json.dumps(payload))
+
+    slowest = max((o.get('durationSec', 0.0) for o in outcomes.values()), default=0.0)
+    failed = sorted(r for r, o in outcomes.items() if o.get('status') != 'ok')
+    unpriced = sorted(
+        r for r, o in outcomes.items()
+        if o.get('status') == 'ok' and o.get('pricedSkus', 0) == 0 and o.get('totalSkus', 0) > 0
+    )
+    missing = sorted(set(regions) - set(outcomes))
+
+    logging.info(json.dumps({
+        'event_type': 'sku_refresh_run',
+        'runDurationSec': round(run_elapsed, 1),
+        'slowestRegionSec': slowest,
+        'regionsRequested': len(regions),
+        'regionsCompleted': len(outcomes),
+        'regionsOk': sum(
+            1 for o in outcomes.values()
+            if o.get('status') == 'ok'
+            and (o.get('pricedSkus', 0) > 0 or o.get('totalSkus', 0) == 0)
+        ),
+        'regionsFailed': failed,
+        'regionsUnpriced': unpriced,
+        'regionsMissing': missing,
+        'totalUpdated': total_updated,
+        'totalErrors': total_errors,
+    }))
 
 
 def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
