@@ -942,6 +942,7 @@ function displayTargetSku(targetSku) {
     const cpuPerfDisplay = targetSku.cpuGeneration && targetSku.cpuPerfScore
         ? `${targetSku.cpuGeneration} — score ${targetSku.cpuPerfScore}`
         : null;
+    const gpuPerfDisplay = formatGpuPerformance(targetSku);
     const pricingLabel = currentPricingModel === 'ri1year' ? '1yr RI'
         : currentPricingModel === 'ri3year' ? '3yr RI'
         : (currentPricingOS === 'windows' ? 'Windows' : 'Linux');
@@ -969,7 +970,11 @@ function displayTargetSku(targetSku) {
             ${targetSku.gpuCount ? `
             <div class="target-sku-item">
                 <strong>GPUs</strong>
-                <span>${targetSku.gpuCount} ${targetSku.gpuType || ''}</span>
+                <span>${targetSku.gpuAllocation ?? targetSku.gpuCount} ${targetSku.gpuType || ''}</span>
+            </div>
+            <div class="target-sku-item">
+                <strong>GPU Performance</strong>
+                <span>${gpuPerfDisplay}</span>
             </div>
             ` : ''}
             <div class="target-sku-item">
@@ -1640,12 +1645,21 @@ function getCpuPerfIndicator(targetScore, altScore) {
     if (targetScore == null || altScore == null) {
         return { direction: 'unknown', icon: '', changed: false };
     }
+
     if (altScore > targetScore) {
         return { direction: 'faster', icon: '▲', changed: true };
     } else if (altScore < targetScore) {
         return { direction: 'slower', icon: '▼', changed: true };
     }
     return { direction: 'same', icon: '●', changed: false };
+}
+
+function formatGpuPerformance(sku) {
+    if (!sku || !(sku.gpuCount > 0)) return '—';
+    const profile = sku.gpuPerfProfile === 'ai-compute' ? 'AI/compute' : 'graphics';
+    if (sku.gpuPerfScore == null) return `${profile} score N/A`;
+    const memory = sku.gpuMemoryGB != null ? ` · ${sku.gpuMemoryGB} GB` : '';
+    return `${profile} score ${sku.gpuPerfScore}${memory}`;
 }
 
 function renderCpuPerfIndicator(indicator) {
@@ -1821,6 +1835,9 @@ function displayAlternatives(alternatives) {
         const nvmeBadge = caps.nvme
             ? `<span class="feature-badge nvme-badge" title="Has a local NVMe temp disk (the 'd' suffix). This is the temporary disk, not the remote-disk interface.">Local NVMe</span>`
             : '';
+        const gpuChip = alt.gpuCount > 0
+            ? `<div class="mini-spec" title="A100 80 GB = 100; theoretical dense-peak profile"><div class="mini-spec-val">${alt.gpuComparisonScore ?? alt.gpuPerfScore ?? 'N/A'}</div><div class="mini-spec-lbl">GPU ${(alt.gpuComparisonProfile ?? alt.gpuPerfProfile) === 'ai-compute' ? 'AI' : 'Graphics'}</div></div>`
+            : '';
 
         // Region availability
         const regionAvail = renderRegionAvailCell(alt.name);
@@ -1844,6 +1861,7 @@ function displayAlternatives(alternatives) {
             <div class="card-specs">
                 <div class="mini-spec"><div class="mini-spec-val">${alt.vCPUs || '—'}</div><div class="mini-spec-lbl">vCPUs</div></div>
                 <div class="mini-spec"><div class="mini-spec-val">${alt.memoryGB ? alt.memoryGB + 'GB' : '—'}</div><div class="mini-spec-lbl">Memory</div></div>
+                ${gpuChip}
                 ${acuChip}
                 ${renderZonesChip(alt.zones, targetSku?.zones)}
                 ${regionAvail}
@@ -2160,6 +2178,19 @@ function renderDetailedComparison(data, targetSku, altSku) {
                     ${diff.compute.trustedLaunch ? renderBooleanDiff(diff.compute.trustedLaunch) : ''}
                     ${diff.compute.confidentialComputing ? renderBooleanDiff(diff.compute.confidentialComputing) : ''}
                 </div>
+
+                ${diff.gpu ? `
+                <div class="details-section">
+                    <h5>GPU Performance <span class="metric-basis">(theoretical dense peak)</span></h5>
+                    <div class="diff-item same">● Model: ${escapeHtml(diff.gpu.targetType || 'N/A')} → ${escapeHtml(diff.gpu.alternativeType || 'N/A')}</div>
+                    ${renderOptionalNumericDiff('Allocation', diff.gpu.allocation)}
+                    ${renderOptionalNumericDiff('Accelerator Memory', diff.gpu.memory)}
+                    ${renderOptionalNumericDiff('Memory Bandwidth', diff.gpu.memoryBandwidth)}
+                    ${renderOptionalNumericDiff('Dense FP32', diff.gpu.fp32)}
+                    ${renderOptionalNumericDiff('Dense FP16/BF16 Tensor', diff.gpu.fp16)}
+                    ${renderOptionalNumericDiff(`${diff.gpu.profile === 'ai-compute' ? 'AI/Compute' : 'Graphics'} Score`, diff.gpu.performanceScore)}
+                </div>
+                ` : ''}
                 
                 <!-- Storage Section -->
                 <div class="details-section">
@@ -2240,7 +2271,7 @@ function renderNumericDiff(label, diff) {
     if (!diff.changed) {
         return `<div class="diff-item same">● ${label}: ${diff.alternative} ${diff.unit} (same)</div>`;
     }
-    
+
     const icon = diff.direction === 'upgrade' ? '▲' : '▼';
     const className = diff.direction === 'upgrade' ? 'diff-item upgrade' : 'diff-item downgrade';
     const sign = diff.delta > 0 ? '+' : '';
@@ -2252,6 +2283,13 @@ function renderNumericDiff(label, diff) {
             <span class="delta">${sign}${diff.delta} ${diff.unit}${percent}</span>
         </div>
     `;
+}
+
+function renderOptionalNumericDiff(label, diff) {
+    if (!diff || diff.target == null || diff.alternative == null) {
+        return `<div class="diff-item same">● ${label}: N/A for at least one size</div>`;
+    }
+    return renderNumericDiff(label, diff);
 }
 
 function renderPriceDiff(label, diff) {
@@ -2446,6 +2484,13 @@ function buildComparisonExportModel() {
         { key: 'memoryGB', label: 'Memory (GB)', type: 'number', precision: 2 },
         { key: 'gpuCount', label: 'GPU Count', type: 'number', precision: 0 },
         { key: 'gpuType', label: 'GPU Type', type: 'string' },
+        { key: 'gpuAllocation', label: 'GPU Allocation', type: 'number', precision: 4 },
+        { key: 'gpuMemoryGB', label: 'GPU Memory (GB)', type: 'number', precision: 2 },
+        { key: 'gpuMemoryBandwidthGBps', label: 'GPU Memory Bandwidth (GB/s)', type: 'number', precision: 2 },
+        { key: 'gpuFp32Tflops', label: 'GPU Dense FP32 (TFLOPS)', type: 'number', precision: 2 },
+        { key: 'gpuFp16Tflops', label: 'GPU Dense FP16/BF16 Tensor (TFLOPS)', type: 'number', precision: 2 },
+        { key: 'gpuPerfProfile', label: 'GPU Performance Profile', type: 'string' },
+        { key: 'gpuPerfScore', label: 'GPU Performance Score (A100 80GB = 100)', type: 'number', precision: 1 },
         { key: 'maxDataDiskCount', label: 'Max Data Disks', type: 'number', precision: 0 },
         { key: 'maxNics', label: 'Max NICs', type: 'number', precision: 0 },
         { key: 'uncachedDiskIOPS', label: 'Uncached Disk IOPS', type: 'number', precision: 0 },
@@ -2479,6 +2524,10 @@ function buildComparisonExportModel() {
         'CPU Perf Score',
         'Target CPU Perf Score',
         'CPU Perf Delta (%)',
+        'GPU Performance Profile',
+        'GPU Performance Score',
+        'Target GPU Performance Score',
+        'GPU Performance Delta (%)',
         `Hourly Cost Linux${discountNote}`,
         `Monthly Cost Linux${discountNote}`,
         `Hourly Cost Windows${discountNote}`,
@@ -2524,6 +2573,12 @@ function buildComparisonExportModel() {
             targetSku.cpuPerfScore != null ? targetSku.cpuPerfScore : 'N/A',
             (alt.cpuPerfScore != null && targetSku.cpuPerfScore > 0)
                 ? (((alt.cpuPerfScore - targetSku.cpuPerfScore) / targetSku.cpuPerfScore) * 100).toFixed(1)
+                : 'N/A',
+            alt.gpuComparisonProfile || alt.gpuPerfProfile || 'N/A',
+            alt.gpuComparisonScore != null ? alt.gpuComparisonScore : 'N/A',
+            targetSku.gpuComparisonScore != null ? targetSku.gpuComparisonScore : 'N/A',
+            (alt.gpuComparisonScore != null && targetSku.gpuComparisonScore > 0)
+                ? (((alt.gpuComparisonScore - targetSku.gpuComparisonScore) / targetSku.gpuComparisonScore) * 100).toFixed(1)
                 : 'N/A',
             alt.pricing ? (alt.pricing.hourlyPrice * discount).toFixed(4) : 'N/A',
             alt.pricing ? (alt.pricing.monthlyPrice * discount).toFixed(2) : 'N/A',
@@ -3100,6 +3155,7 @@ function sortGridRows(rows) {
             case 'vCPUs': return r.vCPUs || 0;
             case 'memoryGB': return r.memoryGB || 0;
             case 'gpuCount': return r.gpuCount || 0;
+            case 'gpuPerfScore': return r.gpuPerfScore;
             case 'acu': return r.acu || 0;
             case 'hourly': return gridPriceValue(r, 'hourly');
             case 'monthly': return gridPriceValue(r, 'monthly');
@@ -3145,7 +3201,7 @@ function renderGrid() {
     const tbody = document.getElementById('gridTableBody');
 
     if (matched === 0) {
-        tbody.innerHTML = `<tr class="grid-no-match"><td colspan="9">No VM sizes match your filters. <button type="button" class="grid-action-btn" onclick="resetGridFilters()">Reset filters</button></td></tr>`;
+        tbody.innerHTML = `<tr class="grid-no-match"><td colspan="10">No VM sizes match your filters. <button type="button" class="grid-action-btn" onclick="resetGridFilters()">Reset filters</button></td></tr>`;
     } else {
         tbody.innerHTML = pageRows.map(r => renderGridRow(r, discount)).join('');
     }
@@ -3175,7 +3231,10 @@ function renderGridRow(r, discount) {
     const nvme = r.nvme ? '<span class="grid-badge nvme" title="Supports the NVMe disk interface">NVMe</span>' : '';
     const retiring = r.retirementStatus ? '<span class="grid-badge retiring" title="This size is being retired">⚠ Retiring</span>' : '';
     const restricted = r.growthRestricted ? '<span class="grid-badge restricted" title="Capacity limited: new subscriptions can\'t deploy this size and additional quota won\'t be approved">🔒 Limited</span>' : '';
-    const gpu = r.gpuCount > 0 ? `${r.gpuCount}${r.gpuType ? ' ' + escapeHtml(r.gpuType) : ''}` : '<span class="grid-muted">—</span>';
+    const gpu = r.gpuCount > 0 ? `${r.gpuAllocation ?? r.gpuCount}${r.gpuType ? ' ' + escapeHtml(r.gpuType) : ''}` : '<span class="grid-muted">—</span>';
+    const gpuPerf = r.gpuCount > 0 && r.gpuPerfScore != null
+        ? `${r.gpuPerfScore} <span class="grid-muted">${r.gpuPerfProfile === 'ai-compute' ? 'AI' : 'Graphics'}</span>`
+        : '<span class="grid-muted">—</span>';
     const acu = r.acu > 0 ? r.acu : '<span class="grid-muted">—</span>';
     const nameEsc = escapeHtml(r.name);
     const safeName = String(r.name).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -3185,6 +3244,7 @@ function renderGridRow(r, discount) {
         <td class="num">${r.vCPUs || '—'}</td>
         <td class="num">${r.memoryGB != null ? r.memoryGB : '—'}</td>
         <td class="num">${gpu}</td>
+        <td class="num">${gpuPerf}</td>
         <td class="num">${acu}</td>
         <td class="num">${hourly}</td>
         <td class="num">${monthly}</td>
@@ -3278,7 +3338,10 @@ function buildGridExportModel() {
     const currency = gridCurrencyLoaded || 'USD';
 
     const headers = [
-        'Name', 'Family', 'vCPUs', 'Memory (GB)', 'GPU Count', 'GPU Type', 'ACU',
+        'Name', 'Family', 'vCPUs', 'Memory (GB)', 'GPU Count', 'GPU Type',
+        'GPU Allocation', 'GPU Memory (GB)', 'GPU Memory Bandwidth (GB/s)',
+        'GPU Dense FP32 (TFLOPS)', 'GPU Dense FP16/BF16 Tensor (TFLOPS)',
+        'GPU Performance Profile', 'GPU Performance Score (A100 80GB = 100)', 'ACU',
         'vCPUs per Core', 'Architecture', 'CPU Vendor', 'NVMe', 'RDMA', 'Availability Zones',
         `Hourly Linux${discountNote}`, `Monthly Linux${discountNote}`,
         `Hourly Windows${discountNote}`, `Monthly Windows${discountNote}`,
@@ -3292,7 +3355,10 @@ function buildGridExportModel() {
 
     const dataRows = rows.map(r => [
         r.name, r.family || 'N/A', r.vCPUs ?? 'N/A', r.memoryGB ?? 'N/A',
-        r.gpuCount || 0, r.gpuType || 'N/A', r.acu || 'N/A',
+        r.gpuCount || 0, r.gpuType || 'N/A', r.gpuAllocation ?? 'N/A',
+        r.gpuMemoryGB ?? 'N/A', r.gpuMemoryBandwidthGBps ?? 'N/A',
+        r.gpuFp32Tflops ?? 'N/A', r.gpuFp16Tflops ?? 'N/A',
+        r.gpuPerfProfile || 'N/A', r.gpuPerfScore ?? 'N/A', r.acu || 'N/A',
         r.vCPUsPerCore || 'N/A', r.architecture || 'N/A', r.cpuVendor || 'N/A',
         r.nvme ? 'Yes' : 'No', r.rdmaEnabled ? 'Yes' : 'No',
         (r.availabilityZones && r.availabilityZones.length) ? r.availabilityZones.join(' ') : 'N/A',

@@ -160,7 +160,7 @@ if (-not (Get-Module -ListAvailable -Name Az.Compute)) {
 }
 
 # ============================================================================
-# Static data tables ported from web-app/api/function_app.py (source of truth)
+# Static reference data used by this standalone PowerShell surface
 # ============================================================================
 $script:CpuPerformanceTable = @{
     'E5-2673 v3' = @{ Score = 96; Generation = 'Haswell'; Year = 2014 }
@@ -192,6 +192,112 @@ $script:CpuPerformanceTable = @{
     '9754' = @{ Score = 95; Generation = 'Bergamo (Zen 4c)'; Year = 2023 }
     'Cobalt 100' = @{ Score = 120; Generation = 'Cobalt 100 (Neoverse N2)'; Year = 2023 }
     'Ampere Altra' = @{ Score = 95; Generation = 'Ampere Altra (Neoverse N1)'; Year = 2022 }
+}
+
+# Azure documents the accelerator model, allocation, memory, and topology for each
+# N-series VM. Hardware throughput and bandwidth below come only from the vendor's
+# official specifications. Values are per physical accelerator and are theoretical
+# dense peaks; sparse acceleration is deliberately excluded. Fp16Tflops means
+# dense FP16/BF16 Tensor Core/matrix throughput where the official specification
+# supports it, not general vector FP16 throughput.
+$script:GpuAzureSources = @{
+    'NC' = 'https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nc-family'
+    'ND' = 'https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nd-family'
+    'NV' = 'https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nv-family'
+}
+
+$script:GpuPerformanceTable = @{
+    'K80_12GB' = @{
+        Model = 'NVIDIA Tesla K80'; Vendor = 'NVIDIA'; Architecture = 'Kepler'
+        MemoryGB = 12; MemoryBandwidthGBps = 240; Fp32Tflops = 4.37; Fp16Tflops = $null
+        HardwareSource = 'https://images.nvidia.com/content/tesla/pdf/nvidia-tesla-k80.pdf'
+    }
+    'P40_24GB' = @{
+        Model = 'NVIDIA Tesla P40'; Vendor = 'NVIDIA'; Architecture = 'Pascal'
+        MemoryGB = 24; MemoryBandwidthGBps = 346; Fp32Tflops = 12.0; Fp16Tflops = $null
+        HardwareSource = 'https://images.nvidia.com/content/pdf/tesla/184427-Tesla-P40-Datasheet-NV-Final-Letter-Web.pdf'
+    }
+    'P100_16GB' = @{
+        Model = 'NVIDIA Tesla P100'; Vendor = 'NVIDIA'; Architecture = 'Pascal'
+        MemoryGB = 16; MemoryBandwidthGBps = 732; Fp32Tflops = 9.3; Fp16Tflops = $null
+        HardwareSource = 'https://images.nvidia.com/content/pdf/tesla/whitepaper/pascal-architecture-whitepaper.pdf'
+    }
+    'M60_16GB' = @{
+        Model = 'NVIDIA Tesla M60'; Vendor = 'NVIDIA'; Architecture = 'Maxwell'
+        MemoryGB = 16; MemoryBandwidthGBps = 320; Fp32Tflops = 9.6; Fp16Tflops = $null
+        HardwareSource = 'https://images.nvidia.com/content/tesla/pdf/188417-Tesla-M60-DS-A4-fnl-Web.pdf'
+    }
+    'T4_16GB' = @{
+        Model = 'NVIDIA Tesla T4'; Vendor = 'NVIDIA'; Architecture = 'Turing'
+        MemoryGB = 16; MemoryBandwidthGBps = 320; Fp32Tflops = 8.1; Fp16Tflops = 65.0
+        HardwareSource = 'https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/tesla-t4/t4-tensor-core-product-brief.pdf'
+    }
+    'V100_PCIE_16GB' = @{
+        Model = 'NVIDIA Tesla V100 PCIe'; Vendor = 'NVIDIA'; Architecture = 'Volta'
+        MemoryGB = 16; MemoryBandwidthGBps = 900; Fp32Tflops = 14.0; Fp16Tflops = 112.0
+        HardwareSource = 'https://images.nvidia.com/content/volta-architecture/pdf/volta-architecture-whitepaper.pdf'
+    }
+    'V100_SXM2_32GB' = @{
+        Model = 'NVIDIA Tesla V100 SXM2'; Vendor = 'NVIDIA'; Architecture = 'Volta'
+        MemoryGB = 32; MemoryBandwidthGBps = 900; Fp32Tflops = 15.7; Fp16Tflops = 125.0
+        HardwareSource = 'https://images.nvidia.com/content/volta-architecture/pdf/volta-architecture-whitepaper.pdf'
+    }
+    'A10_24GB' = @{
+        Model = 'NVIDIA A10'; Vendor = 'NVIDIA'; Architecture = 'Ampere'
+        MemoryGB = 24; MemoryBandwidthGBps = 600; Fp32Tflops = 31.2; Fp16Tflops = 125.0
+        HardwareSource = 'https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a10/pdf/a10-datasheet.pdf'
+    }
+    'A100_PCIE_80GB' = @{
+        Model = 'NVIDIA A100 PCIe'; Vendor = 'NVIDIA'; Architecture = 'Ampere'
+        MemoryGB = 80; MemoryBandwidthGBps = 1935; Fp32Tflops = 19.5; Fp16Tflops = 312.0
+        HardwareSource = 'https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-nvidia-us-2188504-web.pdf'
+    }
+    'A100_SXM_40GB' = @{
+        Model = 'NVIDIA A100 SXM'; Vendor = 'NVIDIA'; Architecture = 'Ampere'
+        MemoryGB = 40; MemoryBandwidthGBps = 1555; Fp32Tflops = 19.5; Fp16Tflops = 312.0
+        HardwareSource = 'https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-nvidia-us-2188504-web.pdf'
+    }
+    'A100_SXM_80GB' = @{
+        Model = 'NVIDIA A100 SXM'; Vendor = 'NVIDIA'; Architecture = 'Ampere'
+        MemoryGB = 80; MemoryBandwidthGBps = 2039; Fp32Tflops = 19.5; Fp16Tflops = 312.0
+        HardwareSource = 'https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-nvidia-us-2188504-web.pdf'
+    }
+    'H100_SXM_80GB' = @{
+        Model = 'NVIDIA H100 SXM'; Vendor = 'NVIDIA'; Architecture = 'Hopper'
+        MemoryGB = 80; MemoryBandwidthGBps = 3350; Fp32Tflops = 66.9; Fp16Tflops = 989.0
+        HardwareSource = 'https://resources.nvidia.com/en-us-tensor-core/nvidia-tensor-core-gpu-datasheet'
+    }
+    'H100_NVL_94GB' = @{
+        Model = 'NVIDIA H100 NVL'; Vendor = 'NVIDIA'; Architecture = 'Hopper'
+        MemoryGB = 94; MemoryBandwidthGBps = 3900; Fp32Tflops = 60.0; Fp16Tflops = 835.0
+        HardwareSource = 'https://resources.nvidia.com/en-us-tensor-core/nvidia-h100-nvl-datasheet'
+    }
+    'MI25_16GB' = @{
+        Model = 'AMD Instinct MI25'; Vendor = 'AMD'; Architecture = 'Vega'
+        MemoryGB = 16; MemoryBandwidthGBps = 484; Fp32Tflops = 12.3; Fp16Tflops = $null
+        HardwareSource = 'https://www.amd.com/system/files/documents/amd-radeon-instinct-mi25-datasheet.pdf'
+    }
+    'MI300X_192GB' = @{
+        Model = 'AMD Instinct MI300X'; Vendor = 'AMD'; Architecture = 'CDNA 3'
+        MemoryGB = 192; MemoryBandwidthGBps = 5300; Fp32Tflops = 163.4; Fp16Tflops = 1307.4
+        HardwareSource = 'https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/product-briefs/amd-instinct-mi300x-platform-brochure.pdf'
+    }
+    # Microsoft documents V710 allocation and memory, but AMD currently publishes
+    # no first-party specification supporting the exact performance fields used here.
+    'V710_24GB' = @{
+        Model = 'AMD Radeon PRO V710'; Vendor = 'AMD'; Architecture = 'RDNA 3'
+        MemoryGB = 24; MemoryBandwidthGBps = $null; Fp32Tflops = $null; Fp16Tflops = $null
+        HardwareSource = $null
+    }
+}
+
+# One NVIDIA A100 PCIe 80 GB is 100. Scores are workload-oriented composites,
+# not benchmark results.
+$script:GpuScoreBaseline = @{
+    MemoryGB = 80.0
+    MemoryBandwidthGBps = 1935.0
+    Fp32Tflops = 19.5
+    Fp16Tflops = 312.0
 }
 
 $script:SeriesCpuMap = @{
@@ -527,6 +633,214 @@ function Get-CpuPerformance {
         Year       = $firstKnownYear
         CpuModels  = $cpuIds
     }
+}
+
+function Get-GpuProfile {
+    param([Parameter(Mandatory = $true)][string]$SkuName)
+
+    $family = $SkuName -replace '^Standard_', '' -replace '^Basic_', ''
+    if ($family -match '^(?:NC|NCC|ND|NP)') { return 'ai-compute' }
+    if ($family -match '^NV') { return 'graphics' }
+    return $null
+}
+
+function Get-GpuSizeNumber {
+    param([Parameter(Mandatory = $true)][string]$SkuName)
+
+    $match = [regex]::Match(
+        $SkuName,
+        '^(?:Standard_|Basic_)?[A-Z]+(\d+)',
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    )
+    if ($match.Success) { return [int]$match.Groups[1].Value }
+    return $null
+}
+
+function Get-GpuReferenceId {
+    <#
+    .SYNOPSIS
+        Resolve the exact accelerator variant documented for an Azure N-series SKU.
+    #>
+    param([Parameter(Mandatory = $true)][string]$SkuName)
+
+    $upper = $SkuName.ToUpperInvariant()
+    if ($upper.Contains('_MI300X_')) { return 'MI300X_192GB' }
+    if ($upper.Contains('_V710_')) { return 'V710_24GB' }
+    if ($upper.Contains('_H100_')) {
+        if ($upper.StartsWith('STANDARD_ND')) { return 'H100_SXM_80GB' }
+        return 'H100_NVL_94GB'
+    }
+    if ($upper.Contains('_A100_')) {
+        if ($SkuName -match '^Standard_ND\d+amsr_A100_v4$') { return 'A100_SXM_80GB' }
+        if ($upper.StartsWith('STANDARD_ND')) { return 'A100_SXM_40GB' }
+        return 'A100_PCIE_80GB'
+    }
+    if ($SkuName -match '^Standard_ND\d+asr_v4$') { return 'A100_SXM_40GB' }
+    if ($upper.Contains('_A10_')) { return 'A10_24GB' }
+    if ($upper.Contains('_T4_') -or $SkuName -match '^Standard_NC\d+as_T4_v3$') {
+        return 'T4_16GB'
+    }
+    if ($SkuName -match '^Standard_ND\d+rs_v2$') { return 'V100_SXM2_32GB' }
+    if ($SkuName -match '^Standard_NC\d+(?:r|s|rs)?_v3$') { return 'V100_PCIE_16GB' }
+    if ($SkuName -match '^Standard_N[CD]\d+(?:r|s|rs)?_v2$') { return 'P100_16GB' }
+    if ($SkuName -match '^Standard_ND\d+(?:r|s|rs)?$') { return 'P40_24GB' }
+    if ($SkuName -match '^Standard_NC\d+(?:r|s|rs)?$') { return 'K80_12GB' }
+    if ($SkuName -match '^Standard_NV\d+as_v4$') { return 'MI25_16GB' }
+    if ($SkuName -match '^Standard_NV\d+s?_v3$' -or $SkuName -match '^Standard_NV\d+$') {
+        return 'M60_16GB'
+    }
+    return $null
+}
+
+function Get-GpuAllocation {
+    <#
+    .SYNOPSIS
+        Return Azure's documented physical-GPU allocation, including fractions.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$SkuName,
+        [Parameter(Mandatory = $false)][double]$ReportedCount = 0
+    )
+
+    $size = Get-GpuSizeNumber -SkuName $SkuName
+    $upper = $SkuName.ToUpperInvariant()
+
+    if ($null -ne $size -and $upper -match '^STANDARD_NV\d+AS_V4$') {
+        $allocations = @{ 4 = 0.125; 8 = 0.25; 16 = 0.5; 32 = 1.0 }
+        if ($allocations.ContainsKey($size)) { return [double]$allocations[$size] }
+        return 0.0
+    }
+    if ($null -ne $size -and $upper.Contains('_A10_')) {
+        $allocations = @{ 6 = (1.0 / 6.0); 12 = (1.0 / 3.0); 18 = 0.5; 36 = 1.0; 72 = 2.0 }
+        if ($allocations.ContainsKey($size)) { return [double]$allocations[$size] }
+        return 0.0
+    }
+    if ($null -ne $size -and $upper.Contains('_V710_')) {
+        $allocations = @{ 4 = (1.0 / 6.0); 8 = (1.0 / 3.0); 12 = 0.5; 24 = 1.0; 28 = 1.0 }
+        if ($allocations.ContainsKey($size)) { return [double]$allocations[$size] }
+        return 0.0
+    }
+    if ($null -ne $size -and $upper -match '^STANDARD_NV\d+$') {
+        $allocations = @{ 6 = 0.5; 12 = 1.0; 24 = 2.0 }
+        if ($allocations.ContainsKey($size)) { return [double]$allocations[$size] }
+    }
+    return [double]$ReportedCount
+}
+
+function Get-GpuWeightedScore {
+    <#
+    .SYNOPSIS
+        Calculate an A100 PCIe 80 GB-normalized theoretical GPU score.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][PSCustomObject]$Metrics,
+        [Parameter(Mandatory = $true)][ValidateSet('ai-compute', 'graphics')][string]$Profile
+    )
+
+    if ($Profile -eq 'ai-compute') {
+        if ($null -eq $Metrics.GpuFp16Tflops -or
+            $null -eq $Metrics.GpuMemoryBandwidthGBps -or
+            $null -eq $Metrics.GpuMemoryGB) {
+            return $null
+        }
+        $score = (
+            ([double]$Metrics.GpuFp16Tflops / $script:GpuScoreBaseline.Fp16Tflops) * 0.65 +
+            ([double]$Metrics.GpuMemoryBandwidthGBps / $script:GpuScoreBaseline.MemoryBandwidthGBps) * 0.20 +
+            ([double]$Metrics.GpuMemoryGB / $script:GpuScoreBaseline.MemoryGB) * 0.15
+        ) * 100
+    }
+    else {
+        if ($null -eq $Metrics.GpuFp32Tflops -or
+            $null -eq $Metrics.GpuMemoryBandwidthGBps -or
+            $null -eq $Metrics.GpuMemoryGB) {
+            return $null
+        }
+        $score = (
+            ([double]$Metrics.GpuFp32Tflops / $script:GpuScoreBaseline.Fp32Tflops) * 0.70 +
+            ([double]$Metrics.GpuMemoryBandwidthGBps / $script:GpuScoreBaseline.MemoryBandwidthGBps) * 0.20 +
+            ([double]$Metrics.GpuMemoryGB / $script:GpuScoreBaseline.MemoryGB) * 0.10
+        ) * 100
+    }
+    return [Math]::Round($score, 1)
+}
+
+function Get-GpuScoreForProfile {
+    param(
+        [Parameter(Mandatory = $false)]$Metrics,
+        [Parameter(Mandatory = $false)][string]$Profile
+    )
+
+    if ($null -eq $Metrics) { return $null }
+    if ($Profile -eq 'ai-compute') { return $Metrics.GpuAiScore }
+    if ($Profile -eq 'graphics') { return $Metrics.GpuGraphicsScore }
+    return $null
+}
+
+function Get-GpuPerformance {
+    <#
+    .SYNOPSIS
+        Return first-party-sourced, VM-level theoretical GPU metrics for a SKU.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$SkuName,
+        [Parameter(Mandatory = $false)][double]$ReportedCount = 0
+    )
+
+    $referenceId = Get-GpuReferenceId -SkuName $SkuName
+    if (-not $referenceId -or -not $script:GpuPerformanceTable.ContainsKey($referenceId)) {
+        return $null
+    }
+
+    $spec = $script:GpuPerformanceTable[$referenceId]
+    $allocation = Get-GpuAllocation -SkuName $SkuName -ReportedCount $ReportedCount
+    if ($allocation -le 0) { return $null }
+
+    $totalMemory = if ($null -ne $spec.MemoryGB) {
+        [Math]::Round([double]$spec.MemoryGB * $allocation, 2)
+    } else { $null }
+    $totalBandwidth = if ($null -ne $spec.MemoryBandwidthGBps) {
+        [Math]::Round([double]$spec.MemoryBandwidthGBps * $allocation, 2)
+    } else { $null }
+    $totalFp32 = if ($null -ne $spec.Fp32Tflops) {
+        [Math]::Round([double]$spec.Fp32Tflops * $allocation, 2)
+    } else { $null }
+    $totalFp16 = if ($null -ne $spec.Fp16Tflops) {
+        [Math]::Round([double]$spec.Fp16Tflops * $allocation, 2)
+    } else { $null }
+
+    $profile = Get-GpuProfile -SkuName $SkuName
+    $family = if ($SkuName -match '^(?:Standard_|Basic_)?ND') {
+        'ND'
+    } elseif ($SkuName -match '^(?:Standard_|Basic_)?(?:NC|NCC)') {
+        'NC'
+    } else {
+        'NV'
+    }
+
+    $metrics = [PSCustomObject]@{
+        GpuReferenceId            = $referenceId
+        GpuType                   = $spec.Model
+        GpuVendor                 = $spec.Vendor
+        GpuArchitecture           = $spec.Architecture
+        GpuAllocation             = [Math]::Round($allocation, 4)
+        GpuMemoryGB               = $totalMemory
+        GpuMemoryBandwidthGBps    = $totalBandwidth
+        GpuFp32Tflops             = $totalFp32
+        GpuFp16Tflops             = $totalFp16
+        GpuPerfProfile            = $profile
+        GpuPerfScore              = $null
+        GpuAiScore                = $null
+        GpuGraphicsScore          = $null
+        GpuAzureSource            = $script:GpuAzureSources[$family]
+        GpuHardwareSource         = $spec.HardwareSource
+        GpuAzureSourceScope       = 'azure-sku-model-allocation-memory-topology'
+        GpuHardwareSourceScope    = if ($spec.HardwareSource) { 'theoretical-dense-throughput-bandwidth' } else { $null }
+        GpuPerformanceBasis       = 'theoretical-dense-peak'
+    }
+    $metrics.GpuAiScore = Get-GpuWeightedScore -Metrics $metrics -Profile 'ai-compute'
+    $metrics.GpuGraphicsScore = Get-GpuWeightedScore -Metrics $metrics -Profile 'graphics'
+    $metrics.GpuPerfScore = Get-GpuScoreForProfile -Metrics $metrics -Profile $profile
+    return $metrics
 }
 
 function Get-CpuVendor {
@@ -1203,6 +1517,14 @@ foreach ($capability in $targetSku.Capabilities) {
     $targetCapabilities[$capability.Name] = $capability.Value
 }
 Set-EffectiveVCpus -Capabilities $targetCapabilities
+$targetReportedGpuCount = 0.0
+if ($targetCapabilities.ContainsKey('GPUs')) {
+    [void][double]::TryParse([string]$targetCapabilities['GPUs'], [ref]$targetReportedGpuCount)
+}
+$targetGpuPerf = Get-GpuPerformance -SkuName $SkuName -ReportedCount $targetReportedGpuCount
+if ($targetGpuPerf) {
+    $targetCapabilities['GPUs'] = $targetGpuPerf.GpuAllocation
+}
 
 # Get availability zones for target SKU
 $targetZones = @()
@@ -1229,6 +1551,24 @@ $targetGrowthRestriction = Get-GrowthRestrictionInfo -SkuName $SkuName
 Write-Host "CPU Vendor: $targetVendor" -ForegroundColor Cyan
 if ($targetCpuPerf) {
     Write-Host "CPU Generation: $($targetCpuPerf.Generation) (perf score $($targetCpuPerf.Score))" -ForegroundColor Cyan
+}
+if ($targetGpuPerf) {
+    Write-Host "GPU: $($targetGpuPerf.GpuType) x $($targetGpuPerf.GpuAllocation) ($($targetGpuPerf.GpuMemoryGB) GB allocated)" -ForegroundColor Cyan
+    if ($null -ne $targetGpuPerf.GpuPerfScore) {
+        Write-Host "GPU Performance: $($targetGpuPerf.GpuPerfProfile) score $($targetGpuPerf.GpuPerfScore) (A100 PCIe 80 GB = 100)" -ForegroundColor Cyan
+        $peakMetrics = @()
+        if ($null -ne $targetGpuPerf.GpuFp32Tflops) { $peakMetrics += "FP32 $($targetGpuPerf.GpuFp32Tflops) TFLOPS" }
+        if ($null -ne $targetGpuPerf.GpuFp16Tflops) { $peakMetrics += "FP16/BF16 tensor $($targetGpuPerf.GpuFp16Tflops) TFLOPS" }
+        if ($null -ne $targetGpuPerf.GpuMemoryBandwidthGBps) { $peakMetrics += "bandwidth $($targetGpuPerf.GpuMemoryBandwidthGBps) GB/s" }
+        Write-Host "  Theoretical dense peaks: $($peakMetrics -join '; ')"
+    }
+    else {
+        Write-Host "GPU Performance: unsupported by the first-party reference; GPU count/allocation fallback applies." -ForegroundColor Yellow
+    }
+    Write-Host "  Azure mapping: $($targetGpuPerf.GpuAzureSource)"
+    if ($targetGpuPerf.GpuHardwareSource) {
+        Write-Host "  Hardware metrics: $($targetGpuPerf.GpuHardwareSource)"
+    }
 }
 if ($targetRetirement) {
     Write-Host "[!] Retirement: $($targetRetirement.RetirementStatus) - $($targetRetirement.RetirementDate)" -ForegroundColor Red
@@ -1405,16 +1745,13 @@ if ($targetHasNVMe) {
     }
 }
 
-# Check if target has GPU support
-$targetHasGPU = $targetCapabilities.ContainsKey('GPUs') -and
-                $null -ne $targetCapabilities['GPUs'] -and
-                $targetCapabilities['GPUs'] -ne '' -and
-                $targetCapabilities['GPUs'] -ne '0' -and
-                [double]$targetCapabilities['GPUs'] -gt 0
+# Check if target has GPU support. Known fractional allocations are detected from
+# the Azure SKU name even when the Resource SKUs API reports a whole-device count.
+$targetHasGPU = $targetReportedGpuCount -gt 0 -or $null -ne $targetGpuPerf
 
 if ($targetHasGPU) {
-    $targetGPUCount = [double]$targetCapabilities['GPUs']
-    Write-Host "  Target has GPUs: $targetGPUCount" -ForegroundColor Green
+    $targetGPUCount = if ($targetGpuPerf) { $targetGpuPerf.GpuAllocation } else { $targetReportedGpuCount }
+    Write-Host "  Target GPU allocation: $targetGPUCount" -ForegroundColor Green
     if ($RequireGPUMatch) {
         Write-Host "  Filtering to only GPU-enabled SKUs" -ForegroundColor Yellow
     }
@@ -1603,12 +1940,13 @@ $similarSkus = $allSkus | Where-Object {
         $nvmeFilterPass = $false
     }
 
-    # Check if this SKU has GPU
-    $skuHasGPU = $skuCapabilities.ContainsKey('GPUs') -and
-                 $null -ne $skuCapabilities['GPUs'] -and
-                 $skuCapabilities['GPUs'] -ne '' -and
-                 $skuCapabilities['GPUs'] -ne '0' -and
-                 [double]$skuCapabilities['GPUs'] -gt 0
+    # Check if this SKU has GPU and enrich its documented VM-level allocation.
+    $skuReportedGpuCount = 0.0
+    if ($skuCapabilities.ContainsKey('GPUs')) {
+        [void][double]::TryParse([string]$skuCapabilities['GPUs'], [ref]$skuReportedGpuCount)
+    }
+    $skuGpuPerf = Get-GpuPerformance -SkuName $sku.Name -ReportedCount $skuReportedGpuCount
+    $skuHasGPU = $skuReportedGpuCount -gt 0 -or $null -ne $skuGpuPerf
 
     # If RequireGPUMatch is set and target has GPU, only consider SKUs with GPU
     $gpuFilterPass = $true
@@ -1655,6 +1993,7 @@ $similarSkus = $allSkus | Where-Object {
         $weightedScore = 0
         $applicableWeight = 0
         $capabilityScores = @{}
+        $gpuScoringBasis = if ($targetHasGPU) { 'allocation-count-fallback' } else { $null }
 
         foreach ($capName in $targetCapabilities.Keys) {
             $targetValue = $targetCapabilities[$capName]
@@ -1663,8 +2002,31 @@ $similarSkus = $allSkus | Where-Object {
             # Get the weight for this capability (default to 0.5 if not specified)
             $weight = if ($capabilityWeights.ContainsKey($capName)) { $capabilityWeights[$capName] } else { $WeightFeatures * 0.5 }
 
-            # Calculate difference (0 = identical, 1 = completely different)
-            $difference = Get-CapabilityDifference -CapabilityName $capName -TargetValue $targetValue -CompareValue $skuValue
+            # Prefer the target workload profile's theoretical performance score.
+            # If either accelerator lacks supported performance data, preserve the
+            # legacy GPU-count comparison.
+            if ($capName -eq 'GPUs') {
+                $gpuProfile = if ($targetGpuPerf) { $targetGpuPerf.GpuPerfProfile } else { $null }
+                $targetGpuScore = Get-GpuScoreForProfile -Metrics $targetGpuPerf -Profile $gpuProfile
+                $skuGpuScore = Get-GpuScoreForProfile -Metrics $skuGpuPerf -Profile $gpuProfile
+                if ($null -ne $targetGpuScore -and [double]$targetGpuScore -gt 0 -and $null -ne $skuGpuScore) {
+                    $gpuScoringBasis = "theoretical-$gpuProfile"
+                    $difference = if ([double]$skuGpuScore -ge [double]$targetGpuScore) {
+                        0.0
+                    } else {
+                        ([double]$targetGpuScore - [double]$skuGpuScore) / [double]$targetGpuScore
+                    }
+                }
+                else {
+                    $targetGpuCountForScoring = if ($targetGpuPerf) { $targetGpuPerf.GpuAllocation } else { $targetReportedGpuCount }
+                    $skuGpuCountForScoring = if ($skuGpuPerf) { $skuGpuPerf.GpuAllocation } else { $skuReportedGpuCount }
+                    $difference = Get-CapabilityDifference -CapabilityName $capName -TargetValue $targetGpuCountForScoring -CompareValue $skuGpuCountForScoring
+                }
+            }
+            else {
+                # Calculate difference (0 = identical, 1 = completely different)
+                $difference = Get-CapabilityDifference -CapabilityName $capName -TargetValue $targetValue -CompareValue $skuValue
+            }
 
             # Calculate similarity (1 = identical, 0 = completely different)
             $similarity = 1 - [Math]::Min($difference, 1.0)
@@ -1748,6 +2110,30 @@ $similarSkus = $allSkus | Where-Object {
                 CpuPerfScore                      = if ($cpuPerf) { $cpuPerf.Score } else { 'N/A' }
                 vCPUs                             = $cores
                 MemoryGB                          = $memoryGB
+                GPUs                              = $skuReportedGpuCount
+                GpuReferenceId                    = if ($skuGpuPerf) { $skuGpuPerf.GpuReferenceId } else { $null }
+                GpuType                           = if ($skuGpuPerf) { $skuGpuPerf.GpuType } elseif ($skuHasGPU) { 'Unknown' } else { 'N/A' }
+                GpuVendor                         = if ($skuGpuPerf) { $skuGpuPerf.GpuVendor } else { 'N/A' }
+                GpuArchitecture                   = if ($skuGpuPerf) { $skuGpuPerf.GpuArchitecture } else { 'N/A' }
+                GpuAllocation                     = if ($skuGpuPerf) { $skuGpuPerf.GpuAllocation } elseif ($skuHasGPU) { $skuReportedGpuCount } else { 0 }
+                GpuMemoryGB                       = if ($skuGpuPerf) { $skuGpuPerf.GpuMemoryGB } else { $null }
+                GpuFp32Tflops                     = if ($skuGpuPerf) { $skuGpuPerf.GpuFp32Tflops } else { $null }
+                GpuFp16Tflops                     = if ($skuGpuPerf) { $skuGpuPerf.GpuFp16Tflops } else { $null }
+                GpuFp16Bf16TensorTflops           = if ($skuGpuPerf) { $skuGpuPerf.GpuFp16Tflops } else { $null }
+                GpuMemoryBandwidthGBps            = if ($skuGpuPerf) { $skuGpuPerf.GpuMemoryBandwidthGBps } else { $null }
+                GpuPerfProfile                    = if ($skuGpuPerf) { $skuGpuPerf.GpuPerfProfile } else { $null }
+                GpuPerfScore                      = if ($skuGpuPerf) { $skuGpuPerf.GpuPerfScore } else { $null }
+                GpuAiScore                        = if ($skuGpuPerf) { $skuGpuPerf.GpuAiScore } else { $null }
+                GpuGraphicsScore                  = if ($skuGpuPerf) { $skuGpuPerf.GpuGraphicsScore } else { $null }
+                GpuComparisonProfile              = if ($targetGpuPerf) { $targetGpuPerf.GpuPerfProfile } else { $null }
+                GpuComparisonScore                = if ($targetGpuPerf) { Get-GpuScoreForProfile -Metrics $skuGpuPerf -Profile $targetGpuPerf.GpuPerfProfile } else { $null }
+                GpuSimilarityScore                = if ($capabilityScores.ContainsKey('GPUs')) { $capabilityScores['GPUs'] } else { $null }
+                GpuScoringBasis                   = $gpuScoringBasis
+                GpuPerformanceBasis               = if ($skuGpuPerf) { $skuGpuPerf.GpuPerformanceBasis } else { $null }
+                GpuAzureSource                    = if ($skuGpuPerf) { $skuGpuPerf.GpuAzureSource } else { $null }
+                GpuHardwareSource                 = if ($skuGpuPerf) { $skuGpuPerf.GpuHardwareSource } else { $null }
+                GpuAzureSourceScope               = if ($skuGpuPerf) { $skuGpuPerf.GpuAzureSourceScope } else { $null }
+                GpuHardwareSourceScope            = if ($skuGpuPerf) { $skuGpuPerf.GpuHardwareSourceScope } else { $null }
                 AvailabilityZones                 = $skuZonesDisplay
                 RetirementStatus                  = if ($skuRetirement) { $skuRetirement.RetirementStatus } else { 'Active' }
                 GrowthRestricted                  = if ($skuGrowthRestriction) { 'Yes' } else { 'No' }
@@ -1869,12 +2255,18 @@ if ($similarSkus.Count -gt 0) {
         $displaySkus | Format-Table -AutoSize
     }
     else {
-        # Show condensed view with key metrics - include GPUs if target has them
+        # Show condensed view with key metrics - include theoretical GPU data
+        # only when the target is GPU-enabled.
         $baseProps = @('SkuName', 'RecommendationScore', 'SimilarityScore', 'CpuVendor', 'CpuGeneration', 'vCPUs', 'MemoryGB')
-        if ($targetHasGPU) { $baseProps += 'GPUs' }
+        if ($targetHasGPU) {
+            $baseProps += @('GpuType', 'GpuAllocation', 'GpuMemoryGB', 'GpuSimilarityScore')
+        }
         $baseProps += @('AvailabilityZones', 'RetirementStatus', @{ Name = 'Limited'; Expression = { $_.GrowthRestricted } }, "MonthlyPrice($CurrencyCode)", "CostPerVCPU($CurrencyCode)")
         if ($CheckRegion) { $baseProps += "AvailableIn_$CheckRegion" }
         $displaySkus | Format-Table -Property $baseProps -AutoSize
+        if ($targetGpuPerf) {
+            Write-Host "  GPU comparison score uses the target's $($targetGpuPerf.GpuPerfProfile) profile; theoretical A100 PCIe 80 GB = 100." -ForegroundColor DarkGray
+        }
     }
 
     $restrictedCount = ($similarSkus | Where-Object { $_.GrowthRestricted -eq 'Yes' }).Count

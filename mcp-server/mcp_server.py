@@ -213,6 +213,10 @@ async def list_vm_skus(location: str) -> dict:
     Returns each SKU's name, vCPU count, memory (GB), CPU vendor (Intel/AMD/ARM),
     architecture (x64/Arm64), CPU generation (e.g. "Ice Lake", "Genoa (Zen 4)",
     "Cobalt 100 (Neoverse N2)"), and a normalized CPU performance score (Ice Lake = 100).
+    GPU-enabled sizes also include accelerator model/architecture, allocated GPU fraction
+    or count, VM-level memory, memory bandwidth, dense FP32 and FP16/BF16 tensor peaks,
+    and a workload-aware score normalized to A100 80 GB = 100. GPU fields are null or
+    absent for non-GPU sizes and unsupported first-party specifications.
     Each SKU also carries pricing across models (Linux/Windows pay-as-you-go, Linux
     Spot, and 1-year reserved) and, when applicable, retirement info
     (retirementStatus "Announced"/"Retired", retirementDate, migrationGuideUrl) and
@@ -252,7 +256,11 @@ async def find_alternative_skus(
     Returns the target SKU details and a list of alternatives sorted best-first.
     Each alternative includes its vCPUs, memory, CPU vendor, CPU generation, CPU
     performance score (normalized to Ice Lake = 100, comparable across
-    Intel/AMD/ARM), pricing (hourly/monthly USD), and availability zones.
+    Intel/AMD/ARM), pricing (hourly/monthly USD), and availability zones. GPU-enabled
+    alternatives include VM-level accelerator metrics and a workload-aware gpuComparisonScore
+    (A100 80 GB = 100): NC/ND/NCC use AI/compute and NV uses graphics. Scores use
+    theoretical dense peaks, not application benchmarks. When first-party performance
+    data is unavailable, GPU matching falls back to the legacy GPU-count comparison.
 
     TWO SCORES ARE RETURNED AND THEY MEAN DIFFERENT THINGS:
       * similarityScore     — pure technical spec fit (vCPU, memory, storage, network,
@@ -301,6 +309,11 @@ async def find_alternative_skus(
     Use the cpuPerfScore field to compare relative CPU performance across architectures.
     Higher scores mean faster per-vCPU performance. Examples: Ice Lake = 100,
     Sapphire Rapids = 115, Genoa (Zen 4) = 122, Cobalt 100 (ARM) = 120.
+    For GPU targets, use gpuComparisonProfile and gpuComparisonScore together; the
+    comparison profile always comes from the target family so cross-family candidates
+    are evaluated on the same workload. Also inspect the raw
+    gpuMemoryGB, gpuMemoryBandwidthGBps, gpuFp32Tflops, and gpuFp16Tflops fields.
+    gpuAzureSource and gpuHardwareSource identify the first-party provenance.
 
     Args:
         target_sku:           Target VM SKU name, e.g. "Standard_D4s_v5"
@@ -355,7 +368,9 @@ async def compare_sku_details(
     Get a detailed side-by-side comparison between two specific Azure VM SKUs.
 
     Shows field-by-field differences across compute (vCPUs, memory, CPU generation,
-    CPU performance score), storage (IOPS, throughput, disks, NVMe), networking
+    CPU performance score), GPU performance when applicable (allocation, memory,
+    bandwidth, dense FP32/FP16 peaks, and workload-aware score), storage (IOPS,
+    throughput, disks, NVMe), networking
     (NICs, accelerated networking), features (Premium IO, encryption, ephemeral OS
     disk, Hyper-V Gen 2), and pricing — pay-as-you-go plus Linux Spot and 1-year
     reserved, with percentage change and cost-per-vCPU metrics. CPU performance scores
@@ -448,7 +463,8 @@ async def list_region_vm_grid(
     List EVERY Azure VM SKU available in a region with full specs and pricing in one
     payload — the data behind the "Browse all VMs" grid.
 
-    Each row includes vCPUs, memory, GPU, CPU vendor/generation/performance score,
+    Each row includes vCPUs, memory, GPU allocation/model and first-party theoretical
+    performance fields when available, CPU vendor/generation/performance score,
     storage/network capabilities, retirement status (retirementStatus/retirementDate/
     migrationGuideUrl when applicable), capacity-limitation status (growthRestricted/
     growthRestrictionSeries/recommendedTargets when applicable), and pricing across pricing models: Linux and

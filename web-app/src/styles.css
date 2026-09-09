@@ -1333,6 +1333,12 @@ body {
        container, so the sticky thead anchors to it rather than the viewport. */
     .grid-table-wrap { overflow-x: auto; }
 }
+
+.metric-basis {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 400;
+}
 @media (max-width: 900px) {
     /* Single column: source panel flows at its natural height above the results. */
     .content-grid {
