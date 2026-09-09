@@ -32,6 +32,8 @@ _func_mod.TimerRequest = object
 
 _tables_mod = sys.modules['azure.data.tables']
 _tables_mod.TableServiceClient = type('TableServiceClient', (), {})
+_tables_mod.EntityProperty = type('EntityProperty', (), {})
+_tables_mod.EdmType = types.SimpleNamespace(INT64='Int64')
 
 _identity_mod = sys.modules['azure.identity']
 _identity_mod.DefaultAzureCredential = type('DefaultAzureCredential', (), {})
@@ -50,7 +52,9 @@ from function_app import (
     calculate_price_diff,
     calculate_boolean_diff,
     calculate_similarity,
+    calculate_detailed_differences,
     _asymmetric_score,
+    get_gpu_performance,
     select_region_prices,
     _is_payg_item,
     build_grid_row,
@@ -74,7 +78,7 @@ class TestBuildGridRow:
         assert build_grid_row({'name': 'Standard_E96-24ads_v6'})['family'] == 'Eadsv6'
 
     @pytest.mark.unit
-    def test_nvme_and_gpu_fields_pass_through(self):
+    def test_nvme_and_gpu_fields_are_enriched_from_reference_data(self):
         row = build_grid_row({
             'name': 'Standard_NC24ads_A100_v4',
             'nvme': True,
@@ -84,7 +88,7 @@ class TestBuildGridRow:
 
         assert row['nvme'] is True
         assert row['gpuCount'] == 1
-        assert row['gpuType'] == 'A100'
+        assert row['gpuType'] == 'NVIDIA A100 PCIe'
 
     @pytest.mark.unit
     def test_zero_and_missing_prices_are_none(self):
@@ -134,6 +138,146 @@ class TestBuildGridRow:
 
         assert row['availabilityZones'] == ['1', '2', '3']
         assert empty_row['availabilityZones'] == []
+
+
+# ============================================================================
+# GPU performance tests
+# ============================================================================
+
+class TestGpuPerformance:
+
+    @pytest.mark.unit
+    def test_a100_baseline_and_provenance(self):
+        gpu = get_gpu_performance('Standard_NC24ads_A100_v4', 1)
+
+        assert gpu['gpuType'] == 'NVIDIA A100 PCIe'
+        assert gpu['gpuAllocation'] == 1
+        assert gpu['gpuMemoryGB'] == 80
+        assert gpu['gpuPerfProfile'] == 'ai-compute'
+        assert gpu['gpuPerfScore'] == pytest.approx(100.0)
+        assert gpu['gpuAzureSource'].startswith('https://learn.microsoft.com/')
+        assert gpu['gpuHardwareSource'].startswith('https://www.nvidia.com/')
+
+    @pytest.mark.unit
+    def test_multi_gpu_totals_scale_with_allocation(self):
+        gpu = get_gpu_performance('Standard_ND96isr_H100_v5', 8)
+
+        assert gpu['gpuAllocation'] == 8
+        assert gpu['gpuMemoryGB'] == 640
+        assert gpu['gpuMemoryBandwidthGBps'] == 26800
+        assert gpu['gpuPerfScore'] > 100
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ('sku_name', 'expected_type'),
+        [
+            ('Standard_NC6s_v3', 'NVIDIA Tesla V100 PCIe'),
+            ('Standard_NC6s_v2', 'NVIDIA Tesla P100'),
+            ('Standard_ND6s', 'NVIDIA Tesla P40'),
+            ('Standard_NC24r', 'NVIDIA Tesla K80'),
+            ('Standard_ND96asr_v4', 'NVIDIA A100 SXM'),
+            ('Standard_ND96amsr_A100_v4', 'NVIDIA A100 SXM'),
+        ]
+    )
+    def test_legacy_gpu_suffixes_are_mapped(self, sku_name, expected_type):
+        assert get_gpu_performance(sku_name, 1)['gpuType'] == expected_type
+
+    @pytest.mark.unit
+    def test_ndm_a100_uses_80gb_variant(self):
+        gpu = get_gpu_performance('Standard_ND96amsr_A100_v4', 8)
+        assert gpu['gpuMemoryGB'] == 640
+
+    @pytest.mark.unit
+    def test_fractional_a10_allocation(self):
+        gpu = get_gpu_performance('Standard_NV6ads_A10_v5', 1)
+
+        assert gpu['gpuAllocation'] == pytest.approx(1 / 6, abs=0.0001)
+        assert gpu['gpuMemoryGB'] == 4
+        assert gpu['gpuPerfProfile'] == 'graphics'
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ('sku_name', 'allocation', 'memory_gb'),
+        [
+            ('Standard_NV6', 0.5, 8),
+            ('Standard_NV12', 1.0, 16),
+            ('Standard_NV24', 2.0, 32),
+        ]
+    )
+    def test_legacy_m60_board_allocations(self, sku_name, allocation, memory_gb):
+        gpu = get_gpu_performance(sku_name, 1)
+        assert gpu['gpuAllocation'] == allocation
+        assert gpu['gpuMemoryGB'] == memory_gb
+
+    @pytest.mark.unit
+    def test_unknown_and_non_gpu_skus_remain_unenriched(self):
+        assert get_gpu_performance('Standard_D4s_v5', 0) is None
+        assert get_gpu_performance('Standard_NX99_unknown_v1', 1) is None
+
+    @pytest.mark.unit
+    def test_unsupported_v710_metrics_remain_null(self):
+        gpu = get_gpu_performance('Standard_NV24ads_V710_v5', 1)
+
+        assert gpu['gpuType'] == 'AMD Radeon PRO V710'
+        assert gpu['gpuMemoryGB'] == 24
+        assert gpu['gpuPerfScore'] is None
+        assert gpu['gpuFp32Tflops'] is None
+        assert gpu['gpuHardwareSource'] is None
+
+    @pytest.mark.unit
+    def test_grid_enriches_gpu_data_from_code_mapping(self):
+        row = build_grid_row({
+            'name': 'Standard_NC24ads_A100_v4',
+            'gpuCount': 1,
+            'gpuType': '',
+        })
+
+        assert row['gpuType'] == 'NVIDIA A100 PCIe'
+        assert row['gpuPerfScore'] == pytest.approx(100.0)
+
+    @pytest.mark.unit
+    def test_capability_extraction_enriches_before_scoring(self):
+        capabilities = extract_capabilities({
+            'name': 'Standard_NC24ads_A100_v4',
+            'capabilities': [
+                {'name': 'GPUs', 'value': '1'},
+                {'name': 'GPUType', 'value': ''},
+            ],
+        })
+
+        assert capabilities['gpuPerfScore'] == pytest.approx(100.0)
+        assert capabilities['gpuAiScore'] == pytest.approx(100.0)
+
+    @pytest.mark.unit
+    def test_non_gpu_grid_shape_is_unchanged(self):
+        row = build_grid_row({'name': 'Standard_D4s_v5', 'gpuCount': 0})
+
+        assert row['gpuCount'] == 0
+        assert row['gpuType'] == ''
+        assert 'gpuPerfScore' not in row
+
+    @pytest.mark.unit
+    def test_detailed_gpu_contract_only_for_gpu_target(self):
+        target = {
+            'name': 'Standard_NC24ads_A100_v4',
+            'vCPUs': 24, 'memoryGB': 220, 'gpuCount': 1,
+        }
+        alternative = {
+            'name': 'Standard_NC40ads_H100_v5',
+            'vCPUs': 40, 'memoryGB': 320, 'gpuCount': 1,
+        }
+        gpu_diff = calculate_detailed_differences(target, alternative, None, None)
+        non_gpu_diff = calculate_detailed_differences(
+            {'name': 'Standard_D4s_v5', 'vCPUs': 4, 'memoryGB': 16, 'gpuCount': 0},
+            alternative,
+            None,
+            None
+        )
+
+        assert gpu_diff['gpu']['profile'] == 'ai-compute'
+        assert gpu_diff['gpu']['performanceScore']['alternative'] > 100
+        assert gpu_diff['gpu']['performanceBasis'] == 'theoretical-dense-peak'
+        assert 'gpu' not in non_gpu_diff
 
 
 # ============================================================================
@@ -698,6 +842,57 @@ def _iso_sku(**overrides):
 class TestSimilarityAsymmetry:
 
     @pytest.mark.unit
+    def test_gpu_performance_shortfall_is_penalized(self):
+        weights = {**DEFAULT_WEIGHTS, 'weightGPU': 1.0,
+                   'weightCPU': 0, 'weightMemory': 0,
+                   'weightStorage': 0, 'weightNetwork': 0, 'weightFeatures': 0}
+        target = _iso_sku(
+            gpuCount=1, gpuPerfProfile='ai-compute',
+            gpuPerfScore=100, gpuAiScore=100
+        )
+        slower = _iso_sku(gpuCount=1, gpuPerfScore=50, gpuAiScore=50)
+        assert calculate_similarity(target, slower, weights) == pytest.approx(50.0)
+
+    @pytest.mark.unit
+    def test_gpu_performance_overshoot_is_not_penalized(self):
+        weights = {**DEFAULT_WEIGHTS, 'weightGPU': 1.0,
+                   'weightCPU': 0, 'weightMemory': 0,
+                   'weightStorage': 0, 'weightNetwork': 0, 'weightFeatures': 0}
+        target = _iso_sku(
+            gpuCount=1, gpuPerfProfile='ai-compute',
+            gpuPerfScore=100, gpuAiScore=100
+        )
+        faster = _iso_sku(gpuCount=8, gpuPerfScore=800, gpuAiScore=800)
+        assert calculate_similarity(target, faster, weights) == pytest.approx(100.0)
+
+    @pytest.mark.unit
+    def test_cross_family_gpu_uses_target_profile(self):
+        weights = {**DEFAULT_WEIGHTS, 'weightGPU': 1.0,
+                   'weightCPU': 0, 'weightMemory': 0,
+                   'weightStorage': 0, 'weightNetwork': 0, 'weightFeatures': 0}
+        target = _iso_sku(
+            gpuCount=1, gpuPerfProfile='ai-compute',
+            gpuPerfScore=100, gpuAiScore=100, gpuGraphicsScore=100
+        )
+        graphics_candidate = _iso_sku(
+            gpuCount=1, gpuPerfProfile='graphics',
+            gpuPerfScore=120, gpuAiScore=40, gpuGraphicsScore=120
+        )
+
+        assert calculate_similarity(target, graphics_candidate, weights) == pytest.approx(40.0)
+
+    @pytest.mark.unit
+    def test_gpu_count_fallback_when_performance_unknown(self):
+        weights = {**DEFAULT_WEIGHTS, 'weightGPU': 1.0,
+                   'weightCPU': 0, 'weightMemory': 0,
+                   'weightStorage': 0, 'weightNetwork': 0, 'weightFeatures': 0}
+        target = _iso_sku(gpuCount=1)
+        same_count = _iso_sku(gpuCount=1)
+        different_count = _iso_sku(gpuCount=2)
+        assert calculate_similarity(target, same_count, weights) == pytest.approx(100.0)
+        assert calculate_similarity(target, different_count, weights) == pytest.approx(0.0)
+
+    @pytest.mark.unit
     def test_storage_overshoot_not_penalized(self):
         weights = {**DEFAULT_WEIGHTS, 'weightStorage': 1.0,
                    'weightCPU': 0, 'weightMemory': 0, 'weightGPU': 0,
@@ -1068,4 +1263,3 @@ class TestBuildHistorySeries:
         result = _build_history_series(client, None, 'eastus', 'Standard_D2s_v5')
         assert len(result['points']) == 2
         assert result['summary']['last'] == 0.11
-

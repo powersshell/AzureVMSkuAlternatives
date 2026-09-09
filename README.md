@@ -9,12 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-08-21
-- **fix:** **The nightly price refresh could drop an entire Azure region and still report success — and it had done so three times in the last two weeks.** `refresh_sku_cache` walks 35 regions in a thread pool, and a region whose retail-pricing fetch comes back empty raises `Bulk pricing fetch for <region> was incomplete (0 pages, 0 items) — refusing to persist partial pricing`. That guard is correct, but the exception was caught, logged, and then **discarded**: the function returned normally, the timer recorded `Success = true`, and a whole region went stale behind a green checkmark. In the last 14 days this hit **westus2 on 08-17 and again on 08-21, and eastus on 08-19**. The existing 30-second retry could never rescue them either — it selected its retry set from the coverage records of regions that completed with zero priced SKUs, and a region that **raised** appends no coverage record at all, so the one failure most in need of a retry was structurally excluded from it. The retry set is now the union of zero-priced **and** raised regions, every region's outcome is emitted as structured telemetry, and the run **raises at the end** if any region failed, produced no pricing, or never reported. Only regions failing *both* attempts trip it.
-- **fix:** **The usage workbook was counting Azure's own housekeeping as application errors, and could not have shown a real one.** The exception tiles ran an unfiltered `AppExceptions` summarize with no `AppRoleName` split, producing ~450 "exceptions" a day. Every one was the same event: `python exited with code 143` — **143 = 128 + 15 = SIGTERM**, the *graceful* shutdown signal Flex Consumption sends when it recycles a Python worker during scaling (an OOM kill would be 137). The event count matches the count of distinct `HostInstanceId` **exactly** (one line per instance recycled), `OperationName` is **empty on all ~1,400** so none was ever attached to a user request, and the same window contains **zero** failed requests. The real defect was the workbook: because both services share one Log Analytics workspace, the Functions API and the MCP Container App were summed into a single alarming number, and 1,400 lifecycle events would have **buried any genuine application exception**. Filtering them out drops the API to **62 `ConnectionAbortedException`** — ordinary client disconnects.
-- **feature:** **New Platform Health section in the usage workbook.** Worker recycles are kept but plotted as **instance churn per hour** rather than as errors, since that is what they measure. Alongside are three refresh tiles: duration by day (noting a *missing* day means the invocation never completed), **regions that failed to refresh**, and **latest per-region outcome**, where any region showing 0% priced is serving stale prices. Every failure tile now groups by `AppRoleName` so the API and MCP server are never blended again.
-- **improvement:** Removed a stale duplicate of the usage workbook. Bumping the workbook's GUID version suffix makes ARM create a **new** resource rather than replace the old one, leaving two workbooks with the identical display name — one still showing the unfiltered pre-fix view. The orphaned v3 was deleted and the bump procedure now documents the cleanup step.
-- **improvement:** Verified there is **no user-facing error to fix** — across 7 days the API served **11,992 requests with zero 5xx** (7 × `400` from input validation working as intended, 4 × `404`, 6 × client disconnects). The 20 failed MCP calls all date to **2026-08-17 and nothing since**, from testing the region-normalization bug fixed that same day.
+### 2026-09-09
+- **feature:** Added first-party GPU performance enrichment for Azure GPU VM sizes across the API, web experience, exports, MCP tools, and PowerShell. GPU recommendations now compare VM-level accelerator memory, bandwidth, dense FP32 and FP16/BF16 tensor throughput with workload-aware AI/compute or graphics scores normalized to an A100 80 GB baseline. Fractional and multi-GPU allocations are supported; unknown metrics remain unavailable and non-GPU behavior is unchanged.
 
 📄 [Full changelog →](CHANGELOG.md)
 
@@ -145,11 +141,11 @@ Similarity Score = Weighted Average of:
   - Example: 16 GB vs 32 GB = 50% match
 
 #### 3. **GPU (Weight: 2.0 by default)**
-- **GPU Count** - Number of GPUs (0, 1, 2, 4, etc.)
-- **GPU Type** - GPU model/family (e.g., Tesla T4, V100)
-- **Score calculation:** Exact match or 0%
-  - Example: 1 GPU vs 1 GPU = 100% match
-  - Example: 1 GPU vs 2 GPUs = 0% match
+- **GPU allocation** - Full, fractional, or multi-GPU allocation exposed by the VM size
+- **GPU model and architecture** - Curated from Microsoft Learn's Azure SKU documentation
+- **Performance metrics** - VM-level accelerator memory, memory bandwidth, dense FP32, and dense FP16/BF16 tensor throughput from first-party Microsoft, NVIDIA, and AMD sources
+- **Workload-aware score** - NC, ND, and NCC use an AI/compute profile; NV uses a graphics profile. Scores are normalized to NVIDIA A100 80 GB = 100.
+- **Fallback:** When first-party performance specifications are unavailable, matching retains the existing GPU-count comparison. These are theoretical peak comparisons, not application benchmarks.
 
 #### 4. **Storage (Weight: 1.0 by default)**
 - **Max Data Disks** - Maximum attachable data disks
@@ -271,6 +267,7 @@ Total Score = (200 + 200 + 90 + 100 + 37.5) / (2 + 2 + 1 + 1 + 0.5)
 - **Retirement awareness** - Retiring SKUs flagged with ⚠️, hidden by default
 - **Growth restriction awareness** - Capacity-limited SKUs flagged with 🔒, shown by default with a ranking penalty and an opt-in hide filter
 - **CPU performance scoring** - Cross-architecture comparison (Intel/AMD/ARM normalized to Ice Lake = 100)
+- **GPU performance scoring** - Workload-aware AI/compute and graphics comparisons with first-party accelerator metrics, normalized to A100 80 GB = 100
 - **CPU generation filter** - Collapsible dropdown to filter by microarchitecture
 
 **🔒 Security:**

@@ -167,6 +167,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
 
         # Extract target capabilities
         target_capabilities = extract_capabilities(target_sku)
+        gpu_comparison_profile = target_capabilities.get('gpuPerfProfile')
 
         # Get pricing for target SKU
         # If USD requested and pricing in cache, use it; otherwise fetch from API
@@ -245,6 +246,13 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                     'capabilities': sku_capabilities
                 }
                 _enrich_cpu_perf(alt, sku['name'])
+                _enrich_gpu_perf(alt, sku['name'], sku_capabilities['gpuCount'])
+                if gpu_comparison_profile:
+                    alt['gpuComparisonProfile'] = gpu_comparison_profile
+                    alt['gpuComparisonScore'] = _gpu_score_for_profile(
+                        alt,
+                        gpu_comparison_profile
+                    )
                 _enrich_network_bw(alt, sku['name'])
 
                 # Retirement + growth-restriction awareness: add status and apply ranking penalties
@@ -387,6 +395,13 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 'capabilities': target_capabilities
         }
         _enrich_cpu_perf(target_sku_data, target_sku['name'])
+        _enrich_gpu_perf(target_sku_data, target_sku['name'], target_capabilities['gpuCount'])
+        if gpu_comparison_profile:
+            target_sku_data['gpuComparisonProfile'] = gpu_comparison_profile
+            target_sku_data['gpuComparisonScore'] = _gpu_score_for_profile(
+                target_sku_data,
+                gpu_comparison_profile
+            )
         _enrich_network_bw(target_sku_data, target_sku['name'])
         # Add retirement + growth restriction info for target SKU
         target_retirement = _get_retirement_info(target_sku['name'])
@@ -968,6 +983,7 @@ def get_sku_from_cache(sku_name: str, location: str) -> dict:
                 'currency': entity.get('pricingCurrency', 'USD')
             }
         
+        _enrich_gpu_perf(entity, sku_name)
         return entity
         
     except Exception as e:
@@ -1033,6 +1049,7 @@ def list_skus(req: func.HttpRequest) -> func.HttpResponse:
                 'cpuGeneration': entity.get('cpuGeneration'),
             }
             _enrich_cpu_perf(sku_data, entity['name'])
+            _enrich_gpu_perf(sku_data, entity['name'], entity.get('gpuCount', 0))
             retirement_info = _get_retirement_info(entity['name'])
             if retirement_info:
                 sku_data.update(retirement_info)
@@ -1142,6 +1159,7 @@ def build_grid_row(entity: Dict, pricing_override: Optional[Dict] = None) -> Dic
         'ri3YearMonthlyWindows': price('ri3YearMonthlyWindows', 'ri3YearMonthlyUSDWindows'),
     }
     _enrich_cpu_perf(row, name)
+    _enrich_gpu_perf(row, name, entity.get('gpuCount', 0))
     retirement_info = _get_retirement_info(name)
     if retirement_info:
         row.update(retirement_info)
@@ -1251,7 +1269,7 @@ def _history_summary(linux_series: List[float]) -> Optional[Dict]:
         return None
     first, last = vals[0], vals[-1]
     pct = round((last - first) / first * 100, 1) if first else 0.0
-    return {
+    result = {
         'first': first,
         'last': last,
         'pctChange': pct,
@@ -1589,6 +1607,7 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
 
     # Seed CPU performance reference table
     seed_cpu_performance_table(table_service)
+    seed_gpu_performance_table(table_service)
 
     def process_region(region):
         logging.info(f"Processing region: {region}")
@@ -1802,7 +1821,7 @@ def extract_capabilities(sku: Dict) -> Dict:
         for cap in sku['capabilities']:
             capabilities[cap['name']] = cap['value']
 
-    return {
+    result = {
         'vCPUs': _effective_vcpus(capabilities),
         'memoryGB': float(capabilities.get('MemoryGB', 0)),
         'maxDataDiskCount': int(capabilities.get('MaxDataDiskCount', 0)),
@@ -1812,7 +1831,7 @@ def extract_capabilities(sku: Dict) -> Dict:
         'acceleratedNetworking': capabilities.get('AcceleratedNetworkingEnabled') == 'True',
         'encryptionAtHost': capabilities.get('EncryptionAtHostSupported') == 'True',
         'gpuCount': int(capabilities.get('GPUs', 0)),
-        'gpuType': capabilities.get('GPUName'),
+        'gpuType': capabilities.get('GPUName') or capabilities.get('GPUType'),
         'nvme': int(capabilities.get('NvmeDiskSizeInMiB', 0)) > 0,
         'uncachedDiskIOPS': int(capabilities.get('UncachedDiskIOPS', 0)),
         'uncachedDiskBytesPerSecond': int(capabilities.get('UncachedDiskBytesPerSecond', 0)),
@@ -1827,6 +1846,8 @@ def extract_capabilities(sku: Dict) -> Dict:
         'confidentialComputingType': capabilities.get('ConfidentialComputingType', '') or '',
         'trustedLaunch': _derive_trusted_launch(capabilities)
     }
+    _enrich_gpu_perf(result, sku.get('name', ''), result['gpuCount'])
+    return result
 
 
 def _asymmetric_score(target_val: float, candidate_val: float, overshoot_factor: float = 1.0) -> float:
@@ -1869,7 +1890,19 @@ def calculate_similarity(target: Dict, candidate: Dict, weights: Dict) -> float:
 
     # GPU comparison
     if target['gpuCount'] > 0 or candidate['gpuCount'] > 0:
-        gpu_match = 100 if target['gpuCount'] == candidate['gpuCount'] else 0
+        target_profile = target.get('gpuPerfProfile')
+        target_gpu_score = _gpu_score_for_profile(target, target_profile)
+        candidate_gpu_score = _gpu_score_for_profile(candidate, target_profile)
+        if target['gpuCount'] > 0 and target_gpu_score and candidate_gpu_score is not None:
+            gpu_match = _asymmetric_score(
+                float(target_gpu_score),
+                float(candidate_gpu_score),
+                overshoot_factor=0.0
+            )
+        else:
+            # Preserve the legacy count comparison for unknown accelerators and
+            # for candidate-only GPUs on a non-GPU target.
+            gpu_match = 100 if target['gpuCount'] == candidate['gpuCount'] else 0
         total_score += gpu_match * weights['weightGPU']
         total_weight += weights['weightGPU']
 
@@ -2429,6 +2462,7 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                     'networkBandwidthMbps': entity.get('networkBandwidthMbps')
                 }
                 _enrich_cpu_perf(sku, entity['name'])
+                _enrich_gpu_perf(sku, entity['name'], entity.get('gpuCount', 0))
                 _enrich_network_bw(sku, entity['name'])
                 skus.append(sku)
             
@@ -2854,6 +2888,290 @@ CPU_PERFORMANCE_TABLE = {
     'Ampere Altra': {'score': 95, 'generation': 'Ampere Altra (Neoverse N1)', 'year': 2022},
 }
 
+# ============================================================================
+# GPU Performance Reference Table
+# ============================================================================
+
+# Azure publishes which accelerator and allocation each VM size receives, but the
+# Resource SKUs API does not expose precision-specific accelerator performance.
+# Keep Azure composition and hardware specifications separate so every value has
+# first-party provenance and an unsupported metric can remain unknown.
+GPU_AZURE_SOURCES = {
+    'NC': 'https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nc-family',
+    'ND': 'https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nd-family',
+    'NV': 'https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nv-family',
+}
+
+# Per physical accelerator. Throughput values are theoretical dense peaks; sparse
+# acceleration is deliberately excluded. VM totals are calculated from the Azure
+# allocation, including fractional NV-series accelerators.
+GPU_PERFORMANCE_TABLE = {
+    'K80_12GB': {
+        'model': 'NVIDIA Tesla K80', 'vendor': 'NVIDIA', 'architecture': 'Kepler',
+        'memoryGB': 12, 'memoryBandwidthGBps': 240, 'fp32Tflops': 4.37, 'fp16Tflops': None,
+        'hardwareSource': 'https://images.nvidia.com/content/tesla/pdf/nvidia-tesla-k80.pdf',
+    },
+    'P40_24GB': {
+        'model': 'NVIDIA Tesla P40', 'vendor': 'NVIDIA', 'architecture': 'Pascal',
+        'memoryGB': 24, 'memoryBandwidthGBps': 346, 'fp32Tflops': 12.0, 'fp16Tflops': None,
+        'hardwareSource': 'https://images.nvidia.com/content/pdf/tesla/184427-Tesla-P40-Datasheet-NV-Final-Letter-Web.pdf',
+    },
+    'P100_16GB': {
+        'model': 'NVIDIA Tesla P100', 'vendor': 'NVIDIA', 'architecture': 'Pascal',
+        'memoryGB': 16, 'memoryBandwidthGBps': 732, 'fp32Tflops': 9.3, 'fp16Tflops': None,
+        'hardwareSource': 'https://images.nvidia.com/content/pdf/tesla/whitepaper/pascal-architecture-whitepaper.pdf',
+    },
+    'M60_16GB': {
+        'model': 'NVIDIA Tesla M60', 'vendor': 'NVIDIA', 'architecture': 'Maxwell',
+        'memoryGB': 16, 'memoryBandwidthGBps': 320, 'fp32Tflops': 9.6, 'fp16Tflops': None,
+        'hardwareSource': 'https://images.nvidia.com/content/tesla/pdf/188417-Tesla-M60-DS-A4-fnl-Web.pdf',
+    },
+    'T4_16GB': {
+        'model': 'NVIDIA Tesla T4', 'vendor': 'NVIDIA', 'architecture': 'Turing',
+        'memoryGB': 16, 'memoryBandwidthGBps': 320, 'fp32Tflops': 8.1, 'fp16Tflops': 65.0,
+        'hardwareSource': 'https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/tesla-t4/t4-tensor-core-product-brief.pdf',
+    },
+    'V100_PCIE_16GB': {
+        'model': 'NVIDIA Tesla V100 PCIe', 'vendor': 'NVIDIA', 'architecture': 'Volta',
+        'memoryGB': 16, 'memoryBandwidthGBps': 900, 'fp32Tflops': 14.0, 'fp16Tflops': 112.0,
+        'hardwareSource': 'https://images.nvidia.com/content/volta-architecture/pdf/volta-architecture-whitepaper.pdf',
+    },
+    'V100_SXM2_32GB': {
+        'model': 'NVIDIA Tesla V100 SXM2', 'vendor': 'NVIDIA', 'architecture': 'Volta',
+        'memoryGB': 32, 'memoryBandwidthGBps': 900, 'fp32Tflops': 15.7, 'fp16Tflops': 125.0,
+        'hardwareSource': 'https://images.nvidia.com/content/volta-architecture/pdf/volta-architecture-whitepaper.pdf',
+    },
+    'A10_24GB': {
+        'model': 'NVIDIA A10', 'vendor': 'NVIDIA', 'architecture': 'Ampere',
+        'memoryGB': 24, 'memoryBandwidthGBps': 600, 'fp32Tflops': 31.2, 'fp16Tflops': 125.0,
+        'hardwareSource': 'https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a10/pdf/a10-datasheet.pdf',
+    },
+    'A100_PCIE_80GB': {
+        'model': 'NVIDIA A100 PCIe', 'vendor': 'NVIDIA', 'architecture': 'Ampere',
+        'memoryGB': 80, 'memoryBandwidthGBps': 1935, 'fp32Tflops': 19.5, 'fp16Tflops': 312.0,
+        'hardwareSource': 'https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-nvidia-us-2188504-web.pdf',
+    },
+    'A100_SXM_40GB': {
+        'model': 'NVIDIA A100 SXM', 'vendor': 'NVIDIA', 'architecture': 'Ampere',
+        'memoryGB': 40, 'memoryBandwidthGBps': 1555, 'fp32Tflops': 19.5, 'fp16Tflops': 312.0,
+        'hardwareSource': 'https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-nvidia-us-2188504-web.pdf',
+    },
+    'A100_SXM_80GB': {
+        'model': 'NVIDIA A100 SXM', 'vendor': 'NVIDIA', 'architecture': 'Ampere',
+        'memoryGB': 80, 'memoryBandwidthGBps': 2039, 'fp32Tflops': 19.5, 'fp16Tflops': 312.0,
+        'hardwareSource': 'https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-nvidia-us-2188504-web.pdf',
+    },
+    'H100_SXM_80GB': {
+        'model': 'NVIDIA H100 SXM', 'vendor': 'NVIDIA', 'architecture': 'Hopper',
+        'memoryGB': 80, 'memoryBandwidthGBps': 3350, 'fp32Tflops': 66.9, 'fp16Tflops': 989.0,
+        'hardwareSource': 'https://resources.nvidia.com/en-us-tensor-core/nvidia-tensor-core-gpu-datasheet',
+    },
+    'H100_NVL_94GB': {
+        'model': 'NVIDIA H100 NVL', 'vendor': 'NVIDIA', 'architecture': 'Hopper',
+        'memoryGB': 94, 'memoryBandwidthGBps': 3900, 'fp32Tflops': 60.0, 'fp16Tflops': 835.0,
+        'hardwareSource': 'https://resources.nvidia.com/en-us-tensor-core/nvidia-h100-nvl-datasheet',
+    },
+    'MI25_16GB': {
+        'model': 'AMD Instinct MI25', 'vendor': 'AMD', 'architecture': 'Vega',
+        'memoryGB': 16, 'memoryBandwidthGBps': 484, 'fp32Tflops': 12.3, 'fp16Tflops': None,
+        'hardwareSource': 'https://www.amd.com/system/files/documents/amd-radeon-instinct-mi25-datasheet.pdf',
+    },
+    'MI300X_192GB': {
+        'model': 'AMD Instinct MI300X', 'vendor': 'AMD', 'architecture': 'CDNA 3',
+        'memoryGB': 192, 'memoryBandwidthGBps': 5300, 'fp32Tflops': 163.4, 'fp16Tflops': 1307.4,
+        'hardwareSource': 'https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/product-briefs/amd-instinct-mi300x-platform-brochure.pdf',
+    },
+    # Microsoft documents the Azure allocation and memory, but no first-party
+    # specification currently supports the exact performance fields used here.
+    'V710_24GB': {
+        'model': 'AMD Radeon PRO V710', 'vendor': 'AMD', 'architecture': 'RDNA 3',
+        'memoryGB': 24, 'memoryBandwidthGBps': None, 'fp32Tflops': None, 'fp16Tflops': None,
+        'hardwareSource': None,
+    },
+}
+
+GPU_SCORE_BASELINE = {
+    'memoryGB': 80.0,
+    'memoryBandwidthGBps': 1935.0,
+    'fp32Tflops': 19.5,
+    'fp16Tflops': 312.0,
+}
+
+
+def _gpu_profile(sku_name: str) -> Optional[str]:
+    """Infer the accelerator workload profile from the Azure VM family."""
+    family = (sku_name or '').replace('Standard_', '').replace('Basic_', '').upper()
+    if family.startswith(('NC', 'NCC', 'ND', 'NP')):
+        return 'ai-compute'
+    if family.startswith('NV'):
+        return 'graphics'
+    return None
+
+
+def _gpu_size_number(sku_name: str) -> Optional[int]:
+    match = re.match(
+        r'^(?:Standard_|Basic_)?[A-Z]+(\d+)',
+        sku_name or '',
+        re.IGNORECASE
+    )
+    return int(match.group(1)) if match else None
+
+
+def _gpu_reference_id(sku_name: str) -> Optional[str]:
+    """Resolve the exact accelerator variant Azure documents for a VM size."""
+    name = sku_name or ''
+    upper = name.upper()
+    if '_MI300X_' in upper:
+        return 'MI300X_192GB'
+    if '_V710_' in upper:
+        return 'V710_24GB'
+    if '_H100_' in upper:
+        return 'H100_SXM_80GB' if upper.startswith('STANDARD_ND') else 'H100_NVL_94GB'
+    if '_A100_' in upper:
+        if re.match(r'^Standard_ND\d+amsr_A100_v4$', name):
+            return 'A100_SXM_80GB'
+        if upper.startswith('STANDARD_ND'):
+            return 'A100_SXM_40GB'
+        return 'A100_PCIE_80GB'
+    if re.match(r'^Standard_ND\d+asr_v4$', name):
+        return 'A100_SXM_40GB'
+    if '_A10_' in upper:
+        return 'A10_24GB'
+    if '_T4_' in upper or re.match(r'^Standard_NC\d+as_T4_v3$', name):
+        return 'T4_16GB'
+    if re.match(r'^Standard_ND\d+rs_v2$', name):
+        return 'V100_SXM2_32GB'
+    if re.match(r'^Standard_NC\d+(?:r|s|rs)?_v3$', name):
+        return 'V100_PCIE_16GB'
+    if re.match(r'^Standard_N[CD]\d+(?:r|s|rs)?_v2$', name):
+        return 'P100_16GB'
+    if re.match(r'^Standard_ND\d+(?:r|s|rs)?$', name):
+        return 'P40_24GB'
+    if re.match(r'^Standard_NC\d+(?:r|s|rs)?$', name):
+        return 'K80_12GB'
+    if re.match(r'^Standard_NV\d+as_v4$', name):
+        return 'MI25_16GB'
+    if re.match(r'^Standard_NV\d+s?_v3$', name) or re.match(r'^Standard_NV\d+$', name):
+        return 'M60_16GB'
+    return None
+
+
+def _gpu_allocation(sku_name: str, reported_count=0) -> float:
+    """Return Azure's documented physical-GPU allocation for a VM size."""
+    size = _gpu_size_number(sku_name)
+    upper = (sku_name or '').upper()
+    if size is not None and re.match(r'^STANDARD_NV\d+AS_V4$', upper):
+        return {4: 0.125, 8: 0.25, 16: 0.5, 32: 1.0}.get(size, 0.0)
+    if size is not None and '_A10_' in upper:
+        return {6: 1 / 6, 12: 1 / 3, 18: 0.5, 36: 1.0, 72: 2.0}.get(size, 0.0)
+    if size is not None and '_V710_' in upper:
+        return {4: 1 / 6, 8: 1 / 3, 12: 0.5, 24: 1.0, 28: 1.0}.get(size, 0.0)
+    if size is not None and (re.match(r'^STANDARD_NV\d+$', upper)):
+        return {6: 0.5, 12: 1.0, 24: 2.0}.get(size, float(reported_count or 0))
+    try:
+        return float(reported_count or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _gpu_weighted_score(metrics: Dict, profile: str) -> Optional[float]:
+    """Calculate an A100-80GB-normalized score from precision-labelled peaks."""
+    if profile == 'ai-compute':
+        weights = {'fp16Tflops': 0.65, 'memoryBandwidthGBps': 0.20, 'memoryGB': 0.15}
+    else:
+        weights = {'fp32Tflops': 0.70, 'memoryBandwidthGBps': 0.20, 'memoryGB': 0.10}
+    response_keys = {
+        'memoryGB': 'gpuMemoryGB',
+        'memoryBandwidthGBps': 'gpuMemoryBandwidthGBps',
+        'fp32Tflops': 'gpuFp32Tflops',
+        'fp16Tflops': 'gpuFp16Tflops',
+    }
+    if any(metrics.get(response_keys[key]) is None for key in weights):
+        return None
+    score = sum(
+        (float(metrics[response_keys[key]]) / GPU_SCORE_BASELINE[key]) * weight
+        for key, weight in weights.items()
+    ) * 100
+    return round(score, 1)
+
+
+def _gpu_score_for_profile(metrics: Dict, profile: Optional[str]) -> Optional[float]:
+    if profile == 'ai-compute':
+        return metrics.get('gpuAiScore')
+    if profile == 'graphics':
+        return metrics.get('gpuGraphicsScore')
+    return None
+
+
+def get_gpu_performance(sku_name: str, reported_count=0) -> Optional[Dict]:
+    """Return first-party-sourced, VM-level GPU metrics for a SKU."""
+    reference_id = _gpu_reference_id(sku_name)
+    if not reference_id:
+        return None
+    spec = GPU_PERFORMANCE_TABLE[reference_id]
+    allocation = _gpu_allocation(sku_name, reported_count)
+    if allocation <= 0:
+        return None
+
+    def total(key):
+        value = spec.get(key)
+        return round(float(value) * allocation, 2) if value is not None else None
+
+    profile = _gpu_profile(sku_name)
+    metrics = {
+        'gpuReferenceId': reference_id,
+        'gpuType': spec['model'],
+        'gpuVendor': spec['vendor'],
+        'gpuArchitecture': spec['architecture'],
+        'gpuAllocation': round(allocation, 4),
+        'gpuMemoryGB': total('memoryGB'),
+        'gpuMemoryBandwidthGBps': total('memoryBandwidthGBps'),
+        'gpuFp32Tflops': total('fp32Tflops'),
+        'gpuFp16Tflops': total('fp16Tflops'),
+        'gpuPerfProfile': profile,
+        'gpuAzureSource': GPU_AZURE_SOURCES.get(
+            'ND' if (sku_name or '').upper().startswith('STANDARD_ND') else
+            'NC' if (sku_name or '').upper().startswith(('STANDARD_NC', 'STANDARD_NCC')) else
+            'NV'
+        ),
+        'gpuHardwareSource': spec.get('hardwareSource'),
+        'gpuAzureSourceScope': 'azure-sku-model-allocation-memory-topology',
+        'gpuHardwareSourceScope': (
+            'theoretical-dense-throughput-bandwidth'
+            if spec.get('hardwareSource') else None
+        ),
+        'gpuPerformanceBasis': 'theoretical-dense-peak',
+    }
+    metrics['gpuAiScore'] = _gpu_weighted_score(metrics, 'ai-compute')
+    metrics['gpuGraphicsScore'] = _gpu_weighted_score(metrics, 'graphics')
+    metrics['gpuPerfScore'] = (
+        metrics['gpuAiScore'] if profile == 'ai-compute' else metrics['gpuGraphicsScore']
+    )
+    return metrics
+
+
+GPU_RESPONSE_FIELDS = (
+    'gpuReferenceId', 'gpuType', 'gpuVendor', 'gpuArchitecture', 'gpuAllocation', 'gpuMemoryGB',
+    'gpuMemoryBandwidthGBps', 'gpuFp32Tflops', 'gpuFp16Tflops',
+    'gpuPerfProfile', 'gpuPerfScore', 'gpuAiScore', 'gpuGraphicsScore',
+    'gpuAzureSource', 'gpuHardwareSource', 'gpuAzureSourceScope',
+    'gpuHardwareSourceScope', 'gpuPerformanceBasis',
+)
+
+
+def _enrich_gpu_perf(data: Dict, sku_name: str, reported_count=None) -> None:
+    """Apply current code mappings without fabricating metrics for non-GPU SKUs."""
+    count = data.get('gpuCount', 0) if reported_count is None else reported_count
+    gpu_perf = get_gpu_performance(sku_name, count)
+    if not gpu_perf:
+        return
+    for field in GPU_RESPONSE_FIELDS:
+        data[field] = gpu_perf.get(field)
+    capabilities = data.get('capabilities')
+    if isinstance(capabilities, dict):
+        for field in GPU_RESPONSE_FIELDS:
+            capabilities[field] = gpu_perf.get(field)
+
 # Maps VM series prefixes to their CPU model identifiers (from azure-compute-docs specs files).
 # Each series may land on multiple CPU models; we list them for averaging.
 SERIES_CPU_MAP = {
@@ -3190,6 +3508,49 @@ def seed_cpu_performance_table(table_service: TableServiceClient) -> None:
     logging.info(f"Seeded cpuperf table: {len(CPU_PERFORMANCE_TABLE)} CPU models, {len(SERIES_CPU_MAP)} series mappings")
 
 
+def seed_gpu_performance_table(table_service: TableServiceClient) -> None:
+    """Seed inspectable first-party GPU reference records."""
+    table_name = "gpuperf"
+    try:
+        table_service.create_table_if_not_exists(table_name)
+    except Exception as e:
+        logging.warning(f"Failed to create gpuperf table: {e}")
+        return
+
+    table_client = table_service.get_table_client(table_name)
+    for reference_id, data in GPU_PERFORMANCE_TABLE.items():
+        entity = {
+            'PartitionKey': 'gpumodel',
+            'RowKey': reference_id,
+            'model': data['model'],
+            'vendor': data['vendor'],
+            'architecture': data['architecture'],
+            'memoryGB': data['memoryGB'],
+            'sourceScope': 'hardware-specification',
+        }
+        for field in ('memoryBandwidthGBps', 'fp32Tflops', 'fp16Tflops', 'hardwareSource'):
+            if data.get(field) is not None:
+                entity[field] = data[field]
+        try:
+            table_client.upsert_entity(entity)
+        except Exception as e:
+            logging.warning(f"Failed to upsert GPU perf entry {reference_id}: {e}")
+    for family, source_url in GPU_AZURE_SOURCES.items():
+        try:
+            table_client.upsert_entity({
+                'PartitionKey': 'azuresource',
+                'RowKey': family,
+                'sourceUrl': source_url,
+                'sourceScope': 'azure-sku-model-allocation-memory-topology',
+            })
+        except Exception as e:
+            logging.warning(f"Failed to upsert GPU Azure source {family}: {e}")
+    logging.info(
+        f"Seeded gpuperf table: {len(GPU_PERFORMANCE_TABLE)} GPU models, "
+        f"{len(GPU_AZURE_SOURCES)} Azure source records"
+    )
+
+
 def _price_changed(old, new) -> bool:
     """True if a tracked price differs (rounded to 6 dp) from the prior value.
     A None<->value transition counts as a change; None==None does not."""
@@ -3386,6 +3747,12 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
             if cpu_perf:
                 entity['cpuPerfScore'] = cpu_perf['score']
                 entity['cpuGeneration'] = cpu_perf['generation']
+            gpu_perf = get_gpu_performance(sku['name'], capabilities['gpuCount'])
+            if gpu_perf:
+                for field in GPU_RESPONSE_FIELDS:
+                    value = gpu_perf.get(field)
+                    if value is not None:
+                        entity[field] = value
             entities.append(entity)
 
         except Exception as e:
@@ -4323,6 +4690,57 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
             'Confidential Computing'
         )
     }
+
+    target_gpu = get_gpu_performance(
+        target_sku.get('name', ''),
+        target_sku.get('gpuCount', 0)
+    )
+    alt_gpu = get_gpu_performance(
+        alternative_sku.get('name', ''),
+        alternative_sku.get('gpuCount', 0)
+    )
+    if target_gpu:
+        alt_gpu = alt_gpu or {}
+        differences['gpu'] = {
+            'targetType': target_gpu.get('gpuType') or target_sku.get('gpuType') or None,
+            'alternativeType': alt_gpu.get('gpuType') or alternative_sku.get('gpuType') or None,
+            'profile': target_gpu.get('gpuPerfProfile'),
+            'allocation': calculate_numeric_diff(
+                target_gpu.get('gpuAllocation'),
+                alt_gpu.get('gpuAllocation'),
+                'GPU'
+            ),
+            'memory': calculate_numeric_diff(
+                target_gpu.get('gpuMemoryGB'),
+                alt_gpu.get('gpuMemoryGB'),
+                'GB'
+            ),
+            'memoryBandwidth': calculate_numeric_diff(
+                target_gpu.get('gpuMemoryBandwidthGBps'),
+                alt_gpu.get('gpuMemoryBandwidthGBps'),
+                'GB/s'
+            ),
+            'fp32': calculate_numeric_diff(
+                target_gpu.get('gpuFp32Tflops'),
+                alt_gpu.get('gpuFp32Tflops'),
+                'TFLOPS'
+            ),
+            'fp16': calculate_numeric_diff(
+                target_gpu.get('gpuFp16Tflops'),
+                alt_gpu.get('gpuFp16Tflops'),
+                'TFLOPS'
+            ),
+            'performanceScore': calculate_numeric_diff(
+                _gpu_score_for_profile(target_gpu, target_gpu.get('gpuPerfProfile')),
+                _gpu_score_for_profile(alt_gpu, target_gpu.get('gpuPerfProfile')),
+                'A100 80GB = 100'
+            ),
+            'performanceBasis': 'theoretical-dense-peak',
+            'targetAzureSource': target_gpu.get('gpuAzureSource'),
+            'alternativeAzureSource': alt_gpu.get('gpuAzureSource'),
+            'targetHardwareSource': target_gpu.get('gpuHardwareSource'),
+            'alternativeHardwareSource': alt_gpu.get('gpuHardwareSource'),
+        }
     
     # Price differences (PAYG + RI variants, Linux + Windows, for frontend toggle support)
     if target_pricing and alt_pricing:

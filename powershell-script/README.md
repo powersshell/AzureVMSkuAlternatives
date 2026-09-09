@@ -21,6 +21,7 @@ A powerful PowerShell script for comparing Azure VM SKUs based on comprehensive 
 
 - **Comprehensive Capability Comparison**: Compares ALL VM capabilities including CPU, Memory, GPU, Storage, Network, and Features
 - **CPU Vendor & Generation Awareness**: Detects Intel / AMD / ARM vendor and reports CPU generation and a relative performance score
+- **GPU Performance Awareness**: Identifies documented N-series accelerator variants and compares VM-level allocation, memory, dense compute, and memory bandwidth
 - **CPU Vendor Filtering**: Restrict alternatives to specific vendors (Intel, AMD, ARM)
 - **Retirement Awareness**: Flags retiring/retired SKUs, hides them by default (matching the website), and applies a ranking penalty when shown
 - **Growth Restriction Awareness**: Flags capacity-limited (growth-restricted) SKUs that new subscriptions can't deploy and that won't be granted additional quota, applies a ranking penalty, and surfaces recommended migration targets
@@ -36,6 +37,10 @@ A powerful PowerShell script for comparing Azure VM SKUs based on comprehensive 
 
 > The CPU, generation, and retirement reference data is ported from the web app's API
 > (`web-app/api/function_app.py`), which is the source of truth. Keep them in sync when that data changes.
+>
+> The PowerShell GPU model is self-contained. Azure accelerator mappings come from
+> Microsoft Learn, while performance values come only from official NVIDIA or AMD
+> specifications.
 
 ## Requirements
 
@@ -106,7 +111,8 @@ Compare NVMe VMs and require NVMe in alternatives:
 ```
 
 ### GPU VMs
-Find similar GPU-enabled VMs:
+Find similar GPU-enabled VMs. NC, NCC, and ND targets use the AI score; NV targets
+use the graphics score:
 ```powershell
 .\Compare-AzureVms.ps1 -SkuName "Standard_NC6s_v3" -Location "eastus" -RequireGPUMatch -WeightGPU 3.0
 ```
@@ -166,6 +172,7 @@ The script provides detailed output including:
 ### Target SKU Information
 - SKU name and availability zones
 - CPU vendor, generation, and performance score
+- GPU model/variant, physical allocation, allocated memory, theoretical dense FP32 and FP16/BF16 tensor throughput, memory bandwidth, and normalized scores
 - Retirement status (if announced/retired) with a migration guide link
 - Capacity limitation warning (if growth-restricted) with recommended targets and a documentation link
 - Organized capability listing by category (Compute, Memory, GPU, Storage, Network, Features)
@@ -178,6 +185,7 @@ The script provides detailed output including:
 - CPU Vendor and Generation
 - vCPUs and Memory
 - GPUs (if applicable)
+- GPU type, effective allocation, allocated memory, and the target-profile GPU comparison score
 - Availability Zones
 - Retirement status
 - Growth restriction (capacity limitation) status — shown as a `Limited` column
@@ -187,6 +195,10 @@ The script provides detailed output including:
 **Detailed View** (`-ShowAllCapabilities`):
 - All capabilities from the target SKU
 - Side-by-side comparison of every capability
+- GPU result properties including `GpuReferenceId`, `GpuType`, `GpuAllocation`,
+  `GpuMemoryGB`, `GpuFp32Tflops`, `GpuFp16Bf16TensorTflops`,
+  `GpuMemoryBandwidthGBps`, `GpuAiScore`, `GpuGraphicsScore`,
+  `GpuComparisonScore`, `GpuSimilarityScore`, `GpuScoringBasis`, and source URLs
 
 ### Summary Statistics
 - Average and highest similarity scores
@@ -211,9 +223,71 @@ The similarity score (0-100) is calculated by:
 
 **Special Handling**:
 - **NVMe**: Major penalty if target has NVMe but alternative doesn't
-- **GPU**: Major penalty if target has GPU but alternative doesn't
+- **GPU**: Uses the target family's theoretical performance profile for known GPU targets and falls back to GPU allocation/count when performance is unknown. Non-GPU targets retain the previous capability-matching behavior.
 - **Numeric Values**: Percentage difference calculation
 - **Boolean/String Values**: Exact match or mismatch
+
+### GPU performance model
+
+GPU properties are calculated for the whole VM:
+
+```text
+VM metric = official per-GPU metric × Azure-documented physical GPU allocation
+```
+
+Fractional allocations are resolved from the SKU name: NVv4 MI25 sizes use
+1/8, 1/4, 1/2, or 1 GPU; NVads A10 sizes use 1/6, 1/3, 1/2, 1, or 2 GPUs;
+and NVads V710 sizes use 1/6, 1/3, 1/2, or 1 GPU. Other sizes use the GPU
+count reported by Azure, including multi-GPU NC/ND VMs.
+
+Both normalized scores use one NVIDIA A100 PCIe 80 GB as 100:
+
+```text
+AI score       = 100 × (65% × dense FP16/BF16 tensor ratio
+                      + 20% × memory-bandwidth ratio
+                      + 15% × memory-capacity ratio)
+
+Graphics score = 100 × (70% × FP32 ratio
+                      + 20% × memory-bandwidth ratio
+                      + 10% × memory-capacity ratio)
+```
+
+NC, NCC, ND, and NP targets select the AI score; NV targets select the
+graphics score. A candidate that meets or exceeds the target score has no GPU
+shortfall penalty. If the required first-party metrics are unavailable (for
+example, V710 performance), comparison retains the existing GPU-count
+fallback using the known physical allocation where available. GPU performance is
+excluded entirely when the target is not a GPU VM.
+
+| Azure mapping | Accelerator reference |
+|---|---|
+| NCasT4_v3 | NVIDIA T4 16 GB |
+| NCv3 | NVIDIA V100 PCIe 16 GB |
+| NDv2 | NVIDIA V100 SXM2 32 GB |
+| ND | NVIDIA P40 24 GB |
+| NVadsA10_v5 | NVIDIA A10 24 GB |
+| NCadsA100_v4 | NVIDIA A100 PCIe 80 GB |
+| NDasrA100_v4 | NVIDIA A100 SXM 40 GB |
+| NDmA100_v4 | NVIDIA A100 SXM 80 GB |
+| ND-H100-v5 | NVIDIA H100 SXM 80 GB |
+| NC/NCC-H100-v5 | NVIDIA H100 NVL 94 GB |
+| NVv4 | AMD Instinct MI25 16 GB |
+| ND-MI300X-v5 | AMD Instinct MI300X 192 GB |
+| NVadsV710_v5 | AMD Radeon PRO V710 24 GB; allocation and memory only |
+
+Azure model/allocation sources:
+[NC family](https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nc-family),
+[ND family](https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nd-family), and
+[NV family](https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nv-family).
+Hardware sources are embedded with each script reference entry and point to
+official [NVIDIA](https://www.nvidia.com/en-us/data-center/) or
+[AMD Instinct](https://www.amd.com/en/products/accelerators/instinct.html)
+specifications.
+
+> **Theoretical values only:** These are dense peak hardware specifications, not
+> measured application benchmarks. Sparse-mode figures are excluded. Actual
+> performance depends on drivers, clocks, virtualization, framework, precision,
+> topology, and workload efficiency.
 
 ## Troubleshooting
 
@@ -295,7 +369,11 @@ The script compares the following capability categories:
 - Memory GB, Memory Preserving Maintenance Support
 
 **GPU**
-- GPU Count, Virtual GPUs Per Core
+- GPU count and physical allocation
+- Accelerator model, vendor, and architecture
+- Allocated accelerator memory and memory bandwidth
+- Theoretical dense FP32 and supported FP16/BF16 tensor TFLOPS
+- AI and graphics scores normalized to one A100 PCIe 80 GB
 
 **Storage**
 - Max Data Disks, Cached/Uncached IOPS and Throughput
