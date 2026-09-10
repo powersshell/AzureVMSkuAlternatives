@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-09-10
+- **improvement:** Restored the expanded detailed comparison to a single row on wide screens after the GPU Performance card was added. Each card retains a readable minimum width, while narrower screens continue to wrap responsively instead of compressing text or requiring horizontal scrolling.
+
 ## 2026-09-09
 - **feature:** Added first-party GPU performance enrichment for Azure GPU VM sizes across the API, web experience, exports, MCP tools, and PowerShell. GPU recommendations now compare VM-level accelerator memory, bandwidth, dense FP32 and FP16/BF16 tensor throughput with workload-aware AI/compute or graphics scores normalized to an A100 80 GB baseline. Fractional and multi-GPU allocations are supported; unknown metrics remain unavailable and non-GPU behavior is unchanged.
 
