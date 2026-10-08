@@ -9,8 +9,9 @@
 
 ## 📋 Recent Changes
 
-### 2026-09-10
-- **improvement:** Restored the expanded detailed comparison to a single row on wide screens after the GPU Performance card was added. Each card retains a readable minimum width, while narrower screens continue to wrap responsively instead of compressing text or requiring horizontal scrolling.
+### 2026-10-08
+- **improvement:** Added Source Gen and Target Gen controls so the compare flow prefers same-generation moves by default while still showing cross-generation alternatives as lower-priority options.
+- **fix:** Penalized temp-disk mismatches and exposed the migration-risk badge in the result cards when a source VM has a local temp disk but the target does not.
 
 📄 [Full changelog →](CHANGELOG.md)
 

@@ -112,6 +112,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
             priority_mode = 'balanced'
         # 'any' (default) keeps every architecture; 'x64'/'arm64' restrict the pool.
         architecture_filter = str(req_body.get('architectureFilter', 'any')).lower()
+        source_gen_pref = req_body.get('sourceGen', 'auto')
+        target_gen_pref = req_body.get('targetGen', 'same')
 
         # Validate inputs
         if not sku_name or not location:
@@ -188,6 +190,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         # at in *this* region, and the source size's own family/generation.
         family_generations = build_family_generation_map(all_skus)
         target_identity = _parse_sku_identity(sku_name)
+        preferred_source_generation = _normalize_generation_preference(source_gen_pref) or target_identity['version']
+        target_generation_preference = _resolve_generation_preference(preferred_source_generation, target_gen_pref)
         target_architecture = target_sku.get('architecture', 'x64')
 
         # Compare with all other SKUs
@@ -285,12 +289,18 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                     mode=priority_mode,
                     cpu_perf_score=alt.get('cpuPerfScore'),
                     saving_percent=saving_percent,
+                    source_has_temp_disk=bool(target_capabilities.get('nvme')),
+                    candidate_has_temp_disk=bool(sku_capabilities.get('nvme')),
+                    source_generation=preferred_source_generation,
+                    target_generation_preference=target_generation_preference,
                 )
                 alt['recommendationScore'] = round(recommendation['score'], 2)
                 alt['scoreBreakdown'] = recommendation['components']
                 alt['migrationReadiness'] = _migration_readiness(
                     sku['name'], sku_capabilities, candidate_identity,
-                    target_identity, sku_architecture, target_architecture
+                    target_identity, sku_architecture, target_architecture,
+                    source_has_temp_disk=bool(target_capabilities.get('nvme')),
+                    candidate_has_temp_disk=bool(sku_capabilities.get('nvme')),
                 )
 
                 alternatives.append(alt)
@@ -2037,6 +2047,46 @@ def _parse_sku_identity(sku_name: str) -> Dict:
     }
 
 
+def _normalize_generation_preference(value: Optional[str]) -> Optional[int]:
+    """Normalize a UI generation selection to the underlying Azure VM version."""
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if not normalized or normalized in {'auto', 'any', 'same'}:
+        return None
+    normalized = normalized.replace('generation', '').replace('gen', '').replace('+', '')
+    if normalized.endswith('plus'):
+        normalized = normalized[:-4]
+    normalized = normalized.strip()
+    if not normalized:
+        return None
+    try:
+        generation = int(normalized)
+        return max(1, generation)
+    except ValueError:
+        return None
+
+
+def _resolve_generation_preference(source_generation: Optional[int], target_generation: Optional[str]) -> Optional[int]:
+    """Resolve the preferred target generation for ranking.
+
+    The default recommendation path is the same generation as the source size.
+    A concrete target generation such as Gen1 or Gen2 still remains visible as a
+    lower-priority alternative when the user deliberately chooses that route.
+    """
+    if target_generation is None:
+        return source_generation
+    normalized = str(target_generation).strip().lower()
+    if normalized in {'', 'auto', 'any'}:
+        return None
+    if normalized == 'same':
+        return source_generation
+    value = _normalize_generation_preference(normalized)
+    if value is not None:
+        return value
+    return source_generation
+
+
 def build_family_generation_map(all_skus: List[Dict]) -> Dict[str, int]:
     """Map each VM family to the newest generation available in this region.
 
@@ -2063,8 +2113,9 @@ def _modernization_score(identity: Dict, family_generations: Dict[str, int],
     unrelated cross-family sizes to the top. Scoring relative to the family's own
     newest generation keeps a family-current size competitive.
     """
-    family = identity['family']
-    version = identity['version']
+    family = identity.get('family')
+    version = identity.get('version', 1)
+    versioned = bool(identity.get('versioned', False))
     newest = family_generations.get(family, version) if family else version
 
     relative = 100.0 - max(0, newest - version) * GENERATION_DECAY_PER_STEP
@@ -2073,7 +2124,7 @@ def _modernization_score(identity: Dict, family_generations: Dict[str, int],
 
     # Unversioned size in a family with no versioned members at all: nothing to
     # compare against, so fall back to measured CPU performance.
-    if not identity['versioned'] and newest <= 1 and cpu_perf_score:
+    if not versioned and newest <= 1 and cpu_perf_score is not None:
         for threshold, banded in _CPU_PERF_MODERNIZATION_BANDS:
             if cpu_perf_score >= threshold:
                 return float(banded)
@@ -2114,7 +2165,9 @@ def _family_affinity(target_identity: Dict, candidate_identity: Dict) -> float:
 
 def _migration_readiness(sku_name: str, capabilities: Dict, identity: Dict,
                          target_identity: Dict, architecture: str,
-                         target_architecture: str) -> Dict:
+                         target_architecture: str,
+                         source_has_temp_disk: bool = False,
+                         candidate_has_temp_disk: bool = False) -> Dict:
     """Platform-change flags a user must plan for when moving to this size.
 
     Mirrors the platform changes called out in the v6/v7 migration guidance.
@@ -2131,6 +2184,7 @@ def _migration_readiness(sku_name: str, capabilities: Dict, identity: Dict,
         # NVMe disk (the 'd' suffix), not the remote-disk NVMe interface. Named
         # accordingly so the badge does not overstate what we actually know.
         'hasLocalNvmeTempDisk': bool(capabilities.get('nvme')),
+        'tempDiskMismatch': bool(source_has_temp_disk and not candidate_has_temp_disk),
         # v6 and newer use the Microsoft Azure Network Adapter (MANA); older
         # images may need updated drivers.
         'usesManaNetworking': identity['version'] >= 6,
@@ -2162,7 +2216,11 @@ def calculate_recommendation_score(similarity_score: float, target_identity: Dic
                                    candidate_identity: Dict, family_generations: Dict[str, int],
                                    mode: str = 'balanced',
                                    cpu_perf_score: Optional[float] = None,
-                                   saving_percent: Optional[float] = None) -> Dict:
+                                   saving_percent: Optional[float] = None,
+                                   source_has_temp_disk: bool = False,
+                                   candidate_has_temp_disk: bool = False,
+                                   source_generation: Optional[int] = None,
+                                   target_generation_preference: Optional[int] = None) -> Dict:
     """Blend spec similarity with modernization and family affinity into a ranking score.
 
     Returns the score plus its components so the UI can explain the ranking.
@@ -2180,6 +2238,24 @@ def calculate_recommendation_score(similarity_score: float, target_identity: Dic
         cost_bonus = min(saving_percent, 100.0) / 100.0 * COST_MODE_SAVING_BONUS
         score += cost_bonus
 
+    generation_match_bonus = 0.0
+    generation_mismatch_penalty = 0.0
+    preferred_generation = target_generation_preference
+    if preferred_generation is None and source_generation is not None:
+        preferred_generation = source_generation
+    if preferred_generation is not None:
+        if candidate_identity['version'] == preferred_generation:
+            generation_match_bonus = 8.0
+            score += generation_match_bonus
+        else:
+            generation_mismatch_penalty = 18.0 + (abs(candidate_identity['version'] - preferred_generation) * 4.0)
+            score -= generation_mismatch_penalty
+
+    temp_disk_penalty = 0.0
+    if source_has_temp_disk and not candidate_has_temp_disk:
+        temp_disk_penalty = 12.0
+        score -= temp_disk_penalty
+
     older_generation_penalty = 0.0
     if candidate_identity['version'] < target_identity['version']:
         older_generation_penalty = OLDER_GENERATION_PENALTY
@@ -2192,6 +2268,9 @@ def calculate_recommendation_score(similarity_score: float, target_identity: Dic
             'modernization': round(modernization, 2),
             'familyAffinity': round(affinity, 2),
             'costBonus': round(cost_bonus, 2),
+            'generationMatchBonus': round(generation_match_bonus, 2),
+            'generationMismatchPenalty': round(generation_mismatch_penalty, 2),
+            'tempDiskPenalty': round(temp_disk_penalty, 2),
             'olderGenerationPenalty': older_generation_penalty,
             'weights': {
                 'similarity': w_similarity,

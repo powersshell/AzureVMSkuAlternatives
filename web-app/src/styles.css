@@ -959,6 +959,7 @@ body {
 .migration-badge.newer { background: #dff6dd; color: #0b6a0b; }
 .migration-badge.gen2 { background: #fff4ce; color: #8a6100; }
 .migration-badge.mana { background: #eff6fc; color: #10405f; }
+.migration-badge.temp-disk { background: #fde7e9; color: #a4262c; }
 .migration-badge.arch { background: #fde7e9; color: #a4262c; }
 
 /* "Why this ranking?" breakdown inside an expanded result */

@@ -533,7 +533,9 @@ async function handleCompare() {
         requireNVMeMatch: document.getElementById('requireNVMeMatch').checked,
         requireGPUMatch: document.getElementById('requireGPUMatch').checked,
         priorityMode: document.getElementById('priorityMode')?.value || 'balanced',
-        architectureFilter: document.getElementById('architectureFilter')?.value || 'any'
+        architectureFilter: document.getElementById('architectureFilter')?.value || 'any',
+        sourceGen: document.getElementById('sourceGen')?.value || 'auto',
+        targetGen: document.getElementById('targetGen')?.value || 'same'
     };
 
     showLoading();
@@ -1556,6 +1558,9 @@ function renderMigrationBadges(alt) {
     if (m.usesManaNetworking) {
         badges.push('<span class="migration-badge mana" title="Uses the Microsoft Azure Network Adapter (MANA). Older images may need updated network drivers.">MANA NIC</span>');
     }
+    if (m.tempDiskMismatch) {
+        badges.push('<span class="migration-badge temp-disk" title="Your source VM has a local temp disk but the target size does not support one, so temp data must move to a data disk.">Temp disk lost</span>');
+    }
     if (m.architectureChange) {
         badges.push('<span class="migration-badge arch" title="Different CPU architecture from your current size — application binaries must be rebuilt or replaced with an Arm64 build.">Rebuild required</span>');
     }
@@ -1581,6 +1586,12 @@ function renderScoreExplanation(alt) {
     const adjustments = [];
     if (b.costBonus > 0) {
         adjustments.push(`<li>+${b.costBonus.toFixed(1)} cost saving bonus</li>`);
+    }
+    if (b.generationMismatchPenalty > 0) {
+        adjustments.push(`<li>−${b.generationMismatchPenalty.toFixed(0)} generation path mismatch</li>`);
+    }
+    if (b.tempDiskPenalty > 0) {
+        adjustments.push(`<li>−${b.tempDiskPenalty.toFixed(0)} local temp-disk mismatch</li>`);
     }
     if (b.olderGenerationPenalty > 0) {
         adjustments.push(`<li>−${b.olderGenerationPenalty.toFixed(0)} older generation than your current size</li>`);

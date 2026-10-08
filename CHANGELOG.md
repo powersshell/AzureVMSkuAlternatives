@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-08
+- **improvement:** Added Source Gen and Target Gen controls to the compare flow so same-generation moves are the default recommendation path while cross-generation alternatives remain visible as lower-priority choices.
+- **fix:** Penalized temp-disk mismatches in recommendation scoring and surfaced the migration risk directly on result cards for Gen2 and temp-disk-sensitive moves.
+
 ## 2026-09-10
 - **improvement:** Restored the expanded detailed comparison to a single row on wide screens after the GPU Performance card was added. Each card retains a readable minimum width, while narrower screens continue to wrap responsively instead of compressing text or requiring horizontal scrolling.
 
