@@ -289,8 +289,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                     mode=priority_mode,
                     cpu_perf_score=alt.get('cpuPerfScore'),
                     saving_percent=saving_percent,
-                    source_has_temp_disk=bool(target_capabilities.get('nvme')),
-                    candidate_has_temp_disk=bool(sku_capabilities.get('nvme')),
+                    source_has_temp_disk=target_capabilities.get('hasTempDisk'),
+                    candidate_has_temp_disk=sku_capabilities.get('hasTempDisk'),
                     source_generation=preferred_source_generation,
                     target_generation_preference=target_generation_preference,
                 )
@@ -299,8 +299,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 alt['migrationReadiness'] = _migration_readiness(
                     sku['name'], sku_capabilities, candidate_identity,
                     target_identity, sku_architecture, target_architecture,
-                    source_has_temp_disk=bool(target_capabilities.get('nvme')),
-                    candidate_has_temp_disk=bool(sku_capabilities.get('nvme')),
+                    source_has_temp_disk=target_capabilities.get('hasTempDisk'),
+                    candidate_has_temp_disk=sku_capabilities.get('hasTempDisk'),
                 )
 
                 alternatives.append(alt)
@@ -1824,6 +1824,16 @@ def _effective_vcpus(capabilities: Dict) -> int:
     return 0
 
 
+def _has_temp_disk(capabilities: Dict) -> Optional[bool]:
+    """Include SCSI resource disks and local NVMe; missing cache data is unknown."""
+    resource_disk_mb = capabilities.get('ResourceDiskSizeInMB')
+    if float(capabilities.get('NvmeDiskSizeInMiB') or 0) > 0:
+        return True
+    if resource_disk_mb is None or resource_disk_mb == '':
+        return None
+    return float(resource_disk_mb) > 0
+
+
 def extract_capabilities(sku: Dict) -> Dict:
     """Extract capabilities from a SKU"""
     capabilities = {}
@@ -1843,6 +1853,7 @@ def extract_capabilities(sku: Dict) -> Dict:
         'gpuCount': int(capabilities.get('GPUs', 0)),
         'gpuType': capabilities.get('GPUName') or capabilities.get('GPUType'),
         'nvme': int(capabilities.get('NvmeDiskSizeInMiB', 0)) > 0,
+        'hasTempDisk': _has_temp_disk(capabilities),
         'uncachedDiskIOPS': int(capabilities.get('UncachedDiskIOPS', 0)),
         'uncachedDiskBytesPerSecond': int(capabilities.get('UncachedDiskBytesPerSecond', 0)),
         'maxWriteAcceleratorDisks': int(capabilities.get('MaxWriteAcceleratorDisksAllowed', 0)),
@@ -2166,8 +2177,8 @@ def _family_affinity(target_identity: Dict, candidate_identity: Dict) -> float:
 def _migration_readiness(sku_name: str, capabilities: Dict, identity: Dict,
                          target_identity: Dict, architecture: str,
                          target_architecture: str,
-                         source_has_temp_disk: bool = False,
-                         candidate_has_temp_disk: bool = False) -> Dict:
+                         source_has_temp_disk: Optional[bool] = None,
+                         candidate_has_temp_disk: Optional[bool] = None) -> Dict:
     """Platform-change flags a user must plan for when moving to this size.
 
     Mirrors the platform changes called out in the v6/v7 migration guidance.
@@ -2184,7 +2195,8 @@ def _migration_readiness(sku_name: str, capabilities: Dict, identity: Dict,
         # NVMe disk (the 'd' suffix), not the remote-disk NVMe interface. Named
         # accordingly so the badge does not overstate what we actually know.
         'hasLocalNvmeTempDisk': bool(capabilities.get('nvme')),
-        'tempDiskMismatch': bool(source_has_temp_disk and not candidate_has_temp_disk),
+        'hasTempDisk': candidate_has_temp_disk,
+        'tempDiskMismatch': source_has_temp_disk is True and candidate_has_temp_disk is False,
         # v6 and newer use the Microsoft Azure Network Adapter (MANA); older
         # images may need updated drivers.
         'usesManaNetworking': identity['version'] >= 6,
@@ -2217,8 +2229,8 @@ def calculate_recommendation_score(similarity_score: float, target_identity: Dic
                                    mode: str = 'balanced',
                                    cpu_perf_score: Optional[float] = None,
                                    saving_percent: Optional[float] = None,
-                                   source_has_temp_disk: bool = False,
-                                   candidate_has_temp_disk: bool = False,
+                                   source_has_temp_disk: Optional[bool] = None,
+                                   candidate_has_temp_disk: Optional[bool] = None,
                                    source_generation: Optional[int] = None,
                                    target_generation_preference: Optional[int] = None) -> Dict:
     """Blend spec similarity with modernization and family affinity into a ranking score.
@@ -2252,7 +2264,7 @@ def calculate_recommendation_score(similarity_score: float, target_identity: Dic
             score -= generation_mismatch_penalty
 
     temp_disk_penalty = 0.0
-    if source_has_temp_disk and not candidate_has_temp_disk:
+    if source_has_temp_disk is True and candidate_has_temp_disk is False:
         temp_disk_penalty = 12.0
         score -= temp_disk_penalty
 
@@ -2508,6 +2520,9 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         {'name': 'EncryptionAtHostSupported', 'value': 'True' if entity['encryptionAtHost'] else 'False'},
                         {'name': 'EphemeralOSDiskSupported', 'value': 'True' if entity['ephemeralOSDisk'] else 'False'},
                         {'name': 'NvmeDiskSizeInMiB', 'value': '1' if entity.get('nvme', False) else '0'},
+                        {'name': 'ResourceDiskSizeInMB', 'value': (
+                            '1' if entity['hasTempDisk'] else '0'
+                        ) if 'hasTempDisk' in entity else ''},
                         {'name': 'OSVhdSizeMB', 'value': str(entity.get('osVhdSizeMB', 0))},
                         {'name': 'HyperVGenerations', 'value': entity.get('hyperVGenerations', '')},
                         {'name': 'ACUs', 'value': str(entity.get('acu', 0))},
@@ -4474,6 +4489,8 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
         'encryptionAtHost': capabilities.get('EncryptionAtHostSupported', '').lower() == 'true',
         'ephemeralOSDisk': capabilities.get('EphemeralOSDiskSupported', '').lower() == 'true',
         'nvme': int(capabilities.get('NvmeDiskSizeInMiB', 0)) > 0,
+        **({'hasTempDisk': _has_temp_disk(capabilities)}
+           if _has_temp_disk(capabilities) is not None else {}),
         'architecture': capabilities.get('CpuArchitectureType', 'x64'),
         'osVhdSizeMB': int(capabilities.get('OSVhdSizeMB', 0)),
         'hyperVGenerations': capabilities.get('HyperVGenerations', ''),
@@ -4583,6 +4600,7 @@ def extract_capabilities_for_diff(sku: dict) -> dict:
     caps['premiumIO'] = sku.get('premiumIO', False)
     caps['ephemeralOSDisk'] = sku.get('ephemeralOSDisk', False)
     caps['nvme'] = sku.get('nvme', False)
+    caps['hasTempDisk'] = sku.get('hasTempDisk', True if caps['nvme'] else None)
     caps['osVhdSizeMB'] = sku.get('osVhdSizeMB')
     caps['maxNics'] = sku.get('maxNics')
     caps['networkBandwidthMbps'] = sku.get('networkBandwidthMbps')
@@ -4947,7 +4965,13 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
             target_caps.get('nvme', False),
             alt_caps.get('nvme', False),
             'NVMe Support'
-        )
+        ),
+        'tempDisk': {
+            'target': target_caps.get('hasTempDisk'),
+            'alternative': alt_caps.get('hasTempDisk'),
+            'changed': target_caps.get('hasTempDisk') != alt_caps.get('hasTempDisk'),
+            'label': 'Local Temporary Disk',
+        },
     }
     
     # Network differences

@@ -10,6 +10,7 @@
 ## 📋 Recent Changes
 
 ### 2026-10-08
+- **fix:** Included SCSI and NVMe temporary disks in migration warnings and added local temporary-disk availability to detailed Storage comparisons. Missing cache metadata is shown as unknown until the next refresh.
 - **improvement:** Added Source Gen and Target Gen controls so the compare flow prefers same-generation moves by default while still showing cross-generation alternatives as lower-priority options.
 - **fix:** Penalized temp-disk mismatches and exposed the migration-risk badge in the result cards when a source VM has a local temp disk but the target does not.
 

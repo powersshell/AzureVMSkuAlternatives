@@ -445,6 +445,50 @@ class TestDetectCpuVendor:
 # extract_capabilities tests
 # ============================================================================
 
+@pytest.mark.unit
+class TestTemporaryDisks:
+    @pytest.mark.parametrize('resource_mb,nvme_mib,expected', [
+        ('16384', '0', True),
+        ('0', '16384', True),
+        ('0', '0', False),
+        (None, '0', None),
+    ])
+    def test_live_cache_and_details_preserve_temp_disk(self, resource_mb, nvme_mib, expected):
+        sku = {'name': 'Standard_F1', 'capabilities': [
+            {'name': 'NvmeDiskSizeInMiB', 'value': nvme_mib},
+        ]}
+        if resource_mb is not None:
+            sku['capabilities'].append({'name': 'ResourceDiskSizeInMB', 'value': resource_mb})
+        assert extract_capabilities(sku)['hasTempDisk'] is expected
+        cached = extract_capabilities_for_cache(sku)
+        assert cached.get('hasTempDisk') is expected
+        assert extract_capabilities_for_diff(cached)['hasTempDisk'] is expected
+
+    @pytest.mark.parametrize('candidate,penalty', [(False, 12.0), (True, 0.0), (None, 0.0)])
+    def test_loss_penalty_and_badge_agree(self, candidate, penalty):
+        from function_app import _parse_sku_identity, _migration_readiness, calculate_recommendation_score
+        source = _parse_sku_identity('Standard_F1')
+        target = _parse_sku_identity('Standard_F1als_v7')
+        score = calculate_recommendation_score(
+            100, source, target, {}, source_has_temp_disk=True,
+            candidate_has_temp_disk=candidate)
+        flags = _migration_readiness(
+            'Standard_F1als_v7', {}, target, source, 'x64', 'x64',
+            source_has_temp_disk=True, candidate_has_temp_disk=candidate)
+        assert score['components']['tempDiskPenalty'] == penalty
+        assert flags['tempDiskMismatch'] is (candidate is False)
+
+    def test_details_include_explicit_loss(self):
+        diff = calculate_detailed_differences(
+            {'name': 'Standard_F1', 'hasTempDisk': True},
+            {'name': 'Standard_F1als_v7', 'hasTempDisk': False},
+            {}, {})
+        assert diff['storage']['tempDisk'] == {
+            'target': True, 'alternative': False, 'changed': True,
+            'label': 'Local Temporary Disk',
+        }
+
+
 class TestExtractCapabilities:
 
     @pytest.mark.unit

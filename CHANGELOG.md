@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-08
+- **fix:** Included SCSI resource disks as well as NVMe in temporary-disk migration warnings and ranking penalties. Detailed Storage comparisons now show local temporary-disk availability; missing cache metadata is shown as unknown until the next refresh.
 - **improvement:** Added Source Gen and Target Gen controls to the compare flow so same-generation moves are the default recommendation path while cross-generation alternatives remain visible as lower-priority choices.
 - **fix:** Penalized temp-disk mismatches in recommendation scoring and surfaced the migration risk directly on result cards for Gen2 and temp-disk-sensitive moves.
 

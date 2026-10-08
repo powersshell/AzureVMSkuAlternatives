@@ -1559,7 +1559,7 @@ function renderMigrationBadges(alt) {
         badges.push('<span class="migration-badge mana" title="Uses the Microsoft Azure Network Adapter (MANA). Older images may need updated network drivers.">MANA NIC</span>');
     }
     if (m.tempDiskMismatch) {
-        badges.push('<span class="migration-badge temp-disk" title="Your source VM has a local temp disk but the target size does not support one, so temp data must move to a data disk.">Temp disk lost</span>');
+        badges.push('<span class="migration-badge temp-disk" title="Your source VM has a local temporary disk (SCSI or NVMe), but this size does not. Review scratch data, pagefile/swap and application paths before migrating; use a suitable data disk if needed.">Temp disk lost</span>');
     }
     if (m.architectureChange) {
         badges.push('<span class="migration-badge arch" title="Different CPU architecture from your current size — application binaries must be rebuilt or replaced with an Arm64 build.">Rebuild required</span>');
@@ -2206,6 +2206,7 @@ function renderDetailedComparison(data, targetSku, altSku) {
                 <!-- Storage Section -->
                 <div class="details-section">
                     <h5>Storage</h5>
+                    ${diff.storage.tempDisk ? renderTempDiskDiff(diff.storage.tempDisk) : ''}
                     ${renderNumericDiff('Max Data Disks', diff.storage.maxDataDisks)}
                     ${renderNumericDiff('Uncached IOPS', diff.storage.uncachedIOPS)}
                     ${renderNumericDiff('Uncached Throughput', diff.storage.uncachedThroughput)}
@@ -2238,6 +2239,12 @@ function renderDetailedComparison(data, targetSku, altSku) {
 }
 
 // Render CPU performance comparison for the detailed expand view
+function renderTempDiskDiff(disk) {
+    const label = value => value === true ? 'Yes' : value === false ? 'No' : 'Unknown';
+    const lost = disk.target === true && disk.alternative === false;
+    return `<div class="diff-item ${lost ? 'negative' : 'same'}">${lost ? '⚠' : '●'} Local Temporary Disk: ${label(disk.target)} → ${label(disk.alternative)}${lost ? '<div class="diff-detail">No local scratch disk on this size. Review pagefile/swap and temporary-data paths before migrating.</div>' : ''}</div>`;
+}
+
 function renderCpuPerfComparison(targetSku, altSku) {
     const tScore = targetSku.cpuPerfScore;
     const aScore = altSku.cpuPerfScore;
