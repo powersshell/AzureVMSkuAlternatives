@@ -143,7 +143,7 @@ def main():
     # Boot-generation preference must not confuse _v3/_v5 with Hyper-V V1/V2.
     for source_gen, target_gen in (("gen1", "same"), ("gen2", "same"), ("gen1", "any")):
         status, body = _request("{}/compare_vms".format(base), {
-            "skuName": "Standard_D2_v3", "location": loc, "maxResults": 25,
+            "skuName": "Standard_D2s_v3", "location": loc, "maxResults": 25,
             "minSimilarityScore": 60, "sourceGen": source_gen, "targetGen": target_gen,
         })
         checked += 1

@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-09
+- **fix:** Pinned MCP container deployments to the built image digest so successful deployments actually publish the new tool schema instead of retaining an unchanged `latest` revision.
 - **fix:** Corrected Source Gen / Target Gen to use Hyper-V Gen1/Gen2 compatibility, not hardware SKU versions. Dual-generation sources require an explicit choice for same-generation preference; Any disables that preference. Cross-generation and unknown-support warnings remain visible.
 - **fix:** Restored safe recommendation ordering with an explicit retirement/capacity recommendation penalty while retaining independent temporary-disk risk. Added matching MCP generation controls and regression coverage; live recommendation and MCP checks now run after successful deployments.
 

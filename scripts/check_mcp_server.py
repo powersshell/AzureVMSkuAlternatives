@@ -91,6 +91,12 @@ async def main(url, location):
 
         noschema = [t.name for t in tools if not getattr(t, "inputSchema", None)]
         check("every tool has an input schema", not noschema, ", ".join(noschema))
+        alternatives_tool = next((t for t in tools if t.name == "find_alternative_skus"), None)
+        props = (alternatives_tool.inputSchema or {}).get("properties", {}) if alternatives_tool else {}
+        check("source_gen exposes Hyper-V choices",
+              props.get("source_gen", {}).get("enum") == ["auto", "gen1", "gen2"])
+        check("target_gen exposes same/any/Gen1/Gen2 choices",
+              props.get("target_gen", {}).get("enum") == ["same", "any", "gen1", "gen2"])
 
         # ---- health -------------------------------------------------------
         h = payload(await client.call_tool("health_check", {}))
@@ -170,6 +176,19 @@ async def main(url, location):
                   str(distinct) + " distinct across " + str(len(all_scores)))
 
         # ---- priority_mode actually changes the answer --------------------
+        if "source_gen" in props and "target_gen" in props:
+            rg = payload(await client.call_tool("find_alternative_skus", {
+                "target_sku": "Standard_D2s_v3", "location": location,
+                "source_gen": "gen1", "target_gen": "any"}))
+            context = rg.get("generationContext") or {}
+            generation_alts = rg.get("alternatives") or []
+            check("generation choices reach the API and Any disables preference",
+                  context.get("sourceGeneration") == 1 and context.get("targetGeneration") is None and
+                  bool(generation_alts) and all(
+                      not (a.get("scoreBreakdown") or {}).get("generationMismatchPenalty") and
+                      not (a.get("scoreBreakdown") or {}).get("generationUnknownPenalty")
+                      for a in generation_alts))
+
         rc = payload(await client.call_tool("find_alternative_skus", {
             "target_sku": target, "location": location, "priority_mode": "cost"}))
         cost_alts = rc.get("alternatives") or []

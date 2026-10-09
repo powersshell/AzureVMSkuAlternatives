@@ -106,7 +106,7 @@ jobs:
           resourceGroupName: ${{ env.RESOURCE_GROUP }}
           template: ./web-app/infra/modules/container-app-mcp.bicep
           parameters: >
-            containerImage=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            containerImage=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build-and-push.outputs.image-digest }}
             location=${{ github.event.inputs.location || 'southcentralus' }}
             appInsightsConnectionString=${{ steps.appinsights.outputs.connection-string }}
           failOnStdErr: false
