@@ -30,9 +30,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'mcp-server/**'
       - 'scripts/check_mcp_server.py'
       - '.github/workflows/check-mcp-server.yml'
+  workflow_run:
+    workflows: ["Deploy Flex Consumption Functions", "Deploy MCP Server Container"]
+    types: [completed]
+    branches: [main]
   # Deliberately no pull_request trigger, matching the other live-surface guards:
   # this asserts against the deployed Container App, which only reflects a change
   # after it merges. On a PR it would report a regression that isn't one.
@@ -50,10 +53,13 @@ permissions:
 
 jobs:
   check:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     name: Validate hosted MCP server
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-python@v5
         with:

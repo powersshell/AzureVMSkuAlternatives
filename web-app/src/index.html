@@ -169,22 +169,21 @@
                     </select>
                 </div>
                 <div class="adv-field">
-                    <label for="sourceGen">Source Gen</label>
+                    <label for="sourceGen">Source Gen (Hyper-V)</label>
                     <select id="sourceGen">
-                        <option value="auto" selected>Auto detect</option>
+                        <option value="auto" selected>Detect if unambiguous</option>
                         <option value="gen1">Gen1</option>
                         <option value="gen2">Gen2</option>
-                        <option value="gen3plus">Gen3+</option>
                     </select>
+                    <small>For dual-generation sizes, select your existing VM's boot generation.</small>
                 </div>
                 <div class="adv-field">
-                    <label for="targetGen">Target Gen</label>
+                    <label for="targetGen">Target Gen (Hyper-V)</label>
                     <select id="targetGen">
                         <option value="same" selected>Prefer same generation</option>
                         <option value="any">Any generation</option>
                         <option value="gen1">Prefer Gen1</option>
                         <option value="gen2">Prefer Gen2</option>
-                        <option value="gen3plus">Prefer Gen3+</option>
                     </select>
                 </div>
                 <div class="adv-field">

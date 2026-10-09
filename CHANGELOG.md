@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-09
+- **fix:** Corrected Source Gen / Target Gen to use Hyper-V Gen1/Gen2 compatibility, not hardware SKU versions. Dual-generation sources require an explicit choice for same-generation preference; Any disables that preference. Cross-generation and unknown-support warnings remain visible.
+- **fix:** Restored safe recommendation ordering with an explicit retirement/capacity recommendation penalty while retaining independent temporary-disk risk. Added matching MCP generation controls and regression coverage; live recommendation and MCP checks now run after successful deployments.
+
 ## 2026-10-08
 - **fix:** Included SCSI resource disks as well as NVMe in temporary-disk migration warnings and ranking penalties. Detailed Storage comparisons now show local temporary-disk availability; missing cache metadata is shown as unknown until the next refresh.
 - **improvement:** Added Source Gen and Target Gen controls to the compare flow so same-generation moves are the default recommendation path while cross-generation alternatives remain visible as lower-priority choices.

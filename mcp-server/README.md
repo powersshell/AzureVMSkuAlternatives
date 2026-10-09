@@ -7,7 +7,7 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 
 | Tool | Description |
 |------|-------------|
-| `find_alternative_skus` | Find SKUs similar to a target, ranked by similarity score (includes retirement status) |
+| `find_alternative_skus` | Find SKUs ranked by recommendation score, with boot-generation preferences, migration risks and lifecycle status |
 | `compare_sku_details` | Detailed side-by-side comparison between two SKUs (PAYG, Spot & reserved pricing) |
 | `compare_regions_for_sku` | Cross-region "where is this cheapest?" price comparison for one SKU |
 | `list_region_vm_grid` | Every SKU in a region with full specs and all pricing models (PAYG, Spot, reserved) |
@@ -19,6 +19,8 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 | `health_check` | Verify API connectivity |
 
 ---
+
+`find_alternative_skus` accepts `source_gen` (`auto`, `gen1`, `gen2`) and `target_gen` (`same`, `any`, `gen1`, `gen2`). These are **Hyper-V boot generations**, not `_vN` hardware versions. `auto` infers the source only when its SKU supports one generation; otherwise `generationContext.warning` asks for the existing VM's actual generation. `same` prefers that generation, while `any` disables the preference. Cross-generation results remain visible and flag the need to plan a supported migration or rebuild. Temporary-disk loss and retirement/capacity risks affect ranking independently.
 
 ## Quick Start — Remote HTTP (Easiest)
 

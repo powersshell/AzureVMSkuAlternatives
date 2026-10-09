@@ -114,6 +114,11 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         architecture_filter = str(req_body.get('architectureFilter', 'any')).lower()
         source_gen_pref = req_body.get('sourceGen', 'auto')
         target_gen_pref = req_body.get('targetGen', 'same')
+        if source_gen_pref not in ('auto', 'gen1', 'gen2') or target_gen_pref not in ('same', 'any', 'gen1', 'gen2'):
+            return func.HttpResponse(
+                json.dumps({'error': 'sourceGen must be auto, gen1 or gen2; targetGen must be same, any, gen1 or gen2'}),
+                mimetype='application/json', status_code=400
+            )
 
         # Validate inputs
         if not sku_name or not location:
@@ -169,6 +174,12 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
 
         # Extract target capabilities
         target_capabilities = extract_capabilities(target_sku)
+        try:
+            generation_context = _boot_generation_context(
+                target_capabilities, source_gen_pref, target_gen_pref)
+        except ValueError as error:
+            return func.HttpResponse(
+                json.dumps({'error': str(error)}), mimetype='application/json', status_code=400)
         gpu_comparison_profile = target_capabilities.get('gpuPerfProfile')
 
         # Get pricing for target SKU
@@ -190,8 +201,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         # at in *this* region, and the source size's own family/generation.
         family_generations = build_family_generation_map(all_skus)
         target_identity = _parse_sku_identity(sku_name)
-        preferred_source_generation = _normalize_generation_preference(source_gen_pref) or target_identity['version']
-        target_generation_preference = _resolve_generation_preference(preferred_source_generation, target_gen_pref)
+        preferred_source_generation = generation_context['sourceGeneration']
+        target_generation_preference = generation_context['targetGeneration']
         target_architecture = target_sku.get('architecture', 'x64')
 
         # Compare with all other SKUs
@@ -293,6 +304,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                     candidate_has_temp_disk=sku_capabilities.get('hasTempDisk'),
                     source_generation=preferred_source_generation,
                     target_generation_preference=target_generation_preference,
+                    candidate_generations=_supported_boot_generations(sku_capabilities),
+                    lifecycle_penalty=25.0 if retirement_info or growth_info else 0.0,
                 )
                 alt['recommendationScore'] = round(recommendation['score'], 2)
                 alt['scoreBreakdown'] = recommendation['components']
@@ -301,6 +314,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                     target_identity, sku_architecture, target_architecture,
                     source_has_temp_disk=target_capabilities.get('hasTempDisk'),
                     candidate_has_temp_disk=sku_capabilities.get('hasTempDisk'),
+                    source_generation=preferred_source_generation,
+                    target_generation=target_generation_preference,
                 )
 
                 alternatives.append(alt)
@@ -428,12 +443,15 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
             'pricesAsOf': prices_as_of,
             'dataSource': data_source,
             'migrationEffort': _migration_effort(target_identity),
+            'generationContext': generation_context,
             'searchParameters': {
                 'location': location,
                 'minSimilarityScore': min_similarity_score,
                 'maxResults': max_results,
                 'priorityMode': priority_mode,
                 'architectureFilter': architecture_filter,
+                'sourceGen': source_gen_pref,
+                'targetGen': target_gen_pref,
                 'weights': {
                     'cpu': weight_cpu,
                     'memory': weight_memory,
@@ -2058,44 +2076,37 @@ def _parse_sku_identity(sku_name: str) -> Dict:
     }
 
 
-def _normalize_generation_preference(value: Optional[str]) -> Optional[int]:
-    """Normalize a UI generation selection to the underlying Azure VM version."""
-    if value is None:
-        return None
-    normalized = str(value).strip().lower()
-    if not normalized or normalized in {'auto', 'any', 'same'}:
-        return None
-    normalized = normalized.replace('generation', '').replace('gen', '').replace('+', '')
-    if normalized.endswith('plus'):
-        normalized = normalized[:-4]
-    normalized = normalized.strip()
-    if not normalized:
-        return None
-    try:
-        generation = int(normalized)
-        return max(1, generation)
-    except ValueError:
-        return None
+def _supported_boot_generations(capabilities: Dict) -> List[int]:
+    """Read Hyper-V boot support independently of the SKU's hardware version."""
+    tokens = {token.strip().upper() for token in
+              (capabilities.get('hyperVGenerations') or '').split(',')}
+    return [generation for generation in (1, 2) if f'V{generation}' in tokens]
 
 
-def _resolve_generation_preference(source_generation: Optional[int], target_generation: Optional[str]) -> Optional[int]:
-    """Resolve the preferred target generation for ranking.
-
-    The default recommendation path is the same generation as the source size.
-    A concrete target generation such as Gen1 or Gen2 still remains visible as a
-    lower-priority alternative when the user deliberately chooses that route.
-    """
-    if target_generation is None:
-        return source_generation
-    normalized = str(target_generation).strip().lower()
-    if normalized in {'', 'auto', 'any'}:
-        return None
-    if normalized == 'same':
-        return source_generation
-    value = _normalize_generation_preference(normalized)
-    if value is not None:
-        return value
-    return source_generation
+def _boot_generation_context(capabilities: Dict, source: str, target: str) -> Dict:
+    supported = _supported_boot_generations(capabilities)
+    source_generation = {'gen1': 1, 'gen2': 2}.get(source)
+    if source_generation is not None and supported and source_generation not in supported:
+        raise ValueError(f'The source SKU does not support Hyper-V Gen{source_generation}')
+    if source == 'auto' and len(supported) == 1:
+        source_generation = supported[0]
+    target_generation = (source_generation if target == 'same' else
+                         {'gen1': 1, 'gen2': 2}.get(target))
+    warning = None
+    if source_generation is None:
+        warning = ('Select the existing VM\'s Source Gen (Gen1 or Gen2). '
+                   'A SKU supporting both generations, or with missing metadata, '
+                   'cannot identify the VM\'s boot generation. Same-generation preference '
+                   'is not applied until the source generation is known.')
+    return {
+        'sourceGeneration': source_generation,
+        'targetGeneration': target_generation,
+        'supportedSourceGenerations': supported,
+        'sourceSelectionRequired': source_generation is None,
+        'crossGenerationRequested': source_generation is not None and
+                                    target_generation is not None and source_generation != target_generation,
+        'warning': warning,
+    }
 
 
 def build_family_generation_map(all_skus: List[Dict]) -> Dict[str, int]:
@@ -2178,7 +2189,9 @@ def _migration_readiness(sku_name: str, capabilities: Dict, identity: Dict,
                          target_identity: Dict, architecture: str,
                          target_architecture: str,
                          source_has_temp_disk: Optional[bool] = None,
-                         candidate_has_temp_disk: Optional[bool] = None) -> Dict:
+                         candidate_has_temp_disk: Optional[bool] = None,
+                         source_generation: Optional[int] = None,
+                         target_generation: Optional[int] = None) -> Dict:
     """Platform-change flags a user must plan for when moving to this size.
 
     Mirrors the platform changes called out in the v6/v7 migration guidance.
@@ -2191,6 +2204,11 @@ def _migration_readiness(sku_name: str, capabilities: Dict, identity: Dict,
         'requiresGen2': supports_gen2 and 'V1' not in hyperv,
         'supportsGen2': supports_gen2,
         'gen1Only': gen1_only,
+        'bootGenerationChange': bool(source_generation is not None and
+                                     _supported_boot_generations(capabilities) and
+                                     (source_generation not in _supported_boot_generations(capabilities) or
+                                      (target_generation is not None and target_generation != source_generation))),
+        'bootGenerationUnknown': not bool(_supported_boot_generations(capabilities)),
         # Our stored flag is NvmeDiskSizeInMiB > 0 -- that is the *local temp*
         # NVMe disk (the 'd' suffix), not the remote-disk NVMe interface. Named
         # accordingly so the badge does not overstate what we actually know.
@@ -2212,11 +2230,11 @@ def _migration_effort(target_identity: Dict) -> Dict:
     """Microsoft's published migration effort rating, keyed on the source generation."""
     version = target_identity['version']
     if version >= 5:
-        level, detail = 'Very low', 'Already Gen 2 / NVMe-ready; most moves are a resize.'
+        level, detail = 'Very low', 'Recent hardware version; verify boot generation, disk and network drivers before resizing.'
     elif version == 4:
         level, detail = 'Low', 'Largely current-platform; verify NVMe and network drivers.'
     else:
-        level, detail = 'Moderate', 'Expect Gen 2 (UEFI), NVMe disk and MANA network changes.'
+        level, detail = 'Moderate', 'Older hardware version; verify boot-generation compatibility and any disk or network changes.'
     return {
         'level': level,
         'detail': detail,
@@ -2232,7 +2250,9 @@ def calculate_recommendation_score(similarity_score: float, target_identity: Dic
                                    source_has_temp_disk: Optional[bool] = None,
                                    candidate_has_temp_disk: Optional[bool] = None,
                                    source_generation: Optional[int] = None,
-                                   target_generation_preference: Optional[int] = None) -> Dict:
+                                   target_generation_preference: Optional[int] = None,
+                                   candidate_generations: Optional[List[int]] = None,
+                                   lifecycle_penalty: float = 0.0) -> Dict:
     """Blend spec similarity with modernization and family affinity into a ranking score.
 
     Returns the score plus its components so the UI can explain the ranking.
@@ -2253,15 +2273,16 @@ def calculate_recommendation_score(similarity_score: float, target_identity: Dic
     generation_match_bonus = 0.0
     generation_mismatch_penalty = 0.0
     preferred_generation = target_generation_preference
-    if preferred_generation is None and source_generation is not None:
-        preferred_generation = source_generation
+    generation_unknown_penalty = 0.0
     if preferred_generation is not None:
-        if candidate_identity['version'] == preferred_generation:
-            generation_match_bonus = 8.0
-            score += generation_match_bonus
-        else:
-            generation_mismatch_penalty = 18.0 + (abs(candidate_identity['version'] - preferred_generation) * 4.0)
+        if not candidate_generations:
+            generation_unknown_penalty = 10.0
+            score -= generation_unknown_penalty
+        elif preferred_generation not in candidate_generations:
+            generation_mismatch_penalty = 30.0
             score -= generation_mismatch_penalty
+
+    score -= lifecycle_penalty
 
     temp_disk_penalty = 0.0
     if source_has_temp_disk is True and candidate_has_temp_disk is False:
@@ -2282,6 +2303,8 @@ def calculate_recommendation_score(similarity_score: float, target_identity: Dic
             'costBonus': round(cost_bonus, 2),
             'generationMatchBonus': round(generation_match_bonus, 2),
             'generationMismatchPenalty': round(generation_mismatch_penalty, 2),
+            'generationUnknownPenalty': generation_unknown_penalty,
+            'lifecyclePenalty': lifecycle_penalty,
             'tempDiskPenalty': round(temp_disk_penalty, 2),
             'olderGenerationPenalty': older_generation_penalty,
             'weights': {

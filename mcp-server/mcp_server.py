@@ -35,6 +35,7 @@ import json
 import re
 import time
 import logging
+from typing import Literal
 import httpx
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware
@@ -249,6 +250,8 @@ async def find_alternative_skus(
     require_gpu_match: bool = False,
     priority_mode: str = "balanced",
     architecture_filter: str = "any",
+    source_gen: Literal["auto", "gen1", "gen2"] = "auto",
+    target_gen: Literal["same", "any", "gen1", "gen2"] = "same",
 ) -> dict:
     """
     Find Azure VM SKUs similar to a target SKU, ranked by recommendationScore (0-100).
@@ -333,6 +336,12 @@ async def find_alternative_skus(
         architecture_filter:  Restrict the result set by CPU architecture: "any" (default),
                               "x64", or "arm64". Use "x64" when the workload cannot be
                               recompiled for Arm64.
+        source_gen:           Existing VM's Hyper-V boot generation, not its SKU version.
+                              "auto" infers only single-generation sizes. For dual-generation
+                              sizes, ask the user for gen1/gen2; inspect generationContext.warning.
+        target_gen:           Preferred Hyper-V target generation. "same" defaults to the source;
+                              "any" disables generation preference. Cross-generation options
+                              remain visible but require a supported migration path or rebuild.
     """
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         resp = await client.post(
@@ -352,6 +361,8 @@ async def find_alternative_skus(
                 "requireGPUMatch": require_gpu_match,
                 "priorityMode": priority_mode,
                 "architectureFilter": architecture_filter,
+                "sourceGen": source_gen,
+                "targetGen": target_gen,
             },
         )
         resp.raise_for_status()

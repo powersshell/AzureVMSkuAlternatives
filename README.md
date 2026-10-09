@@ -9,16 +9,17 @@
 
 ## 📋 Recent Changes
 
-### 2026-10-08
-- **fix:** Included SCSI and NVMe temporary disks in migration warnings and added local temporary-disk availability to detailed Storage comparisons. Missing cache metadata is shown as unknown until the next refresh.
-- **improvement:** Added Source Gen and Target Gen controls so the compare flow prefers same-generation moves by default while still showing cross-generation alternatives as lower-priority options.
-- **fix:** Penalized temp-disk mismatches and exposed the migration-risk badge in the result cards when a source VM has a local temp disk but the target does not.
+### 2026-10-09
+- **fix:** Corrected Source Gen / Target Gen to use Hyper-V Gen1/Gen2 compatibility, not hardware SKU versions. Dual-generation sources require an explicit choice for same-generation preference; Any disables that preference. Cross-generation and unknown-support warnings remain visible.
+- **fix:** Restored safe recommendation ordering with an explicit retirement/capacity recommendation penalty while retaining independent temporary-disk risk. Added matching MCP generation controls and regression coverage; live recommendation and MCP checks now run after successful deployments.
 
 📄 [Full changelog →](CHANGELOG.md)
 
 ---
 
 ## 🎯 What is This?
+
+In **Find Alternatives → Advanced Options**, Source Gen refers to the existing VM's Hyper-V boot generation, not the size's `_vN` hardware version. Automatic detection works only for sizes supporting one boot generation. For a dual-generation size, select the actual Gen1 or Gen2 of your existing VM; it cannot be inferred from the SKU. Target Gen defaults to the same generation; Any removes the preference. Cross-generation moves may require a rebuild or a supported migration process, not an ordinary resize.
 
 Azure VM SKU Alternatives helps you discover similar or alternative VM SKUs when:
 - 🚫 Your preferred SKU isn't available in a region

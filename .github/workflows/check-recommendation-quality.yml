@@ -26,9 +26,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'web-app/api/function_app.py'
       - 'scripts/check_recommendation_quality.py'
       - '.github/workflows/check-recommendation-quality.yml'
+  workflow_run:
+    workflows: ["Deploy Flex Consumption Functions"]
+    types: [completed]
+    branches: [main]
   # Deliberately no pull_request trigger. This guard asserts against the LIVE
   # deployed API, and the scoring it checks only exists in production after the
   # API deploys on merge -- so on a PR it would fail by design and report a
@@ -46,10 +49,13 @@ permissions:
 
 jobs:
   check:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     name: Validate recommendation ordering
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-python@v5
         with:

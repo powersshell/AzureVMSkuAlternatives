@@ -446,6 +446,136 @@ class TestDetectCpuVendor:
 # ============================================================================
 
 @pytest.mark.unit
+class TestBootGenerationRecommendations:
+    @pytest.mark.parametrize('metadata,source,target,expected_source,expected_target', [
+        ('V1', 'auto', 'same', 1, 1),
+        ('V2', 'auto', 'same', 2, 2),
+        ('V1,V2', 'auto', 'same', None, None),
+        ('', 'auto', 'same', None, None),
+        ('V1,V2', 'gen1', 'same', 1, 1),
+        ('V1,V2', 'gen2', 'same', 2, 2),
+        ('V1,V2', 'gen1', 'gen2', 1, 2),
+        ('V1,V2', 'gen2', 'any', 2, None),
+    ])
+    def test_generation_context(self, metadata, source, target, expected_source, expected_target):
+        from function_app import _boot_generation_context
+        context = _boot_generation_context({'hyperVGenerations': metadata}, source, target)
+        assert context['sourceGeneration'] == expected_source
+        assert context['targetGeneration'] == expected_target
+        assert context['sourceSelectionRequired'] is (expected_source is None)
+        assert bool(context['warning']) is (expected_source is None)
+
+    def test_rejects_impossible_source(self):
+        from function_app import _boot_generation_context
+        with pytest.raises(ValueError, match='does not support'):
+            _boot_generation_context({'hyperVGenerations': 'V2'}, 'gen1', 'same')
+
+    @pytest.mark.parametrize('supported,preference,penalty,unknown', [
+        ([1, 2], 1, 0, 0), ([1, 2], 2, 0, 0),
+        ([2], 1, 30, 0), ([1], 2, 30, 0),
+        ([], 1, 0, 10), ([2], None, 0, 0),
+    ])
+    def test_scoring_uses_boot_support_not_sku_version(self, supported, preference, penalty, unknown):
+        from function_app import _parse_sku_identity, calculate_recommendation_score
+        result = calculate_recommendation_score(
+            100, _parse_sku_identity('Standard_D2s_v3'),
+            _parse_sku_identity('Standard_D2s_v7'), {},
+            source_generation=1, target_generation_preference=preference,
+            candidate_generations=supported)
+        assert result['components']['generationMismatchPenalty'] == penalty
+        assert result['components']['generationUnknownPenalty'] == unknown
+        assert result['components']['generationMatchBonus'] == 0
+
+    @pytest.mark.parametrize('source_name,safe_name,bad_name', [
+        ('Standard_D2_v3', 'Standard_D2s_v5', 'Standard_D2s_v3'),
+        ('Standard_D4s_v3', 'Standard_D4ads_v7', 'Standard_D4_v3'),
+        ('Standard_E8s_v4', 'Standard_E8as_v7', 'Standard_L8as_v4'),
+        ('Standard_F4s_v2', 'Standard_F4alds_v7', 'Standard_B4als_v2'),
+        ('Standard_L8s_v2', 'Standard_L8aos_v5', 'Standard_DS13_v2'),
+        ('Standard_B2s', 'Standard_B2als_v2', 'Standard_B2ms'),
+    ])
+    def test_safe_family_candidates_beat_regressed_leaders(self, source_name, safe_name, bad_name):
+        from function_app import _parse_sku_identity, calculate_recommendation_score
+        source = _parse_sku_identity(source_name)
+        safe = _parse_sku_identity(safe_name)
+        bad = _parse_sku_identity(bad_name)
+        families = {safe['family']: safe['version'], bad['family']: max(safe['version'], bad['version'])}
+        kwargs = dict(source_generation=1, target_generation_preference=1, candidate_generations=[1, 2])
+        good_score = calculate_recommendation_score(100, source, safe, families, **kwargs)['score']
+        restricted = bad_name in ('Standard_D2s_v3', 'Standard_D4_v3', 'Standard_DS13_v2', 'Standard_B2ms')
+        bad_score = calculate_recommendation_score(
+            100, source, bad, families, lifecycle_penalty=25 if restricted else 0, **kwargs)['score']
+        assert good_score > bad_score
+
+    def test_temp_disk_penalty_is_independent(self):
+        from function_app import _parse_sku_identity, calculate_recommendation_score
+        identity = _parse_sku_identity('Standard_D2s_v5')
+        result = calculate_recommendation_score(
+            100, identity, identity, {}, candidate_generations=[1, 2],
+            target_generation_preference=1, source_has_temp_disk=True, candidate_has_temp_disk=False)
+        assert result['components']['tempDiskPenalty'] == 12
+        assert result['components']['generationMismatchPenalty'] == 0
+
+    def test_cross_generation_badge(self):
+        from function_app import _migration_readiness, _parse_sku_identity
+        identity = _parse_sku_identity('Standard_D2s_v5')
+        result = _migration_readiness(
+            'Standard_D2s_v5', {'hyperVGenerations': 'V1,V2'}, identity, identity,
+            'x64', 'x64', source_generation=1, target_generation=2)
+        assert result['bootGenerationChange'] is True
+
+    @pytest.mark.parametrize('source,target,status', [
+        ('gen3plus', 'same', 400), ('auto', 'gen3plus', 400),
+        ('gen1', 'same', 200), ('gen1', 'gen2', 200), ('gen2', 'any', 200),
+        ('auto', 'same', 200),
+    ])
+    def test_compare_route_generation_contract(self, monkeypatch, source, target, status):
+        import json
+        import function_app as app
+
+        class Response:
+            def __init__(self, body, status_code=200, **kwargs):
+                self.body = json.loads(body)
+                self.status_code = status_code
+
+        def sku(name, boot):
+            return {'name': name, 'pricing': {'monthlyPrice': 100, 'ri1YearMonthly': 80},
+                    'capabilities': [
+                        {'name': 'vCPUs', 'value': '2'},
+                        {'name': 'MemoryGB', 'value': '8'},
+                        {'name': 'HyperVGenerations', 'value': boot},
+                        {'name': 'ResourceDiskSizeInMB', 'value': '0'},
+                    ]}
+
+        catalog = [sku('Standard_D2s_v3', 'V1,V2'), sku('Standard_D2s_v5', 'V1,V2'),
+                   sku('Standard_D2s_v6', 'V2')]
+        monkeypatch.setenv('AZURE_SUBSCRIPTION_ID', 'test')
+        monkeypatch.setattr(app.func, 'HttpResponse', Response)
+        monkeypatch.setattr(app, 'get_access_token', lambda: 'test')
+        monkeypatch.setattr(app, 'get_vm_skus_with_cache', lambda *args: (catalog, 'cache'))
+        req = types.SimpleNamespace(method='POST', get_json=lambda: {
+            'skuName': 'Standard_D2s_v3', 'location': 'eastus',
+            'sourceGen': source, 'targetGen': target, 'minSimilarityScore': 0})
+        result = app.compare_vms(req)
+        assert result.status_code == status
+        if status == 400:
+            assert 'error' in result.body
+            return
+        context = result.body['generationContext']
+        assert context['sourceSelectionRequired'] is (source == 'auto')
+        assert context['crossGenerationRequested'] is (source == 'gen1' and target == 'gen2')
+        for alt in result.body['alternatives']:
+            b = alt['scoreBreakdown']
+            if target == 'any':
+                assert b['generationMismatchPenalty'] == b['generationUnknownPenalty'] == 0
+            if alt['name'] == 'Standard_D2s_v6' and source == 'gen1' and target == 'same':
+                assert b['generationMismatchPenalty'] == 30
+                assert alt['migrationReadiness']['bootGenerationChange']
+        assert result.body['searchParameters']['sourceGen'] == source
+        assert result.body['searchParameters']['targetGen'] == target
+
+
+@pytest.mark.unit
 class TestTemporaryDisks:
     @pytest.mark.parametrize('resource_mb,nvme_mib,expected', [
         ('16384', '0', True),

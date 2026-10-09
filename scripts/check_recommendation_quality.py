@@ -140,6 +140,34 @@ def main():
     failures = []
     checked = 0
 
+    # Boot-generation preference must not confuse _v3/_v5 with Hyper-V V1/V2.
+    for source_gen, target_gen in (("gen1", "same"), ("gen2", "same"), ("gen1", "any")):
+        status, body = _request("{}/compare_vms".format(base), {
+            "skuName": "Standard_D2_v3", "location": loc, "maxResults": 25,
+            "minSimilarityScore": 60, "sourceGen": source_gen, "targetGen": target_gen,
+        })
+        checked += 1
+        name = "boot {} -> {}".format(source_gen, target_gen)
+        if status != 200 or not isinstance(body, dict) or not body.get("alternatives"):
+            failures.append((name, "comparison failed: HTTP {}".format(status)))
+            continue
+        context = body.get("generationContext") or {}
+        expected = None if target_gen == "any" else int(source_gen[-1])
+        alts = body["alternatives"]
+        problems = []
+        if context.get("sourceGeneration") != int(source_gen[-1]) or context.get("targetGeneration") != expected:
+            problems.append("incorrect boot generation context")
+        if expected is not None and "V{}".format(expected) not in (
+                alts[0].get("capabilities", {}).get("hyperVGenerations") or "").split(","):
+            problems.append("primary recommendation does not support preferred boot generation")
+        if target_gen == "any" and any(
+                (a.get("scoreBreakdown") or {}).get("generationMismatchPenalty", 0) or
+                (a.get("scoreBreakdown") or {}).get("generationUnknownPenalty", 0) for a in alts):
+            problems.append("Any still applies boot generation penalties")
+        if problems:
+            failures.append((name, "; ".join(problems)))
+        print("  {:<5} {:<24} {}".format("FAIL" if problems else "ok", name, "; ".join(problems) or alts[0]["name"]))
+
     for sku_name, expected_family in FAMILY_CASES:
         status, body = _fetch(base, loc, sku_name)
 

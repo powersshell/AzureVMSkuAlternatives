@@ -1549,11 +1549,17 @@ function renderMigrationBadges(alt) {
     const badges = [];
 
     if (m.generationsAhead > 0) {
-        const label = m.generationsAhead === 1 ? '1 gen newer' : `${m.generationsAhead} gens newer`;
-        badges.push(`<span class="migration-badge newer" title="A newer VM generation than your current size.">⬆ ${label}</span>`);
+        const label = m.generationsAhead === 1 ? '1 version newer' : `${m.generationsAhead} versions newer`;
+        badges.push(`<span class="migration-badge newer" title="A newer hardware SKU version, not a change in Hyper-V boot generation.">⬆ ${label}</span>`);
     }
     if (m.requiresGen2) {
         badges.push('<span class="migration-badge gen2" title="Generation 2 only — needs a UEFI-based Gen 2 image. Gen 1 images will not boot.">Gen 2 only</span>');
+    }
+    if (m.bootGenerationChange) {
+        badges.push('<span class="migration-badge gen2" title="A different Hyper-V boot generation is required or explicitly selected. This is not an ordinary resize; plan a rebuild or a supported migration path. Do not assume third-party conversion tools are Microsoft-supported.">Boot generation change</span>');
+    }
+    if (m.bootGenerationUnknown) {
+        badges.push('<span class="migration-badge gen2" title="Hyper-V generation metadata is missing. Verify boot compatibility before migrating.">Verify boot generation</span>');
     }
     if (m.usesManaNetworking) {
         badges.push('<span class="migration-badge mana" title="Uses the Microsoft Azure Network Adapter (MANA). Older images may need updated network drivers.">MANA NIC</span>');
@@ -1588,13 +1594,19 @@ function renderScoreExplanation(alt) {
         adjustments.push(`<li>+${b.costBonus.toFixed(1)} cost saving bonus</li>`);
     }
     if (b.generationMismatchPenalty > 0) {
-        adjustments.push(`<li>−${b.generationMismatchPenalty.toFixed(0)} generation path mismatch</li>`);
+        adjustments.push(`<li>−${b.generationMismatchPenalty.toFixed(0)} preferred Hyper-V boot generation unsupported</li>`);
+    }
+    if (b.generationUnknownPenalty > 0) {
+        adjustments.push(`<li>−${b.generationUnknownPenalty.toFixed(0)} boot-generation support unknown</li>`);
+    }
+    if (b.lifecyclePenalty > 0) {
+        adjustments.push(`<li>−${b.lifecyclePenalty.toFixed(0)} retirement / capacity recommendation penalty</li>`);
     }
     if (b.tempDiskPenalty > 0) {
         adjustments.push(`<li>−${b.tempDiskPenalty.toFixed(0)} local temp-disk mismatch</li>`);
     }
     if (b.olderGenerationPenalty > 0) {
-        adjustments.push(`<li>−${b.olderGenerationPenalty.toFixed(0)} older generation than your current size</li>`);
+        adjustments.push(`<li>−${b.olderGenerationPenalty.toFixed(0)} older hardware SKU version</li>`);
     }
     if (alt.originalSimilarityScore != null) {
         const applied = (alt.originalSimilarityScore - alt.similarityScore).toFixed(1);
@@ -1640,10 +1652,13 @@ function renderMigrationEffortPanel(data) {
             <span class="effort-chip effort-${level}">${escapeHtml(effort.level)} effort</span>
         </div>
         <p class="migration-effort-detail">${escapeHtml(effort.detail)}</p>
+        ${data.generationContext?.warning ? `<p role="status">${escapeHtml(data.generationContext.warning)} Open Advanced Options above to select Source Gen.</p>` : ''}
+        ${data.generationContext?.sourceGeneration ? `<p>Source boot generation: Gen${data.generationContext.sourceGeneration}. Preferred target: ${data.generationContext.targetGeneration ? `Gen${data.generationContext.targetGeneration}` : 'Any'}.</p>` : ''}
+        ${data.generationContext?.crossGenerationRequested ? '<p><strong>Cross-generation migration selected:</strong> plan a rebuild or a supported migration path. Do not assume third-party conversion tools are Microsoft-supported.</p>' : ''}
         <ul class="migration-checklist">
-            <li>Use a Generation 2 image — newer sizes are UEFI-based and Trusted Launch capable.</li>
+            <li>Prefer Gen1 → Gen1 or Gen2 → Gen2. Verify the target supports your image's boot generation; Gen2-only sizes need a UEFI-based Gen2 image.</li>
             <li>Confirm your image includes current NVMe and MANA network drivers.</li>
-            <li>A local temp disk exists only on <code>d</code>-suffixed sizes. Move temp data to a data disk if you drop it.</li>
+            <li>Check Local Temporary Disk under Storage. Older sizes can have SCSI temp disks without a <code>d</code> suffix; review scratch data and pagefile/swap paths if a move drops the disk.</li>
             <li>Re-plan any family-scoped reservations or savings plans before you resize.</li>
         </ul>
         <div class="migration-journey">${steps}</div>
