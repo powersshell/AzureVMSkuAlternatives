@@ -27,11 +27,6 @@ name: Check MCP Server
 # is legitimate, and the two guards must not disagree about that.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/check_mcp_server.py'
-      - '.github/workflows/check-mcp-server.yml'
   workflow_run:
     workflows: ["Deploy Flex Consumption Functions", "Deploy MCP Server Container"]
     types: [completed]
@@ -39,6 +34,8 @@ on:
   # Deliberately no pull_request trigger, matching the other live-surface guards:
   # this asserts against the deployed Container App, which only reflects a change
   # after it merges. On a PR it would report a regression that isn't one.
+  # Guard-only edits use workflow_dispatch or the daily schedule; a push trigger
+  # would race deployments whenever guards and application code change together.
   #
   # The daily run is the point of this guard, not a formality. MCP has no
   # path-trigger relationship to the API, so an API-only change that alters the

@@ -23,11 +23,6 @@ name: Check Recommendation Quality
 # sends them to unrelated families.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/check_recommendation_quality.py'
-      - '.github/workflows/check-recommendation-quality.yml'
   workflow_run:
     workflows: ["Deploy Flex Consumption Functions"]
     types: [completed]
@@ -35,7 +30,9 @@ on:
   # Deliberately no pull_request trigger. This guard asserts against the LIVE
   # deployed API, and the scoring it checks only exists in production after the
   # API deploys on merge -- so on a PR it would fail by design and report a
-  # regression that isn't one. Runs on merge to main and daily thereafter.
+  # regression that isn't one. Runs after API deployment and daily thereafter.
+  # Guard-only edits can be checked with workflow_dispatch, without racing a
+  # simultaneous API deployment on the same push.
   #
   # Ranking depends on the per-region catalogue, which a cached refresh rewrites
   # on a timer. If a family's newest generation drops out of a region, the
