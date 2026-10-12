@@ -40,12 +40,27 @@ const rendered = context.renderMigrationAssessment(alt);
 assert.match(rendered, /Preferred Gen2 unsupported/);
 assert.match(rendered, /alternate, not the requested target/);
 assert.match(rendered, /Planning effort: Resize assessment/);
-assert.match(rendered, /<details><summary>Migration prerequisites/);
+assert.match(rendered, /^<details class="migration-assessment/);
+assert.doesNotMatch(rendered, /<details[^>]*\sopen(?:\s|=|>)/);
+const summary = rendered.match(/<summary>([\s\S]*?)<\/summary>/)[1];
+assert.match(summary, /Gen1 → Gen1/);
+assert.match(summary, /Resize assessment/);
+assert.match(summary, /Gen2 preference unavailable/);
+assert.match(summary, /Details/);
+assert.doesNotMatch(summary, /<ul>|<p>|unsafe|prerequisites/);
+assert.match(rendered, /Migration prerequisites and guidance/);
 assert.match(rendered, /&lt;script&gt;/);
 assert.doesNotMatch(rendered, /<script>|javascript:|Very low/);
 assert.match(rendered, /pricing selection does not establish/);
-assert.match(context.renderMigrationAssessment({}), /Generation path unassessed/);
-assert.match(context.renderMigrationAssessment({}), /Cannot assess effort/);
+assert.equal(context.renderMigrationAssessment({}), '');
+assert.equal(context.renderMigrationAssessment({
+    migrationReadiness: { architectureChange: true, tempDiskMismatch: true }
+}), '');
+const unknownAssessment = context.getMigrationAssessment({});
+assert.equal(unknownAssessment.effort, 'Cannot assess effort');
+const unknownRendered = context.renderMigrationAssessment({ migrationAssessment: unknownAssessment });
+assert.match(unknownRendered, /<summary>.*Generation path unassessed/);
+assert.match(unknownRendered, /Cannot assess effort/);
 context.renderMigrationEffortPanel({
     migrationEffort: { level: 'Unassessed', detail: 'Select Source Gen', guidanceUrl: assessment.guidanceUrls[0] },
     generationContext: { warning: 'Dual-generation source.', sourceGeneration: null },
@@ -76,4 +91,4 @@ context.currentResults.alternatives = [{ name: 'Unknown' }];
 const unknown = context.buildComparisonExportModel();
 assert.equal(unknown.summaryRows[0][unknown.summaryHeaders.indexOf('Planning Effort')], 'Cannot assess effort');
 assert.match(source, /event\.target\.closest\('\.migration-assessment'\)/);
-console.log('PASS: visible generation selectors, candidate/global callouts, prerequisites, escaping, unknowns and comparison exports.');
+console.log('PASS: visible generation selectors, compact collapsed guidance, omitted missing-metadata panels, prerequisites, escaping, unknowns and comparison exports.');

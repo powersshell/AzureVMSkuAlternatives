@@ -1060,8 +1060,8 @@ body {
 }
 .effort-chip { background: #eff6fc; color: #005a9e; }
 .migration-assessment {
-    margin-top: 10px;
-    padding: 10px 12px;
+    margin-top: 6px;
+    padding: 6px 10px;
     border: 1px solid var(--border);
     border-left: 3px solid #0078d4;
     border-radius: var(--radius-sm);
@@ -1077,6 +1077,13 @@ body {
 .migration-assessment ul { margin: 6px 0; padding-left: 18px; }
 .migration-assessment summary { cursor: pointer; font-weight: 600; }
 .migration-assessment summary:focus-visible { outline: 2px solid #0078d4; outline-offset: 3px; }
+.migration-effort-label,
+.migration-preference-label,
+.migration-details-label { display: inline-block; margin-left: 10px; }
+.migration-effort-label { font-weight: 400; }
+.migration-preference-label { color: #8a6100; }
+.migration-details-label { color: #005a9e; font-weight: 400; }
+.migration-assessment-body { margin-top: 8px; }
 .migration-assessment a { display: block; color: #005a9e; }
 .migration-preference { font-weight: 600; }
 .migration-effort-detail { margin: 6px 0 8px; font-size: 13px; opacity: .85; }

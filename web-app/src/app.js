@@ -1684,8 +1684,13 @@ function getMigrationAssessment(alt) {
 }
 
 function renderMigrationAssessment(alt) {
+    if (!alt.migrationAssessment) return '';
     const a = getMigrationAssessment(alt);
     const warning = a.pathStatus !== 'same_generation' || a.preferenceSupport === 'unsupported' || alt.migrationReadiness?.architectureChange || alt.migrationReadiness?.tempDiskMismatch;
+    const path = [1, 2].includes(a.sourceGeneration) && [1, 2].includes(a.destinationGeneration)
+        ? `Gen${a.sourceGeneration} → Gen${a.destinationGeneration}` : a.label;
+    const preferenceLabel = a.preferenceSupport === 'unsupported'
+        ? `<span class="migration-preference-label">Gen${escapeHtml(String(a.preferredTargetGeneration))} preference unavailable</span>` : '';
     const preference = a.preferenceSupport === 'unsupported'
         ? `<p class="migration-preference"><strong>Preferred Gen${escapeHtml(String(a.preferredTargetGeneration))} unsupported.</strong> The path below is an alternate, not the requested target.</p>`
         : a.preferenceSupport === 'unknown'
@@ -1696,17 +1701,19 @@ function renderMigrationAssessment(alt) {
         const title = url.includes('trusted-launch-existing-vm-gen-1') ? 'Microsoft Gen1 to Trusted Launch upgrade guidance' : 'Microsoft size migration guidance';
         return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${title}</a>`;
     }).join(' ');
-    return `<div class="migration-assessment${warning ? ' migration-assessment-warning' : ''}">
+    return `<details class="migration-assessment${warning ? ' migration-assessment-warning' : ''}">
+        <summary><span>${escapeHtml(path)}</span><span class="migration-effort-label">${escapeHtml(a.effort)}</span>${preferenceLabel}<span class="migration-details-label">Details</span></summary>
+        <div class="migration-assessment-body">
         ${preference}
         <strong>${escapeHtml(a.label)}</strong>
         <p>Planning effort: ${escapeHtml(a.effort)}. This is SKU guidance, not verified VM readiness.</p>
         <ul>${items(a.preferenceSupport === 'unsupported' ? a.reasons.slice(1) : a.reasons)}</ul>
-        <details><summary>Migration prerequisites and guidance</summary>
+        <strong>Migration prerequisites and guidance</strong>
             <ul>${items(a.checklist)}</ul>
             <p>${links}</p>
             <p>The Linux/Windows pricing selection does not establish your existing OS, image or upgrade eligibility.</p>
-        </details>
-    </div>`;
+        </div>
+    </details>`;
 }
 
 // Explain how a recommendation was ranked, so the ordering is auditable.

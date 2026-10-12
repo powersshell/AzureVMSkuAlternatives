@@ -28,6 +28,8 @@ Source Gen and Target Gen are visible in the main comparison form, outside Advan
 
 Target Gen is a preference, not a hard filter. Same prefers the existing generation; Any removes ranking preference penalties, not factual migration warnings. Cards identify incompatible preferences separately from any alternate compatible path. Existing recommendation scoring and PAYG-based ranking are unchanged.
 
+Candidate guidance is a compact path/effort row, collapsed by default. Open Details for reasons, prerequisites and official references. Unsupported target preferences remain visible in the collapsed row. When backend assessment metadata is missing, cards omit the repeated empty panels; the shared migration guidance explains the limitation, existing risk badges remain visible, and exports still explicitly mark assessments as unassessed.
+
 Every `/api/compare_vms` alternative has additive `migrationAssessment` metadata:
 
 | Field | Meaning |
@@ -51,7 +53,7 @@ node scripts\test_generation_ui.js
 pwsh -NoProfile -File scripts\Test-GenerationMigration.ps1
 ```
 
-PR previews call the shared production API. New selectors can appear before backend assessment metadata is deployed; missing metadata explicitly shows unassessed guidance. A frontend-only deployment is not proof that the API or MCP feature is live. No pricing cache refresh is required for this computed metadata.
+PR previews call the shared production API. New selectors can appear before backend assessment metadata is deployed; missing metadata is explained once in the shared guidance, not repeated as a panel on every card. A frontend-only deployment is not proof that the API or MCP feature is live. No pricing cache refresh is required for this computed metadata.
 
 ## Savings plan pricing
 
