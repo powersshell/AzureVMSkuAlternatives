@@ -576,7 +576,7 @@ async function handleCompare() {
         priorityMode: document.getElementById('priorityMode')?.value || 'balanced',
         architectureFilter: document.getElementById('architectureFilter')?.value || 'any',
         sourceGen: document.getElementById('sourceGen')?.value || 'auto',
-        targetGen: document.getElementById('targetGen')?.value || 'same'
+        targetGen: document.getElementById('targetGen')?.value || 'any'
     };
 
     showLoading();

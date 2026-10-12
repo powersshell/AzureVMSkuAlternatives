@@ -25,6 +25,12 @@ for (const id of ['sourceGen', 'targetGen']) {
     assert.ok(html.indexOf(`id="${id}"`) < html.indexOf('<!-- Advanced Options -->'));
 }
 assert.match(html, /A ranking preference, not a strict filter/);
+const targetSelect = html.match(/<select id="targetGen">([\s\S]*?)<\/select>/)[1];
+const targetOptions = Array.from(targetSelect.matchAll(/<option value="([^"]+)"([^>]*)>([^<]+)<\/option>/g));
+assert.deepEqual(targetOptions.map(option => [option[1], option[3]]), [
+    ['any', 'Any Generation'], ['gen1', 'Prefer Gen1'], ['gen2', 'Prefer Gen2']
+]);
+assert.deepEqual(targetOptions.filter(option => /\bselected\b/.test(option[2])).map(option => option[1]), ['any']);
 const assessment = {
     sourceGeneration: 1, preferredTargetGeneration: 2, supportedCandidateGenerations: [1],
     destinationGeneration: 1, preferenceSupport: 'unsupported', pathStatus: 'same_generation',
@@ -91,4 +97,54 @@ context.currentResults.alternatives = [{ name: 'Unknown' }];
 const unknown = context.buildComparisonExportModel();
 assert.equal(unknown.summaryRows[0][unknown.summaryHeaders.indexOf('Planning Effort')], 'Cannot assess effort');
 assert.match(source, /event\.target\.closest\('\.migration-assessment'\)/);
-console.log('PASS: visible generation selectors, compact collapsed guidance, omitted missing-metadata panels, prerequisites, escaping, unknowns and comparison exports.');
+async function checkComparisonRequests() {
+    const handler = source.match(/^async function handleCompare\b[\s\S]*?^}/m)[0];
+    for (const selection of ['any', 'gen1', 'gen2', '', null]) {
+        let request;
+        const fixture = vm.createContext({
+            document: {
+                getElementById(id) {
+                    if (id === 'targetGen' && selection === null) return null;
+                    const values = {
+                        skuName: 'Standard_D2s_v3', location: 'eastus', currencyCode: 'USD',
+                        sourceGen: 'gen1', targetGen: selection
+                    };
+                    return { value: values[id], checked: false };
+                }
+            },
+            window: {}, MAX_RESULTS: 50, API_BASE_URL: 'https://fixture.invalid/api',
+            getPriorityWeight: () => 1,
+            trackEvent() {}, showLoading() {}, hideLoading() {}, hideError() {},
+            hideResults() {}, clearRegionCheck() {}, displayResults() {},
+            showError(message) { assert.fail(message); },
+            console,
+            async fetch(url, options) {
+                assert.equal(url, 'https://fixture.invalid/api/compare_vms');
+                assert.equal(options.method, 'POST');
+                request = JSON.parse(options.body);
+                return {
+                    ok: true,
+                    json: async () => ({
+                        targetSku: { name: request.skuName }, alternatives: [alt],
+                        searchParameters: request, generationContext: { sourceGeneration: 1 }
+                    })
+                };
+            }
+        });
+        vm.runInContext(handler, fixture);
+        await fixture.handleCompare();
+        const expected = selection || 'any';
+        assert.equal(request.targetGen, expected);
+        assert.equal(request.sourceGen, 'gen1');
+        context.currentResults = fixture.currentResults;
+        const exportedRequest = context.buildComparisonExportModel();
+        assert.equal(exportedRequest.summaryRows[0][exportedRequest.summaryHeaders.indexOf('Target Generation Preference')], expected);
+        assert.ok(exportedRequest.meta.some(([key, value]) => key === 'Target Generation Preference' && value === expected));
+    }
+}
+checkComparisonRequests().then(() => {
+    console.log('PASS: three target options, Any default/fallback, real comparison request forwarding, compact guidance and comparison exports.');
+}).catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+});
