@@ -9,6 +9,32 @@ import mcp_server
 
 
 class SavingsPlanForwardingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generation_preferences_and_assessment_are_forwarded(self):
+        data = {
+            "generationContext": {"sourceGeneration": 1, "targetGeneration": 2},
+            "migrationEffort": {"level": "Candidate-dependent"},
+            "alternatives": [{"migrationAssessment": {
+                "destinationGeneration": None, "preferenceSupport": "unknown",
+                "pathStatus": "unassessed", "effort": "Cannot assess effort",
+                "eligibilityAssessed": False,
+                "checklist": ["Verify actual VM prerequisites."],
+            }}],
+        }
+        response = Mock()
+        response.json.return_value = data
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.post.return_value = response
+        with patch.object(mcp_server.httpx, "AsyncClient", return_value=client):
+            result = await mcp_server.find_alternative_skus(
+                "Standard_D4s_v5", "East US", source_gen="gen1", target_gen="gen2")
+        self.assertEqual(result, data)
+        request = client.post.call_args.kwargs["json"]
+        self.assertEqual(request["sourceGen"], "gen1")
+        self.assertEqual(request["targetGen"], "gen2")
+        self.assertEqual(request["location"], "eastus")
+        response.raise_for_status.assert_called_once()
+
     async def test_regional_selection_and_precise_rates_are_forwarded(self):
         data = {
             "pricingModel": "sp3year",

@@ -128,6 +128,11 @@ function Get-AzComputeResourceSku {
                 [pscustomobject]@{ Name = 'vCPUs'; Value = '4' },
                 [pscustomobject]@{ Name = 'MemoryGB'; Value = '16' },
                 [pscustomobject]@{ Name = 'CpuArchitectureType'; Value = 'x64' }
+                if ($script:BootFixture) {
+                    [pscustomobject]@{ Name = 'HyperVGenerations'; Value = $(switch ($sku) {
+                        'Standard_D4as_v5' { 'V1' }; 'Standard_D4ps_v5' { 'V2' }; default { 'V1,V2' }
+                    }) }
+                }
             )
         }
     }
@@ -338,6 +343,31 @@ try {
     $invalidRejected = $true
 }
 Assert-True $invalidRejected 'PricingModel validation rejects unsupported models.'
+
+$script:BootFixture = $true
+foreach ($sourceGen in @('auto', 'gen1', 'gen2')) {
+    foreach ($targetGen in @('same', 'any', 'gen1', 'gen2')) {
+        $results = @(& $comparison -SkuName Standard_D4s_v5 -Location eastus -SourceGen $sourceGen -TargetGen $targetGen `
+            -MinSimilarityScore 0 -ExportCsv '.\fixture-not-written.csv' 6>$null | Where-Object { $_.SkuName })
+        $csv = @($script:CapturedCsv | ConvertFrom-Csv)
+        Assert-True ($results.Count -eq 2 -and $csv.Count -eq 2) 'Generation preferences retain all candidates and CSV rows.'
+        foreach ($candidate in $results) {
+            $row = $csv | Where-Object SkuName -eq $candidate.SkuName
+            Assert-True ($row.MigrationEffort -eq $candidate.MigrationEffort -and $row.MigrationPath -eq $candidate.MigrationPath) 'CSV preserves the candidate path and effort.'
+            Assert-True ($row.MigrationPrerequisites -match 'Verify|Trusted Launch') 'CSV includes actionable planning prerequisites.'
+            if ($sourceGen -eq 'auto') {
+                Assert-True ($candidate.MigrationPathStatus -eq 'unassessed' -and $candidate.MigrationEffort -eq 'Cannot assess effort') 'Ambiguous source cannot claim readiness.'
+            }
+            if ($targetGen -eq 'any') {
+                Assert-True ($candidate.GenerationMismatchPenalty -eq 0 -and $candidate.GenerationUnknownPenalty -eq 0) 'Any removes preference penalties.'
+            }
+            if ($sourceGen -eq 'gen1' -and $targetGen -eq 'gen2' -and $candidate.SkuName -eq 'Standard_D4as_v5') {
+                Assert-True ($candidate.PreferredGenerationSupport -eq 'unsupported' -and $candidate.DestinationGeneration -eq 1) 'Incompatible target preference reports the alternate Gen1 path.'
+            }
+        }
+    }
+}
+$script:BootFixture = $false
 
 # Exercise the actual default sort expression with tied recommendation/CPU scores.
 $sortNode = $ast.Find({

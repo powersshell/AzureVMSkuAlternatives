@@ -116,6 +116,14 @@ body {
     gap: 10px;
     flex-wrap: wrap;
 }
+.generation-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 12px;
+}
+.generation-controls .config-field { flex: 1; min-width: 220px; }
+.generation-controls small { color: var(--text-secondary); line-height: 1.5; }
 .config-field {
     display: flex;
     flex-direction: column;
@@ -1050,9 +1058,27 @@ body {
     padding: 2px 8px;
     border-radius: 10px;
 }
-.effort-chip.effort-very-low { background: #dff6dd; color: #0b6a0b; }
-.effort-chip.effort-low { background: #dff6dd; color: #0b6a0b; }
-.effort-chip.effort-moderate { background: #fff4ce; color: #8a6100; }
+.effort-chip { background: #eff6fc; color: #005a9e; }
+.migration-assessment {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-left: 3px solid #0078d4;
+    border-radius: var(--radius-sm);
+    background: var(--surface-alt, #faf9f8);
+    font-size: 12px;
+    line-height: 1.6;
+    cursor: default;
+    overflow-wrap: anywhere;
+}
+.migration-assessment-warning { border-left-color: #8a6100; }
+.result-card > .migration-assessment { grid-column: 1 / -1; }
+.migration-assessment p { margin: 4px 0; }
+.migration-assessment ul { margin: 6px 0; padding-left: 18px; }
+.migration-assessment summary { cursor: pointer; font-weight: 600; }
+.migration-assessment summary:focus-visible { outline: 2px solid #0078d4; outline-offset: 3px; }
+.migration-assessment a { display: block; color: #005a9e; }
+.migration-preference { font-weight: 600; }
 .migration-effort-detail { margin: 6px 0 8px; font-size: 13px; opacity: .85; }
 .migration-checklist {
     margin: 0 0 10px;

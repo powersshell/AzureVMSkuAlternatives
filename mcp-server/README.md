@@ -22,6 +22,10 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 
 `find_alternative_skus` accepts `source_gen` (`auto`, `gen1`, `gen2`) and `target_gen` (`same`, `any`, `gen1`, `gen2`). These are **Hyper-V boot generations**, not `_vN` hardware versions. `auto` infers the source only when its SKU supports one generation; otherwise `generationContext.warning` asks for the existing VM's actual generation. `same` prefers that generation, while `any` disables the preference. Cross-generation results remain visible and flag the need to plan a supported migration or rebuild. Temporary-disk loss and retirement/capacity risks affect ranking independently.
 
+Each alternative forwards `migrationAssessment` unchanged from the API: source/preferred/destination generation, supported candidate generations, `preferenceSupport`, `pathStatus`, `label`, `effort`, `reasons`, `checklist`, and `guidanceUrls`. `eligibilityAssessed` is always false. An unsupported preference can have an alternate compatible path; do not describe that path as meeting the requested target. Unknown source/candidate generations remain unassessed. Root `migrationEffort` is candidate-dependent planning guidance, not a hardware-version-only "Very low" readiness rating.
+
+Gen1 to Gen2 is not an ordinary resize. The [Microsoft-supported Trusted Launch upgrade](https://learn.microsoft.com/en-us/azure/virtual-machines/trusted-launch-existing-vm-gen-1) may be available after validating actual OS/image, disk, security and protection prerequisites. It requires Trusted Launch, preserves architecture, needs a tested backup/downtime plan, and cannot simply roll back to Gen1. Recovery requires the pre-upgrade backup/restore point; otherwise plan a supported migration/rebuild. SKU support and a pricing OS selection cannot verify eligibility.
+
 ## Quick Start — Remote HTTP (Easiest)
 
 ### Savings plan pricing

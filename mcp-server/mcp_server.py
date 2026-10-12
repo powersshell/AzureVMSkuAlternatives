@@ -280,16 +280,25 @@ async def find_alternative_skus(
     (L-series tops out at v4, B-series at v2), so a family-current L v4 correctly scores as
     "current" instead of being buried under a cross-family v7.
 
-    Each alternative also carries migrationReadiness, which describes the work a move
-    actually requires: requiresGen2 (needs a UEFI Gen 2 image), gen1Only, usesManaNetworking
-    (needs current MANA network drivers), hasLocalNvmeTempDisk (a local temp disk exists only
-    on 'd'-suffixed sizes), architectureChange (x64 <-> Arm64 means binaries must be rebuilt),
-    familyChange, and generationsAhead. Surface these when recommending — a newer size is
-    usually the right answer but is not always a drop-in resize.
+    Each alternative carries migrationReadiness and migrationAssessment. The latter gives
+    sourceGeneration, supportedCandidateGenerations, preferredTargetGeneration,
+    destinationGeneration, preferenceSupport, pathStatus, label, effort, reasons,
+    checklist and guidanceUrls. Source Gen means the existing VM's Hyper-V generation,
+    not its hardware SKU version. Auto resolves only single-generation sizes; unknown
+    source or candidate metadata leaves the path unassessed. Target Gen is a ranking
+    preference, not a hard filter. Unsupported preferences can have an alternate path
+    that does NOT satisfy the request; surface that distinction.
 
-    The response root includes migrationEffort (level / detail / guidanceUrl), Microsoft's
-    published effort rating keyed on the SOURCE generation: v5+ = Very low, v4 = Low,
-    v2-v3 = Moderate.
+    Prefer same-generation paths. Gen1 -> Gen2 is not an ordinary resize; a supported
+    Trusted Launch upgrade may be available if actual OS, image, disk, security and
+    protection prerequisites are met. SKU data cannot verify eligibility. Gen2 -> Gen1
+    must not be represented as an ordinary resize or an assumed in-place downgrade.
+    Architecture changes require a suitable new VM/image and application validation.
+    Surface independent temporary-disk loss and MANA/driver assessment warnings too.
+
+    The response root migrationEffort (level / detail / guidanceUrl) is candidate-dependent
+    planning guidance, or Unassessed when Source Gen is unknown. Candidate effort categories
+    are planning guidance, not Microsoft's rating of an individual VM's readiness.
 
     The response root also carries a `pricesAsOf` UTC timestamp. Prices are cached and
     refreshed daily, and Azure reprices Spot meters continuously, so quote that timestamp

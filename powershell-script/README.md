@@ -77,6 +77,8 @@ Connect-AzAccount
 | `RequireNVMeMatch` | Switch | Off | Only show alternatives with NVMe if target has NVMe |
 | `RequireGPUMatch` | Switch | Off | Only show alternatives with GPU if target has GPU |
 | `CpuVendor` | String[] | *(all)* | Filter alternatives by CPU vendor: `Intel`, `AMD`, `ARM` (one or more) |
+| `SourceGen` | String | auto | Existing VM Hyper-V generation: `auto`, `gen1`, `gen2`; Auto resolves only single-generation sizes |
+| `TargetGen` | String | same | Ranking preference: `same`, `any`, `gen1`, `gen2`; does not hide other migration paths |
 | `HideRetiring` | Bool | `$true` | Exclude retiring/retired SKUs (matches the website). Use `-HideRetiring:$false` to include them |
 | `HideGrowthRestricted` | Switch | Off | Exclude growth-restricted (capacity-limited) SKUs. Shown by default with a warning + ranking penalty, matching the website |
 | `PricingModel` | String | PAYG | Cost displays/comparison: `PAYG`, `RI1Year`, `RI3Year`, `SP1Year`, `SP3Year`; recommendation ranking remains Linux PAYG-based |
@@ -85,6 +87,20 @@ Connect-AzAccount
 | `ExportCsv` | String | *(none)* | Path to export the full result set as CSV |
 
 ## Usage Examples
+
+### Boot generation and migration planning
+```powershell
+.\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v3" -Location "eastus" -SourceGen gen1 -TargetGen same -ExportCsv ".\results.csv"
+.\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v3" -Location "eastus" -SourceGen gen1 -TargetGen gen2
+```
+
+These are Hyper-V boot generations, not hardware versions. Missing source/candidate metadata leaves the path and effort unassessed; comparisons still run. Target Gen adds the API-equivalent preferred-generation penalties (30 for unsupported, 10 for unknown); Any removes those penalties, not migration warnings. Other scoring and PAYG-based pricing inputs remain unchanged.
+
+Returned results and CSV contain `SourceGeneration`, `TargetGenerationPreference`, `SupportedCandidateGenerations`, `PreferredGenerationSupport`, `DestinationGeneration`, `MigrationPathStatus`, `MigrationPath`, `MigrationEffort`, `MigrationReasons`, `MigrationPrerequisites`, and `MigrationGuidanceUrls`. The console prints planning summaries/checklists for displayed candidates. Unsupported preferences are distinguished from alternate paths; same-generation support does not guarantee resize readiness.
+
+Gen1 to Gen2 is not an ordinary resize. A [Microsoft-supported Trusted Launch upgrade](https://learn.microsoft.com/en-us/azure/virtual-machines/trusted-launch-existing-vm-gen-1) may be available after verifying actual OS/image, GPT/EFI, security, Enhanced backup policy and other protection prerequisites. It requires Trusted Launch, preserves architecture, and needs a test, backup/restore point and downtime plan. There is no in-place rollback to Gen1; recovery uses the pre-upgrade backup. Otherwise plan a supported migration/rebuild. The pricing `-OS` parameter and SKU metadata cannot establish eligibility. Gen2 to Gen1 is not an assumed supported in-place downgrade.
+
+Offline generation checks: `pwsh -NoProfile -File scripts\Test-GenerationMigration.ps1` from the repository root.
 
 ### Basic Comparison
 Find similar VMs to Standard_D4s_v3 in East US:

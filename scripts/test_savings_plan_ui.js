@@ -65,7 +65,7 @@ const helperNames = [
     'sortGridRows', 'filterResults', 'setPricingModel', 'setPricingOS', 'applySpotOsLock',
     'updatePricingHeaders', 'syncGridPricingButtons', 'refreshOpenRegionPricing',
     'renderPriceDiff', 'renderPricingSection', 'formatCapabilityValue',
-    'buildComparisonExportModel', 'buildGridExportModel', 'coerceExportCell',
+    'getMigrationAssessment', 'buildComparisonExportModel', 'buildGridExportModel', 'coerceExportCell',
     'exportToCSV', 'exportToXLSX', 'exportGridCsv', 'exportGridXlsx', 'escapeCsvCell',
     'escapeHtml', 'showRegionPriceComparison', 'renderRegionPriceComparison', 'closeRegionPriceModal'
 ];

@@ -164,6 +164,20 @@ def main():
                 (a.get("scoreBreakdown") or {}).get("generationMismatchPenalty", 0) or
                 (a.get("scoreBreakdown") or {}).get("generationUnknownPenalty", 0) for a in alts):
             problems.append("Any still applies boot generation penalties")
+        for alt in alts:
+            assessment = alt.get("migrationAssessment") or {}
+            destination = assessment.get("destinationGeneration")
+            supported = assessment.get("supportedCandidateGenerations") or []
+            if not assessment or assessment.get("eligibilityAssessed") is not False:
+                problems.append("missing assessment or unsupported eligibility claim")
+                break
+            if destination is not None and destination not in supported:
+                problems.append("assessed destination is not supported")
+                break
+            if (alt.get("migrationReadiness") or {}).get("bootGenerationChange") != (
+                    assessment.get("pathStatus") == "generation_change"):
+                problems.append("boot-change flag contradicts assessed path")
+                break
         if problems:
             failures.append((name, "; ".join(problems)))
         print("  {:<5} {:<24} {}".format("FAIL" if problems else "ok", name, "; ".join(problems) or alts[0]["name"]))
@@ -278,7 +292,7 @@ def main():
     if status_e == 200 and isinstance(body_e, dict):
         checked += 1
         effort = body_e.get("migrationEffort")
-        if not isinstance(effort, dict) or not effort.get("level"):
+        if not isinstance(effort, dict) or effort.get("level") not in ("Candidate-dependent", "Unassessed"):
             failures.append(("migrationEffort", "missing or malformed on the response root"))
             print("  FAIL  {:<24} missing migrationEffort".format("migrationEffort"))
         else:
