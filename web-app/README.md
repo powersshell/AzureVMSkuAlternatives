@@ -34,6 +34,8 @@ Monthly figures assume full eligible usage coverage under a fixed hourly commitm
 
 Deploy the API before expecting populated rates. The next successful regional cache refresh stores authoritative nullable savings fields in `savingsPlanPricing` JSON (avoiding stale values retained by merge upserts). `savingsPlanPricingStatus` is `not_refreshed` for old entries, `unavailable` for completed fetches without eligible rates, and `available` when a term has a rate. Incomplete pagination aborts persisted refreshes; coverage telemetry reports refreshed rows and each term's count. Existing USD cache entries show N/A until refreshed; there is no per-SKU backfill storm.
 
+To refresh immediately after a successful API deployment, run **Actions > Refresh Pricing Cache > Run workflow** on `main`. This main-only workflow uses the existing Azure CI identity to invoke the full regional timer, preserving its enrichment and retry behavior. It waits for the `sku_refresh_run` Log Analytics event and fails if any requested region failed, remained unpriced, or did not complete. A successful trigger alone is not reported as a successful refresh. Avoid dispatching it while the daily 02:00 UTC timer is already running.
+
 PR Static Web Apps previews call the existing production Functions URL. A frontend-only preview can show the new controls but cannot show cached savings rates until the matching API is deployed and refreshed. Do not treat a successful frontend workflow as proof the API feature is live.
 
 Offline checks:

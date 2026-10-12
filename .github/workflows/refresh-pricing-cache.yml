@@ -1,0 +1,95 @@
+name: Refresh Pricing Cache
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production-pricing-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RESOURCE_GROUP: rg-vmsku-alternatives
+      FUNCTION_APP: vmsku-api-func-cus
+      WORKSPACE: vmsku-alternatives-webapp-logs
+    steps:
+      - name: Azure Login via OIDC
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Start the existing full regional refresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEY=$(az functionapp keys list --name "$FUNCTION_APP" --resource-group "$RESOURCE_GROUP" --query masterKey -o tsv)
+          test -n "$KEY"
+          echo "::add-mask::$KEY"
+          STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "REFRESH_STARTED=$STARTED" >> "$GITHUB_ENV"
+          curl --fail-with-body --silent --show-error --max-time 60 \
+            -X POST "https://${FUNCTION_APP}.azurewebsites.net/admin/functions/refresh_sku_cache" \
+            -H "x-functions-key: $KEY" -H "Content-Type: application/json" \
+            --data '{"input":""}'
+          unset KEY
+          echo "Full regional refresh requested at $STARTED; waiting for completion telemetry."
+      - name: Verify refresh completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          az extension add --name log-analytics --only-show-errors
+          WORKSPACE_ID=$(az monitor log-analytics workspace show \
+            --workspace-name "$WORKSPACE" --resource-group "$RESOURCE_GROUP" --query customerId -o tsv)
+          export WORKSPACE_ID
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import time
+
+          query = (
+              "AppTraces "
+              f"| where TimeGenerated >= datetime({os.environ['REFRESH_STARTED']}) "
+              f"| where AppRoleName == '{os.environ['FUNCTION_APP']}' "
+              "| extend payload = parse_json(Message) "
+              "| where payload.event_type == 'sku_refresh_run' "
+              "| top 1 by TimeGenerated desc "
+              "| project Payload = tostring(payload)"
+          )
+          for attempt in range(40):
+              rows = json.loads(subprocess.check_output([
+                  "az", "monitor", "log-analytics", "query",
+                  "--workspace", os.environ["WORKSPACE_ID"],
+                  "--analytics-query", query, "--timespan", "PT1H", "-o", "json",
+              ], text=True))
+              if rows:
+                  result = json.loads(rows[0]["Payload"])
+                  print(json.dumps(result, indent=2))
+                  requested = result["regionsRequested"]
+                  if (requested <= 0
+                          or result["regionsCompleted"] != requested
+                          or result["regionsOk"] != requested
+                          or result["regionsFailed"]
+                          or result["regionsUnpriced"]
+                          or result["regionsMissing"]
+                          or result["totalUpdated"] <= 0):
+                      raise SystemExit("The regional refresh did not complete successfully.")
+                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                      summary.write(
+                          f"Refreshed {requested} regions and {result['totalUpdated']} SKU rows.\n"
+                      )
+                  break
+              print(f"Waiting for refresh completion telemetry ({attempt + 1}/40)...", flush=True)
+              time.sleep(30)
+          else:
+              raise SystemExit("No completed refresh was observed within 20 minutes.")
+          PY
