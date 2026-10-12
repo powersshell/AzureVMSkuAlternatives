@@ -41,6 +41,12 @@
 .PARAMETER ArchitectureFilter
     Restrict alternatives by CPU architecture: 'any' (default), 'x64', or 'arm64'.
     Use 'x64' when application binaries cannot be rebuilt for Arm64.
+.PARAMETER SourceGen
+    Existing VM's Hyper-V boot generation: auto (default), gen1, gen2.
+    Auto resolves only single-generation source sizes; ambiguous sources remain unassessed.
+.PARAMETER TargetGen
+    Preferred Hyper-V generation: same (default), any, gen1, gen2.
+    A ranking preference, not a strict filter; other paths remain visible with planning warnings.
 .PARAMETER HideRetiring
     Exclude SKUs announced for retirement or already retired (default: $true, matching the website).
     Use -HideRetiring:$false to include retiring SKUs (a similarity-score penalty is applied for ranking).
@@ -79,6 +85,8 @@
     .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -PricingModel SP1Year -OS Windows
 .EXAMPLE
     .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -CheckRegion "westeurope" -ExportCsv ".\results.csv"
+.EXAMPLE
+    .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v3" -Location "eastus" -SourceGen gen1 -TargetGen gen2
 #>
 
 [CmdletBinding()]
@@ -136,6 +144,14 @@ param(
     [Parameter(Mandatory = $false)]
     [ValidateSet('any', 'x64', 'arm64')]
     [string]$ArchitectureFilter = 'any',
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('auto', 'gen1', 'gen2')]
+    [string]$SourceGen = 'auto',
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('same', 'any', 'gen1', 'gen2')]
+    [string]$TargetGen = 'same',
 
     [Parameter(Mandatory = $false)]
     [bool]$HideRetiring = $true,
@@ -1206,7 +1222,7 @@ function Get-MigrationReadiness {
 
     if ($Identity.Version -gt $TargetIdentity.Version) {
         $ahead = $Identity.Version - $TargetIdentity.Version
-        $flags += if ($ahead -eq 1) { '1 gen newer' } else { "$ahead gens newer" }
+        $flags += if ($ahead -eq 1) { '1 version newer' } else { "$ahead versions newer" }
     }
     if ($supportsGen2 -and $HyperVGenerations -notmatch 'V1') { $flags += 'Gen 2 only' }
     # v6 and newer use the Microsoft Azure Network Adapter (MANA); older images
@@ -1222,21 +1238,111 @@ function Get-MigrationReadiness {
     return ($flags -join '; ')
 }
 
-function Get-MigrationEffort {
-    <#
-    .SYNOPSIS
-        Microsoft's published migration effort rating, keyed on the source generation.
-        Ported from _migration_effort in function_app.py.
-    #>
-    param([Parameter(Mandatory = $true)][PSCustomObject]$TargetIdentity)
+function Get-SupportedBootGenerations {
+    param([string]$HyperVGenerations = '')
+    $tokens = @($HyperVGenerations -split ',' | ForEach-Object { $_.Trim().ToUpperInvariant() })
+    if ($tokens -contains 'V1') { 1 }
+    if ($tokens -contains 'V2') { 2 }
+}
 
-    if ($TargetIdentity.Version -ge 5) {
-        return [PSCustomObject]@{ Level = 'Very low'; Detail = 'Already Gen 2 / NVMe-ready; most moves are a resize.' }
+function Get-BootGenerationContext {
+    param([string]$HyperVGenerations, [string]$Source, [string]$Target)
+    $supported = @(Get-SupportedBootGenerations $HyperVGenerations)
+    $sourceGeneration = switch ($Source) { 'gen1' { 1 }; 'gen2' { 2 }; default { $null } }
+    if ($null -ne $sourceGeneration -and $supported.Count -gt 0 -and $supported -notcontains $sourceGeneration) {
+        throw "The source SKU does not support Hyper-V Gen$sourceGeneration."
     }
-    if ($TargetIdentity.Version -eq 4) {
-        return [PSCustomObject]@{ Level = 'Low'; Detail = 'Largely current-platform; verify NVMe and network drivers.' }
+    if ($Source -eq 'auto' -and $supported.Count -eq 1) { $sourceGeneration = $supported[0] }
+    $preference = switch ($Target) { 'same' { $sourceGeneration }; 'gen1' { 1 }; 'gen2' { 2 }; default { $null } }
+    [pscustomobject]@{ SourceGeneration = $sourceGeneration; TargetGeneration = $preference }
+}
+
+function Get-GenerationPath {
+    param([string]$HyperVGenerations, [Nullable[int]]$SourceGeneration, [Nullable[int]]$TargetGeneration)
+    $supported = @(Get-SupportedBootGenerations $HyperVGenerations)
+    $preferenceSupport = if ($null -eq $TargetGeneration) { 'not_requested' }
+        elseif ($supported.Count -eq 0) { 'unknown' }
+        elseif ($supported -contains $TargetGeneration) { 'supported' } else { 'unsupported' }
+    $destination = $null
+    if ($null -ne $SourceGeneration -and $supported.Count -gt 0) {
+        if ($supported -contains $TargetGeneration) { $destination = $TargetGeneration }
+        elseif ($supported -contains $SourceGeneration) { $destination = $SourceGeneration }
+        elseif ($supported.Count -eq 1) { $destination = $supported[0] }
     }
-    return [PSCustomObject]@{ Level = 'Moderate'; Detail = 'Expect Gen 2 (UEFI), NVMe disk and MANA network changes.' }
+    $status = if ($null -eq $destination) { 'unassessed' }
+        elseif ($destination -eq $SourceGeneration) { 'same_generation' } else { 'generation_change' }
+    [pscustomobject]@{
+        SourceGeneration = $SourceGeneration; PreferredTargetGeneration = $TargetGeneration
+        SupportedCandidateGenerations = $supported; DestinationGeneration = $destination
+        PreferenceSupport = $preferenceSupport; PathStatus = $status
+    }
+}
+
+function Get-TempDiskPresence {
+    param([hashtable]$Capabilities)
+    $known = 0
+    foreach ($name in @('ResourceDiskSizeInMB', 'NvmeDiskSizeInMiB')) {
+        $size = 0.0
+        if ($Capabilities.ContainsKey($name) -and [double]::TryParse([string]$Capabilities[$name], [ref]$size) -and $size -ge 0) {
+            if ($size -gt 0) { return $true }
+            $known++
+        }
+    }
+    if ($known -eq 2) { return $false }
+    return $null
+}
+
+function Get-MigrationAssessment {
+    param(
+        [string]$HyperVGenerations, [Nullable[int]]$SourceGeneration, [Nullable[int]]$TargetGeneration,
+        [bool]$ArchitectureChange = $false, [bool]$UsesManaNetworking = $false, [bool]$TempDiskMismatch = $false
+    )
+    $path = Get-GenerationPath -HyperVGenerations $HyperVGenerations -SourceGeneration $SourceGeneration -TargetGeneration $TargetGeneration
+    $urls = @('https://learn.microsoft.com/en-us/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-overview')
+    $checklist = @('Verify image, security type, size availability, disk/network drivers and workload compatibility before resizing. Same-generation support alone does not prove a resize is available.')
+    if ($path.PathStatus -eq 'unassessed') {
+        $label = 'Generation path unassessed'; $effort = 'Cannot assess effort'
+        $reasons = @(if ($null -eq $SourceGeneration) { "Select the existing VM's Source Gen to assess its migration path." }
+            else { 'Candidate boot-generation metadata is missing; verify compatibility.' })
+    } elseif ($path.PathStatus -eq 'same_generation') {
+        $label = "Gen$SourceGeneration -> Gen$($path.DestinationGeneration): same-generation path available"; $effort = 'Resize assessment'
+        $reasons = @('No boot-generation conversion is indicated by the SKU metadata; actual VM readiness still needs validation.')
+    } elseif ($SourceGeneration -eq 1) {
+        $label = 'Gen1 -> Gen2: generation migration'; $effort = 'Upgrade or rebuild planning'
+        $reasons = @('Not an ordinary resize. A conditional Trusted Launch upgrade may be available; otherwise plan a supported migration/rebuild.')
+        $urls = @('https://learn.microsoft.com/en-us/azure/virtual-machines/trusted-launch-existing-vm-gen-1') + $urls
+        $checklist = @(
+            'This is not an ordinary resize. A Microsoft-supported Gen1 to Gen2 upgrade through Trusted Launch may be available; eligibility is not assessed from SKU data.',
+            'Verify the supported size family, OS version and image origin, Trusted Launch capability, and unsupported features. Gen2 support alone does not establish eligibility.',
+            'Validate GPT and EFI boot-disk readiness. Windows has a documented MBR2GPT validation/conversion route; supported Linux Marketplace images may already be ready. Do not proceed if validation fails.',
+            'Review OS exclusions and remediation: Windows Server 2016 needs an OS upgrade; Debian, Azure Linux and other Linux images may require the documented additional-support registration.',
+            'Assess Secure Boot compatibility, especially custom unsigned kernels or drivers.',
+            'If Azure Backup is enabled, use Enhanced policy; migrate Standard policy protection first.',
+            'If Azure Site Recovery is enabled, plan disabling protection before upgrade and reconfiguring it afterward.',
+            'For encrypted Windows OS volumes, follow the documented disable/re-enable procedure. Review Windows system-volume sizing before conversion.',
+            'Test on a non-production VM, take a full backup or restore point, plan deallocation/downtime, and validate boot, drivers, applications and protection afterward.',
+            'There is no in-place rollback to Gen1. Recovery requires the pre-upgrade backup or restore point.',
+            'The documented upgrade requires enabling Trusted Launch and does not change CPU architecture. If prerequisites cannot be met, plan a supported migration/rebuild.'
+        )
+    } else {
+        $label = 'Gen2 -> Gen1: generation migration'; $effort = 'Rebuild/migration planning'
+        $reasons = @('Not an ordinary resize. Do not assume a supported in-place downgrade; plan a suitable Gen1 VM/image and workload migration.')
+        $checklist += 'Validate the Gen1 image/application requirements and a backup, downtime and recovery plan. The Gen1 to Trusted Launch upgrade guidance is not an in-place downgrade procedure.'
+    }
+    if ($path.PreferenceSupport -eq 'unsupported') {
+        $reasons = @("Preferred Gen$TargetGeneration unsupported by this candidate. Any assessed path is an alternate path, not the requested target.") + $reasons
+    }
+    if ($ArchitectureChange) {
+        $reasons += 'CPU architecture changes: create a suitable new VM/image and validate or replace application binaries. A Trusted Launch upgrade does not change architecture.'
+        if ($path.PathStatus -ne 'unassessed') { $effort = 'New VM/image planning' }
+    }
+    if ($UsesManaNetworking) { $reasons += 'Assess MANA network-driver readiness; older images may need updated drivers.' }
+    if ($TempDiskMismatch) { $reasons += 'Local temporary disk is lost. Review scratch data, pagefile/swap and application paths; plan suitable storage.' }
+    $path | Add-Member -NotePropertyMembers @{
+        Label = $label; Effort = $effort; Reasons = $reasons; Checklist = $checklist
+        GuidanceUrls = $urls; EligibilityAssessed = $false
+    }
+    return $path
 }
 
 function Get-RecommendationScore {
@@ -1253,7 +1359,9 @@ function Get-RecommendationScore {
         [Parameter(Mandatory = $true)][hashtable]$FamilyGenerations,
         [string]$Mode = 'balanced',
         [double]$CpuPerfScore = 0,
-        [double]$SavingPercent = 0
+        [double]$SavingPercent = 0,
+        [Nullable[int]]$TargetGenerationPreference,
+        [int[]]$CandidateGenerations = @()
     )
 
     $weights = $script:RecommendationModeWeights[$Mode]
@@ -1277,6 +1385,13 @@ function Get-RecommendationScore {
         $olderGenerationPenalty = $script:OlderGenerationPenalty
         $score -= $olderGenerationPenalty
     }
+    $generationMismatchPenalty = 0
+    $generationUnknownPenalty = 0
+    if ($null -ne $TargetGenerationPreference) {
+        if ($CandidateGenerations.Count -eq 0) { $generationUnknownPenalty = 10 }
+        elseif ($CandidateGenerations -notcontains $TargetGenerationPreference) { $generationMismatchPenalty = 30 }
+    }
+    $score -= $generationMismatchPenalty + $generationUnknownPenalty
 
     return [PSCustomObject]@{
         Score                  = [Math]::Round([Math]::Max(0.0, $score), 2)
@@ -1284,6 +1399,8 @@ function Get-RecommendationScore {
         FamilyAffinity         = [Math]::Round($affinity, 2)
         CostBonus              = [Math]::Round($costBonus, 2)
         OlderGenerationPenalty = $olderGenerationPenalty
+        GenerationMismatchPenalty = $generationMismatchPenalty
+        GenerationUnknownPenalty = $generationUnknownPenalty
     }
 }
 
@@ -1978,7 +2095,11 @@ $targetIdentity = Get-SkuIdentity -SkuName $SkuName
 $targetArchitecture = if ($targetCapabilities.ContainsKey('CpuArchitectureType')) {
     if ($targetCapabilities['CpuArchitectureType'] -match '(?i)arm') { 'arm64' } else { 'x64' }
 } else { 'x64' }
-$migrationEffort = Get-MigrationEffort -TargetIdentity $targetIdentity
+$generationContext = Get-BootGenerationContext -HyperVGenerations $targetCapabilities['HyperVGenerations'] -Source $SourceGen -Target $TargetGen
+$sourceHasTempDisk = Get-TempDiskPresence -Capabilities $targetCapabilities
+if ($null -eq $generationContext.SourceGeneration) {
+    Write-Warning 'Source generation required to assess migration. Set -SourceGen gen1 or gen2; hardware versions cannot identify boot generation. Comparison remains available.'
+}
 
 $similarSkus = $allSkus | Where-Object {
     $_.Name -ne $SkuName
@@ -2175,7 +2296,9 @@ $similarSkus = $allSkus | Where-Object {
                 -FamilyGenerations $familyGenerations `
                 -Mode $PriorityMode `
                 -CpuPerfScore $(if ($cpuPerf) { [double]$cpuPerf.Score } else { 0 }) `
-                -SavingPercent $savingPercent
+                -SavingPercent $savingPercent `
+                -TargetGenerationPreference $generationContext.TargetGeneration `
+                -CandidateGenerations @(Get-SupportedBootGenerations $skuCapabilities['HyperVGenerations'])
 
             $migrationReadiness = Get-MigrationReadiness `
                 -Identity $candidateIdentity `
@@ -2184,6 +2307,13 @@ $similarSkus = $allSkus | Where-Object {
                 -TargetArchitecture $targetArchitecture `
                 -HasLocalNvmeTempDisk $skuHasNVMe `
                 -HyperVGenerations $(if ($skuCapabilities.ContainsKey('HyperVGenerations')) { $skuCapabilities['HyperVGenerations'] } else { '' })
+            $candidateArchitecture = if ($skuArch -match '(?i)arm') { 'arm64' } else { 'x64' }
+            $candidateHasTempDisk = Get-TempDiskPresence -Capabilities $skuCapabilities
+            $assessment = Get-MigrationAssessment -HyperVGenerations $skuCapabilities['HyperVGenerations'] `
+                -SourceGeneration $generationContext.SourceGeneration -TargetGeneration $generationContext.TargetGeneration `
+                -ArchitectureChange ($candidateArchitecture -ne $targetArchitecture) `
+                -UsesManaNetworking ($candidateIdentity.Version -ge 6) `
+                -TempDiskMismatch ($sourceHasTempDisk -eq $true -and $candidateHasTempDisk -eq $false)
 
             # Build result object with key capabilities
             $resultObject = [PSCustomObject]@{
@@ -2193,6 +2323,19 @@ $similarSkus = $allSkus | Where-Object {
                 ModernizationScore                = $recommendation.Modernization
                 FamilyAffinityScore               = $recommendation.FamilyAffinity
                 MigrationReadiness                = $migrationReadiness
+                SourceGeneration                  = $assessment.SourceGeneration
+                TargetGenerationPreference        = $TargetGen
+                SupportedCandidateGenerations     = ($assessment.SupportedCandidateGenerations -join '; ')
+                PreferredGenerationSupport        = $assessment.PreferenceSupport
+                DestinationGeneration             = $assessment.DestinationGeneration
+                MigrationPathStatus               = $assessment.PathStatus
+                MigrationPath                     = $assessment.Label
+                MigrationEffort                   = $assessment.Effort
+                MigrationReasons                  = ($assessment.Reasons -join '; ')
+                MigrationPrerequisites            = ($assessment.Checklist -join '; ')
+                MigrationGuidanceUrls              = ($assessment.GuidanceUrls -join '; ')
+                GenerationMismatchPenalty         = $recommendation.GenerationMismatchPenalty
+                GenerationUnknownPenalty          = $recommendation.GenerationUnknownPenalty
                 CpuVendor                         = $skuVendor
                 CpuGeneration                     = if ($cpuPerf) { $cpuPerf.Generation } else { 'Unknown' }
                 CpuPerfScore                      = if ($cpuPerf) { $cpuPerf.Score } else { 'N/A' }
@@ -2390,10 +2533,17 @@ if ($similarSkus.Count -gt 0) {
     Write-Host "  Average Similarity Score: $([Math]::Round(($similarSkus | Measure-Object -Property SimilarityScore -Average).Average, 2))%"
     Write-Host "  Highest Similarity Score: $(($similarSkus | Measure-Object -Property SimilarityScore -Maximum).Maximum)%"
 
-    # Migration effort, driven by the source generation (per Microsoft guidance)
-    Write-Host "`nMigration Effort ($SkuName -> current generation): $($migrationEffort.Level)" -ForegroundColor Cyan
-    Write-Host "  $($migrationEffort.Detail)"
-    Write-Host "  Guidance: https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-overview"
+    Write-Host "`nMigration planning: candidate-dependent; SKU data does not establish actual VM readiness." -ForegroundColor Cyan
+    $sourceLabel = if ($null -eq $generationContext.SourceGeneration) { 'Unassessed' } else { "Gen$($generationContext.SourceGeneration)" }
+    Write-Host "  Source Gen: $sourceLabel; target preference: $TargetGen"
+    foreach ($candidate in $displaySkus) {
+        Write-Host "`n  $($candidate.SkuName): $($candidate.MigrationPath)"
+        Write-Host "  Planning effort: $($candidate.MigrationEffort)"
+        Write-Host "  $($candidate.MigrationReasons)"
+        Write-Host "  Prerequisites: $($candidate.MigrationPrerequisites)"
+        Write-Host "  Guidance: $($candidate.MigrationGuidanceUrls)"
+    }
+    Write-Host '  The Linux/Windows pricing selection does not establish the existing OS/image or upgrade eligibility.'
 
     # Price comparison if available
     $priceField = "MonthlyPrice($CurrencyCode)"

@@ -22,6 +22,39 @@ A serverless web application for comparing Azure Virtual Machine SKUs based on c
 - 🎯 **Special Filters**: NVMe and GPU matching requirements
 - 📱 **Responsive Design**: Modern, mobile-friendly UI
 
+## Generation migration planning
+
+Source Gen and Target Gen are visible in the main comparison form, outside Advanced Options. They describe Hyper-V boot generations, not hardware `_vN` versions. Auto resolves only single-generation source sizes. Comparisons remain available for ambiguous sources, but their generation path and effort are unassessed until Source Gen is selected.
+
+Target Gen is a preference, not a hard filter. Same prefers the existing generation; Any removes ranking preference penalties, not factual migration warnings. Cards identify incompatible preferences separately from any alternate compatible path. Existing recommendation scoring and PAYG-based ranking are unchanged.
+
+Candidate guidance is a compact path/effort row, collapsed by default. Open Details for reasons, prerequisites and official references. Unsupported target preferences remain visible in the collapsed row. When backend assessment metadata is missing, cards omit the repeated empty panels; the shared migration guidance explains the limitation, existing risk badges remain visible, and exports still explicitly mark assessments as unassessed.
+
+Every `/api/compare_vms` alternative has additive `migrationAssessment` metadata:
+
+| Field | Meaning |
+|---|---|
+| `sourceGeneration`, `preferredTargetGeneration` | Resolved source and preferred target (1/2 or null) |
+| `supportedCandidateGenerations`, `destinationGeneration` | Known supported generations and the assessed compatible destination; null destination means unassessed |
+| `preferenceSupport` | `supported`, `unsupported`, `unknown`, or `not_requested` |
+| `pathStatus` | `same_generation`, `generation_change`, or `unassessed` |
+| `label`, `effort` | Visible path and planning category, not a duration or readiness guarantee |
+| `reasons`, `checklist`, `guidanceUrls` | Independent risks, expandable prerequisites and official references |
+| `eligibilityAssessed` | Always false: this app has SKU data, not the actual VM configuration |
+
+Root `migrationEffort` retains its level/detail/guidanceUrl shape, but is now `Candidate-dependent` or `Unassessed`, not a hardware-version-only low-effort rating. Existing `migrationReadiness.bootGenerationChange` reflects the assessed compatible path, not an unsupported requested target. Comparison CSV/XLSX include assessment fields; source-independent Browse exports retain capability-only data.
+
+The [supported Gen1 to Gen2 Trusted Launch upgrade](https://learn.microsoft.com/en-us/azure/virtual-machines/trusted-launch-existing-vm-gen-1) is conditional on size/OS/image, GPT/EFI readiness, security, backup and protection prerequisites. It requires Trusted Launch and does not change architecture. Test first, plan downtime, take a full backup/restore point, and understand that recovery to Gen1 requires that pre-upgrade backup. The pricing OS toggle is not an eligibility input. Gen2 to Gen1 must not be treated as an ordinary resize or an assumed supported in-place downgrade.
+
+Offline checks:
+```powershell
+python -m pytest web-app\api\tests\test_unit.py -m unit -k BootGeneration -q
+node scripts\test_generation_ui.js
+pwsh -NoProfile -File scripts\Test-GenerationMigration.ps1
+```
+
+PR previews call the shared production API. New selectors can appear before backend assessment metadata is deployed; missing metadata is explained once in the shared guidance, not repeated as a panel on every card. A frontend-only deployment is not proof that the API or MCP feature is live. No pricing cache refresh is required for this computed metadata.
+
 ## Savings plan pricing
 
 Compare and Browse offer 1-year and 3-year compute savings plan pricing. `sp1YearHourly`, `sp1YearMonthly`, `sp3YearHourly`, and `sp3YearMonthly` are additive pricing fields; `Windows` suffixes hold estimated compute-plus-PAYG-license totals. Grid fields use `Linux`/`Windows` suffixes, and detailed differences use `sp1Year`/`sp3Year` with optional `Windows` suffixes. `/api/compare_regions` accepts `pricingModel=payg|sp1year|sp3year`; this affects regional cost sorting, not VM recommendations.

@@ -192,6 +192,14 @@ async def main(url, location):
                       not (a.get("scoreBreakdown") or {}).get("generationMismatchPenalty") and
                       not (a.get("scoreBreakdown") or {}).get("generationUnknownPenalty")
                       for a in generation_alts))
+            check("candidate migration assessments reach MCP without eligibility claims",
+                  bool(generation_alts) and all(
+                      (a.get("migrationAssessment") or {}).get("eligibilityAssessed") is False and
+                      (a.get("migrationAssessment") or {}).get("effort") and
+                      ((a.get("migrationAssessment") or {}).get("destinationGeneration") is None or
+                       (a.get("migrationAssessment") or {}).get("destinationGeneration") in
+                       (a.get("migrationAssessment") or {}).get("supportedCandidateGenerations", []))
+                      for a in generation_alts))
 
         rc = payload(await client.call_tool("find_alternative_skus", {
             "target_sku": target, "location": location, "priority_mode": "cost"}))

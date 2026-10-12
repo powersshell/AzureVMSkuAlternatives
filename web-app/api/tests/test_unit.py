@@ -669,6 +669,69 @@ class TestDetectCpuVendor:
 
 @pytest.mark.unit
 class TestBootGenerationRecommendations:
+    @pytest.mark.parametrize('metadata', ['V1', 'V2', 'V1,V2', '', 'invalid', ' v1 , v2 '])
+    @pytest.mark.parametrize('source', [None, 1, 2])
+    @pytest.mark.parametrize('preference', [None, 1, 2])
+    def test_candidate_path_matrix(self, metadata, source, preference):
+        from function_app import _generation_path, _supported_boot_generations
+        caps = {'hyperVGenerations': metadata}
+        supported = _supported_boot_generations(caps)
+        path = _generation_path(caps, source, preference)
+        expected_support = ('not_requested' if preference is None else
+                            'unknown' if not supported else
+                            'supported' if preference in supported else 'unsupported')
+        assert path['preferenceSupport'] == expected_support
+        if source is None or not supported:
+            assert path['destinationGeneration'] is None
+            assert path['pathStatus'] == 'unassessed'
+        else:
+            destination = preference if preference in supported else source if source in supported else supported[0]
+            assert path['destinationGeneration'] == destination
+            assert path['destinationGeneration'] in supported
+            assert path['pathStatus'] == ('same_generation' if source == destination else 'generation_change')
+
+    @pytest.mark.parametrize('metadata,source,preference,effort', [
+        ('V1,V2', 1, 1, 'Resize assessment'),
+        ('V1,V2', 1, None, 'Resize assessment'),
+        ('V1,V2', 1, 2, 'Upgrade or rebuild planning'),
+        ('V2', 1, 1, 'Upgrade or rebuild planning'),
+        ('V1', 1, 2, 'Resize assessment'),
+        ('V2', 2, 2, 'Resize assessment'),
+        ('V1', 2, 1, 'Rebuild/migration planning'),
+        ('V2', None, 2, 'Cannot assess effort'),
+        ('', 1, 2, 'Cannot assess effort'),
+    ])
+    def test_candidate_effort(self, metadata, source, preference, effort):
+        from function_app import _migration_assessment, _migration_readiness, _parse_sku_identity
+        identity = _parse_sku_identity('Standard_D2s_v5')
+        caps = {'hyperVGenerations': metadata}
+        readiness = _migration_readiness(
+            'Standard_D2s_v5', caps, identity, identity, 'x64', 'x64',
+            source_generation=source, target_generation=preference)
+        result = _migration_assessment(readiness, caps, source, preference)
+        assert result['effort'] == effort
+        assert result['eligibilityAssessed'] is False
+        assert readiness['bootGenerationChange'] is (result['pathStatus'] == 'generation_change')
+        if result['preferenceSupport'] == 'unsupported':
+            assert 'alternate path' in result['reasons'][0]
+        if result['destinationGeneration'] == 2 and source == 1:
+            checklist = ' '.join(result['checklist'])
+            for text in ('Trusted Launch', 'GPT', 'EFI', 'Enhanced', 'Site Recovery',
+                         'encrypted Windows', 'rollback', 'deallocation/downtime', 'Windows Server 2016'):
+                assert text in checklist
+        assert all(url.startswith('https://learn.microsoft.com/') for url in result['guidanceUrls'])
+
+    def test_independent_risks_and_unknown_effort(self):
+        from function_app import _migration_assessment
+        risks = {'architectureChange': True, 'tempDiskMismatch': True, 'usesManaNetworking': True}
+        result = _migration_assessment(risks, {'hyperVGenerations': 'V1,V2'}, 1, 1)
+        assert result['effort'] == 'New VM/image planning'
+        assert result['pathStatus'] == 'same_generation'
+        assert all(any(text in reason for reason in result['reasons']) for text in ('architecture', 'temporary disk', 'MANA'))
+        unknown = _migration_assessment(risks, {'hyperVGenerations': ''}, 1, 2)
+        assert unknown['effort'] == 'Cannot assess effort'
+        assert len(unknown['reasons']) == 4
+
     @pytest.mark.parametrize('metadata,source,target,expected_source,expected_target', [
         ('V1', 'auto', 'same', 1, 1),
         ('V2', 'auto', 'same', 2, 2),
@@ -787,6 +850,10 @@ class TestBootGenerationRecommendations:
         assert context['sourceSelectionRequired'] is (source == 'auto')
         assert context['crossGenerationRequested'] is (source == 'gen1' and target == 'gen2')
         for alt in result.body['alternatives']:
+            assessment = alt['migrationAssessment']
+            assert assessment['eligibilityAssessed'] is False
+            assert assessment['sourceGeneration'] == context['sourceGeneration']
+            assert alt['migrationReadiness']['bootGenerationChange'] is (assessment['pathStatus'] == 'generation_change')
             b = alt['scoreBreakdown']
             if target == 'any':
                 assert b['generationMismatchPenalty'] == b['generationUnknownPenalty'] == 0
@@ -795,6 +862,12 @@ class TestBootGenerationRecommendations:
                 assert alt['migrationReadiness']['bootGenerationChange']
         assert result.body['searchParameters']['sourceGen'] == source
         assert result.body['searchParameters']['targetGen'] == target
+        assert result.body['migrationEffort']['level'] == ('Unassessed' if source == 'auto' else 'Candidate-dependent')
+        scores = [(alt['name'], alt['recommendationScore'], alt['scoreBreakdown']) for alt in result.body['alternatives']]
+        monkeypatch.setattr(app, '_migration_assessment', lambda *args: {'effort': 'Unassessed fixture'})
+        without_assessment = app.compare_vms(req)
+        assert [(alt['name'], alt['recommendationScore'], alt['scoreBreakdown'])
+                for alt in without_assessment.body['alternatives']] == scores
 
 
 @pytest.mark.unit

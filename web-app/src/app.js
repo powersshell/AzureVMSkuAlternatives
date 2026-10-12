@@ -1657,7 +1657,7 @@ function renderMigrationBadges(alt) {
         badges.push('<span class="migration-badge gen2" title="Generation 2 only — needs a UEFI-based Gen 2 image. Gen 1 images will not boot.">Gen 2 only</span>');
     }
     if (m.bootGenerationChange) {
-        badges.push('<span class="migration-badge gen2" title="A different Hyper-V boot generation is required or explicitly selected. This is not an ordinary resize; plan a rebuild or a supported migration path. Do not assume third-party conversion tools are Microsoft-supported.">Boot generation change</span>');
+        badges.push('<span class="migration-badge gen2" title="The assessed compatible path changes boot generation. Review the migration planning checklist below; this is not an ordinary resize.">Boot generation change</span>');
     }
     if (m.bootGenerationUnknown) {
         badges.push('<span class="migration-badge gen2" title="Hyper-V generation metadata is missing. Verify boot compatibility before migrating.">Verify boot generation</span>');
@@ -1672,6 +1672,48 @@ function renderMigrationBadges(alt) {
         badges.push('<span class="migration-badge arch" title="Different CPU architecture from your current size — application binaries must be rebuilt or replaced with an Arm64 build.">Rebuild required</span>');
     }
     return badges.join('');
+}
+
+function getMigrationAssessment(alt) {
+    return alt.migrationAssessment || {
+        label: 'Generation path unassessed', effort: 'Cannot assess effort',
+        pathStatus: 'unassessed', preferenceSupport: 'unknown',
+        reasons: ['Migration assessment is unavailable. Verify source and candidate boot generations before planning a move.'],
+        checklist: [], guidanceUrls: []
+    };
+}
+
+function renderMigrationAssessment(alt) {
+    if (!alt.migrationAssessment) return '';
+    const a = getMigrationAssessment(alt);
+    const warning = a.pathStatus !== 'same_generation' || a.preferenceSupport === 'unsupported' || alt.migrationReadiness?.architectureChange || alt.migrationReadiness?.tempDiskMismatch;
+    const path = [1, 2].includes(a.sourceGeneration) && [1, 2].includes(a.destinationGeneration)
+        ? `Gen${a.sourceGeneration} → Gen${a.destinationGeneration}` : a.label;
+    const preferenceLabel = a.preferenceSupport === 'unsupported'
+        ? `<span class="migration-preference-label">Gen${escapeHtml(String(a.preferredTargetGeneration))} preference unavailable</span>` : '';
+    const preference = a.preferenceSupport === 'unsupported'
+        ? `<p class="migration-preference"><strong>Preferred Gen${escapeHtml(String(a.preferredTargetGeneration))} unsupported.</strong> The path below is an alternate, not the requested target.</p>`
+        : a.preferenceSupport === 'unknown'
+            ? '<p class="migration-preference">Preferred-generation support is unknown.</p>' : '';
+    const items = values => values.map(value => `<li>${escapeHtml(value)}</li>`).join('');
+    const links = a.guidanceUrls.map(url => {
+        if (!url.startsWith('https://learn.microsoft.com/')) return '';
+        const title = url.includes('trusted-launch-existing-vm-gen-1') ? 'Microsoft Gen1 to Trusted Launch upgrade guidance' : 'Microsoft size migration guidance';
+        return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${title}</a>`;
+    }).join(' ');
+    return `<details class="migration-assessment${warning ? ' migration-assessment-warning' : ''}">
+        <summary><span>${escapeHtml(path)}</span><span class="migration-effort-label">${escapeHtml(a.effort)}</span>${preferenceLabel}<span class="migration-details-label">Details</span></summary>
+        <div class="migration-assessment-body">
+        ${preference}
+        <strong>${escapeHtml(a.label)}</strong>
+        <p>Planning effort: ${escapeHtml(a.effort)}. This is SKU guidance, not verified VM readiness.</p>
+        <ul>${items(a.preferenceSupport === 'unsupported' ? a.reasons.slice(1) : a.reasons)}</ul>
+        <strong>Migration prerequisites and guidance</strong>
+            <ul>${items(a.checklist)}</ul>
+            <p>${links}</p>
+            <p>The Linux/Windows pricing selection does not establish your existing OS, image or upgrade eligibility.</p>
+        </div>
+    </details>`;
 }
 
 // Explain how a recommendation was ranked, so the ordering is auditable.
@@ -1723,7 +1765,7 @@ function renderScoreExplanation(alt) {
         </div>`;
 }
 
-// Microsoft's migration journey, keyed to the effort rating for the source size.
+// Size migration guidance complements candidate-specific boot path assessments.
 const MIGRATION_JOURNEY = [
     ['Assess', 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-assess'],
     ['Plan', 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-plan'],
@@ -1735,14 +1777,19 @@ function renderMigrationEffortPanel(data) {
     const panel = document.getElementById('migrationEffortPanel');
     if (!panel) return;
 
-    const effort = data?.migrationEffort;
-    if (!effort) {
+    const suppliedEffort = data?.migrationEffort;
+    const effort = suppliedEffort && ['Candidate-dependent', 'Unassessed'].includes(suppliedEffort.level)
+        ? suppliedEffort : {
+            level: data?.generationContext?.sourceGeneration ? 'Candidate-dependent' : 'Unassessed',
+            detail: 'Review candidate-specific migration assessments. Updated API metadata is required to assess paths; hardware versions alone cannot establish effort.',
+            guidanceUrl: 'https://learn.microsoft.com/en-us/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-overview'
+        };
+    if (!data) {
         panel.classList.add('hidden');
         panel.innerHTML = '';
         return;
     }
 
-    const level = effort.level.toLowerCase().replace(/\s+/g, '-');
     const steps = MIGRATION_JOURNEY.map(([label, url]) =>
         `<a class="journey-step" href="${url}" target="_blank" rel="noopener">${label}</a>`
     ).join('<span class="journey-sep" aria-hidden="true">→</span>');
@@ -1750,17 +1797,17 @@ function renderMigrationEffortPanel(data) {
     panel.innerHTML = `
         <div class="migration-effort-head">
             <span class="migration-effort-title">Before you migrate</span>
-            <span class="effort-chip effort-${level}">${escapeHtml(effort.level)} effort</span>
+            <span class="effort-chip">${escapeHtml(effort.level)} planning</span>
         </div>
         <p class="migration-effort-detail">${escapeHtml(effort.detail)}</p>
-        ${data.generationContext?.warning ? `<p role="status">${escapeHtml(data.generationContext.warning)} Open Advanced Options above to select Source Gen.</p>` : ''}
+        ${data.generationContext?.warning ? `<p role="status"><strong>Source generation required to assess migration.</strong> ${escapeHtml(data.generationContext.warning)} Use the visible Source Gen selector above; comparison remains available.</p>` : ''}
         ${data.generationContext?.sourceGeneration ? `<p>Source boot generation: Gen${data.generationContext.sourceGeneration}. Preferred target: ${data.generationContext.targetGeneration ? `Gen${data.generationContext.targetGeneration}` : 'Any'}.</p>` : ''}
-        ${data.generationContext?.crossGenerationRequested ? '<p><strong>Cross-generation migration selected:</strong> plan a rebuild or a supported migration path. Do not assume third-party conversion tools are Microsoft-supported.</p>' : ''}
+        ${data.generationContext?.crossGenerationRequested ? '<p><strong>Cross-generation preference selected:</strong> not an ordinary resize. Check each candidate for the requested generation; Gen1 to Gen2 may have a conditional Microsoft-supported Trusted Launch upgrade path. Actual VM eligibility is not assessed.</p>' : ''}
         <ul class="migration-checklist">
             <li>Prefer Gen1 → Gen1 or Gen2 → Gen2. Verify the target supports your image's boot generation; Gen2-only sizes need a UEFI-based Gen2 image.</li>
             <li>Confirm your image includes current NVMe and MANA network drivers.</li>
             <li>Check Local Temporary Disk under Storage. Older sizes can have SCSI temp disks without a <code>d</code> suffix; review scratch data and pagefile/swap paths if a move drops the disk.</li>
-            <li>Re-plan any family-scoped reservations or savings plans before you resize.</li>
+            <li>Review each card's planning effort and expandable prerequisites. A same-generation path is not a guarantee of resize readiness.</li>
         </ul>
         <div class="migration-journey">${steps}</div>
         <a class="migration-effort-link" href="${effort.guidanceUrl}" target="_blank" rel="noopener">Read the full migration guidance →</a>`;
@@ -2003,9 +2050,13 @@ function displayAlternatives(alternatives) {
             <svg class="card-chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
+            ${renderMigrationAssessment(alt)}
         `;
         
-        card.addEventListener('click', () => toggleDetails(index));
+        card.addEventListener('click', event => {
+            if (event.target.closest('.migration-assessment')) return;
+            toggleDetails(index);
+        });
         resultsTableBody.appendChild(card);
         
         // Details expansion div
@@ -2686,7 +2737,17 @@ function buildComparisonExportModel() {
         ...SAVINGS_PLAN_EXPORT_COLUMNS.map(([, label]) => label),
         'Savings Plan assumptions (no Extra Discount)',
         'Currency',
-        'Availability Zones'
+        'Availability Zones',
+        'Source Hyper-V Generation',
+        'Target Generation Preference',
+        'Candidate Hyper-V Generations',
+        'Preferred Generation Support',
+        'Assessed Destination Generation',
+        'Migration Path',
+        'Planning Effort',
+        'Migration Reasons',
+        'Migration Prerequisites',
+        'Migration Guidance URLs'
     ];
 
     // Add region availability column if active
@@ -2702,6 +2763,7 @@ function buildComparisonExportModel() {
     const capabilityRows = [];
     const combinedRows = currentResults.alternatives.map((alt, index) => {
         const altCaps = alt.capabilities || {};
+        const assessment = getMigrationAssessment(alt);
         const summaryRow = [
             index + 1,
             exportLocation,
@@ -2740,7 +2802,17 @@ function buildComparisonExportModel() {
             ...savingsPlanExportValues(alt.pricing),
             SAVINGS_PLAN_ASSUMPTIONS,
             alt.pricing?.currency || 'N/A',
-            alt.zones || 'N/A'
+            alt.zones || 'N/A',
+            assessment.sourceGeneration ? `Gen${assessment.sourceGeneration}` : 'Unassessed',
+            currentResults.searchParameters?.targetGen || 'N/A',
+            assessment.supportedCandidateGenerations?.map(gen => `Gen${gen}`).join('; ') || 'Unknown',
+            assessment.preferenceSupport,
+            assessment.destinationGeneration ? `Gen${assessment.destinationGeneration}` : 'Unassessed',
+            assessment.label,
+            assessment.effort,
+            assessment.reasons.join('; '),
+            assessment.checklist.join('; '),
+            assessment.guidanceUrls.join('; ')
         ];
 
         // Add region availability if active
@@ -2766,6 +2838,8 @@ function buildComparisonExportModel() {
         ['Generated', new Date().toISOString()],
         ['Target SKU', targetSku.name || 'N/A'],
         ['Location', exportLocation],
+        ['Source Hyper-V Generation', currentResults.generationContext?.sourceGeneration ? `Gen${currentResults.generationContext.sourceGeneration}` : 'Unassessed'],
+        ['Target Generation Preference', currentResults.searchParameters?.targetGen || 'N/A'],
         ['Currency', currency],
         ['Displayed pricing OS', pricingOs.charAt(0).toUpperCase() + pricingOs.slice(1)],
         ['Displayed pricing model', currentPricingModel],

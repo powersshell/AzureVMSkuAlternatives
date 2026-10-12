@@ -398,6 +398,9 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                     source_generation=preferred_source_generation,
                     target_generation=target_generation_preference,
                 )
+                alt['migrationAssessment'] = _migration_assessment(
+                    alt['migrationReadiness'], sku_capabilities,
+                    preferred_source_generation, target_generation_preference)
 
                 alternatives.append(alt)
 
@@ -523,7 +526,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
             'dataLastUpdated': data_last_updated,
             'pricesAsOf': prices_as_of,
             'dataSource': data_source,
-            'migrationEffort': _migration_effort(target_identity),
+            'migrationEffort': _migration_effort(generation_context),
             'generationContext': generation_context,
             'searchParameters': {
                 'location': location,
@@ -2200,6 +2203,88 @@ def _supported_boot_generations(capabilities: Dict) -> List[int]:
     return [generation for generation in (1, 2) if f'V{generation}' in tokens]
 
 
+_TRUSTED_LAUNCH_UPGRADE_URL = 'https://learn.microsoft.com/en-us/azure/virtual-machines/trusted-launch-existing-vm-gen-1'
+_SIZE_MIGRATION_URL = 'https://learn.microsoft.com/en-us/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-overview'
+_GEN1_UPGRADE_CHECKLIST = [
+    'This is not an ordinary resize. A Microsoft-supported Gen1 to Gen2 upgrade through Trusted Launch may be available; eligibility is not assessed from SKU data.',
+    'Verify the supported size family, OS version and image origin, Trusted Launch capability, and unsupported features. Gen2 support alone does not establish eligibility.',
+    'Validate GPT and EFI boot-disk readiness. Windows has a documented MBR2GPT validation/conversion route; supported Linux Marketplace images may already be ready. Do not proceed if validation fails.',
+    'Review OS exclusions and remediation: Windows Server 2016 needs an OS upgrade; Debian, Azure Linux and other Linux images may require the documented additional-support registration.',
+    'Assess Secure Boot compatibility, especially custom unsigned kernels or drivers.',
+    'If Azure Backup is enabled, use Enhanced policy; migrate Standard policy protection first.',
+    'If Azure Site Recovery is enabled, plan disabling protection before upgrade and reconfiguring it afterward.',
+    'For encrypted Windows OS volumes, follow the documented disable/re-enable procedure. Review Windows system-volume sizing before conversion.',
+    'Test on a non-production VM, take a full backup or restore point, plan deallocation/downtime, and validate boot, drivers, applications and protection afterward.',
+    'There is no in-place rollback to Gen1. Recovery requires the pre-upgrade backup or restore point.',
+    'The documented upgrade requires enabling Trusted Launch and does not change CPU architecture. If prerequisites cannot be met, plan a supported migration/rebuild.',
+]
+
+
+def _generation_path(capabilities: Dict, source: Optional[int], preference: Optional[int]) -> Dict:
+    supported = _supported_boot_generations(capabilities)
+    preference_support = ('not_requested' if preference is None else
+                          'unknown' if not supported else
+                          'supported' if preference in supported else 'unsupported')
+    destination = None
+    if source is not None and supported:
+        if preference in supported:
+            destination = preference
+        elif source in supported:
+            destination = source
+        elif len(supported) == 1:
+            destination = supported[0]
+    status = ('unassessed' if destination is None else
+              'same_generation' if destination == source else 'generation_change')
+    return {
+        'sourceGeneration': source,
+        'preferredTargetGeneration': preference,
+        'supportedCandidateGenerations': supported,
+        'destinationGeneration': destination,
+        'preferenceSupport': preference_support,
+        'pathStatus': status,
+    }
+
+
+def _migration_assessment(readiness: Dict, capabilities: Dict,
+                          source: Optional[int], preference: Optional[int]) -> Dict:
+    assessment = _generation_path(capabilities, source, preference)
+    destination = assessment['destinationGeneration']
+    checklist = ['Verify image, security type, size availability, disk/network drivers and workload compatibility before resizing. Same-generation support alone does not prove a resize is available.']
+    urls = [_SIZE_MIGRATION_URL]
+    if assessment['pathStatus'] == 'unassessed':
+        label, effort = 'Generation path unassessed', 'Cannot assess effort'
+        reasons = ['Select the existing VM\'s Source Gen to assess its migration path.' if source is None
+                   else 'Candidate boot-generation metadata is missing; verify compatibility.']
+    elif destination == source:
+        label, effort = f'Gen{source} -> Gen{destination}: same-generation path available', 'Resize assessment'
+        reasons = ['No boot-generation conversion is indicated by the SKU metadata; actual VM readiness still needs validation.']
+    elif source == 1:
+        label, effort = 'Gen1 -> Gen2: generation migration', 'Upgrade or rebuild planning'
+        reasons = ['Not an ordinary resize. A conditional Trusted Launch upgrade may be available; otherwise plan a supported migration/rebuild.']
+        checklist = list(_GEN1_UPGRADE_CHECKLIST)
+        urls.insert(0, _TRUSTED_LAUNCH_UPGRADE_URL)
+    else:
+        label, effort = 'Gen2 -> Gen1: generation migration', 'Rebuild/migration planning'
+        reasons = ['Not an ordinary resize. Do not assume a supported in-place downgrade; plan a suitable Gen1 VM/image and workload migration.']
+        checklist += ['Validate the Gen1 image/application requirements and a backup, downtime and recovery plan. The Gen1 to Trusted Launch upgrade guidance is not an in-place downgrade procedure.']
+    if assessment['preferenceSupport'] == 'unsupported':
+        reasons.insert(0, f'Preferred Gen{preference} unsupported by this candidate. Any assessed path is an alternate path, not the requested target.')
+    if readiness.get('architectureChange'):
+        reasons.append('CPU architecture changes: create a suitable new VM/image and validate or replace application binaries. A Trusted Launch upgrade does not change architecture.')
+        if assessment['pathStatus'] != 'unassessed':
+            effort = 'New VM/image planning'
+    if readiness.get('usesManaNetworking'):
+        reasons.append('Assess MANA network-driver readiness; older images may need updated drivers.')
+    if readiness.get('tempDiskMismatch'):
+        reasons.append('Local temporary disk is lost. Review scratch data, pagefile/swap and application paths; plan suitable storage.')
+    assessment.update({
+        'label': label, 'effort': effort, 'reasons': reasons,
+        'checklist': checklist, 'guidanceUrls': urls,
+        'eligibilityAssessed': False,
+    })
+    return assessment
+
+
 def _boot_generation_context(capabilities: Dict, source: str, target: str) -> Dict:
     supported = _supported_boot_generations(capabilities)
     source_generation = {'gen1': 1, 'gen2': 2}.get(source)
@@ -2313,19 +2398,17 @@ def _migration_readiness(sku_name: str, capabilities: Dict, identity: Dict,
 
     Mirrors the platform changes called out in the v6/v7 migration guidance.
     """
-    hyperv = (capabilities.get('hyperVGenerations') or '')
-    supports_gen2 = 'V2' in hyperv
-    gen1_only = bool(hyperv) and 'V2' not in hyperv
+    supported = _supported_boot_generations(capabilities)
+    supports_gen2 = 2 in supported
+    gen1_only = supported == [1]
+    path = _generation_path(capabilities, source_generation, target_generation)
 
     return {
-        'requiresGen2': supports_gen2 and 'V1' not in hyperv,
+        'requiresGen2': supported == [2],
         'supportsGen2': supports_gen2,
         'gen1Only': gen1_only,
-        'bootGenerationChange': bool(source_generation is not None and
-                                     _supported_boot_generations(capabilities) and
-                                     (source_generation not in _supported_boot_generations(capabilities) or
-                                      (target_generation is not None and target_generation != source_generation))),
-        'bootGenerationUnknown': not bool(_supported_boot_generations(capabilities)),
+        'bootGenerationChange': path['pathStatus'] == 'generation_change',
+        'bootGenerationUnknown': not bool(supported),
         # Our stored flag is NvmeDiskSizeInMiB > 0 -- that is the *local temp*
         # NVMe disk (the 'd' suffix), not the remote-disk NVMe interface. Named
         # accordingly so the badge does not overstate what we actually know.
@@ -2343,19 +2426,13 @@ def _migration_readiness(sku_name: str, capabilities: Dict, identity: Dict,
     }
 
 
-def _migration_effort(target_identity: Dict) -> Dict:
-    """Microsoft's published migration effort rating, keyed on the source generation."""
-    version = target_identity['version']
-    if version >= 5:
-        level, detail = 'Very low', 'Recent hardware version; verify boot generation, disk and network drivers before resizing.'
-    elif version == 4:
-        level, detail = 'Low', 'Largely current-platform; verify NVMe and network drivers.'
-    else:
-        level, detail = 'Moderate', 'Older hardware version; verify boot-generation compatibility and any disk or network changes.'
+def _migration_effort(generation_context: Dict) -> Dict:
+    source_known = generation_context.get('sourceGeneration') is not None
     return {
-        'level': level,
-        'detail': detail,
-        'guidanceUrl': 'https://learn.microsoft.com/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-overview',
+        'level': 'Candidate-dependent' if source_known else 'Unassessed',
+        'detail': ('Review each alternative\'s migration path and prerequisites. SKU support is not a VM readiness or upgrade eligibility assessment.'
+                   if source_known else 'Select Source Gen to assess migration paths. Hardware SKU versions cannot identify an existing VM\'s Hyper-V generation.'),
+        'guidanceUrl': _SIZE_MIGRATION_URL,
     }
 
 

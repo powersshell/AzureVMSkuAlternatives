@@ -149,6 +149,28 @@
             </button>
         </div>
 
+        <div class="generation-controls compare-only">
+            <div class="config-field">
+                <label for="sourceGen">Source Gen (Hyper-V)</label>
+                <select id="sourceGen">
+                    <option value="auto" selected>Detect if unambiguous</option>
+                    <option value="gen1">Gen1</option>
+                    <option value="gen2">Gen2</option>
+                </select>
+                <small>Select your existing VM's boot generation for dual-generation sizes. Hardware versions such as v5 are different.</small>
+            </div>
+            <div class="config-field">
+                <label for="targetGen">Target Gen preference (Hyper-V)</label>
+                <select id="targetGen">
+                    <option value="same" selected>Prefer same generation</option>
+                    <option value="any">Any generation</option>
+                    <option value="gen1">Prefer Gen1</option>
+                    <option value="gen2">Prefer Gen2</option>
+                </select>
+                <small>A ranking preference, not a strict filter. Other paths remain visible with migration warnings.</small>
+            </div>
+        </div>
+
         <!-- Advanced Options -->
         <details class="advanced-options compare-only">
             <summary>Advanced Options</summary>
@@ -166,24 +188,6 @@
                         <option value="any" selected>Any</option>
                         <option value="x64">x64 only</option>
                         <option value="arm64">Arm64 only</option>
-                    </select>
-                </div>
-                <div class="adv-field">
-                    <label for="sourceGen">Source Gen (Hyper-V)</label>
-                    <select id="sourceGen">
-                        <option value="auto" selected>Detect if unambiguous</option>
-                        <option value="gen1">Gen1</option>
-                        <option value="gen2">Gen2</option>
-                    </select>
-                    <small>For dual-generation sizes, select your existing VM's boot generation.</small>
-                </div>
-                <div class="adv-field">
-                    <label for="targetGen">Target Gen (Hyper-V)</label>
-                    <select id="targetGen">
-                        <option value="same" selected>Prefer same generation</option>
-                        <option value="any">Any generation</option>
-                        <option value="gen1">Prefer Gen1</option>
-                        <option value="gen2">Prefer Gen2</option>
                     </select>
                 </div>
                 <div class="adv-field">

@@ -1,6 +1,8 @@
 # Changelog
 
 ## 2026-10-12
+- **improvement:** Reduced migration guidance to compact, collapsed path/effort rows with details on demand. Missing backend assessments no longer repeat empty guidance panels on every result; generation selectors, independent risk badges, and export guidance remain available.
+- **improvement:** Made Source Gen / Target Gen visible in the main comparison form and added per-alternative migration paths, planning effort, expandable prerequisites, and Microsoft guidance. Gen1 to Gen2 callouts explain the conditional Trusted Launch upgrade and recovery requirements without claiming VM eligibility; unknown paths remain unassessed. API/MCP, comparison exports, and PowerShell expose matching guidance while existing API ranking and pricing remain unchanged.
 - **feature:** Added 1-year and 3-year compute savings plan pricing across comparisons, Browse, regional price comparisons, CSV/XLSX exports, MCP tools, and PowerShell without changing PAYG-based recommendation ranking. Windows totals are clearly labeled compute-plus-licensing estimates; unavailable rates stay N/A and extra discounts are not applied.
 - **improvement:** Added preview Retail Prices API ingestion, nullable savings plan cache coverage, and pricing regressions. Monthly estimates assume 730 fully covered hours; commitment, licensing, and cache-refresh limitations are explained.
 - **improvement:** Added a main-only manual pricing-cache refresh workflow using the existing CI identity and full regional timer, with completion telemetry verification before reporting success.
