@@ -5,7 +5,7 @@ A serverless web application for comparing Azure Virtual Machine SKUs based on c
 ## Architecture
 
 - **Frontend**: HTML, CSS, JavaScript (hosted on Azure Static Web Apps)
-- **Backend**: Azure Functions (Node.js) for API endpoints
+- **Backend**: Azure Functions (Python v2 programming model) for API endpoints
 - **Infrastructure**: Bicep templates for Infrastructure as Code (IaC)
 - **Authentication**: Azure Managed Identity for secure Azure resource access
 - **Monitoring**: Application Insights and Log Analytics
@@ -21,6 +21,28 @@ A serverless web application for comparing Azure Virtual Machine SKUs based on c
 - 📈 **Export Capability**: Export results to CSV
 - 🎯 **Special Filters**: NVMe and GPU matching requirements
 - 📱 **Responsive Design**: Modern, mobile-friendly UI
+
+## Savings plan pricing
+
+Compare and Browse offer 1-year and 3-year compute savings plan pricing. `sp1YearHourly`, `sp1YearMonthly`, `sp3YearHourly`, and `sp3YearMonthly` are additive pricing fields; `Windows` suffixes hold estimated compute-plus-PAYG-license totals. Grid fields use `Linux`/`Windows` suffixes, and detailed differences use `sp1Year`/`sp3Year` with optional `Windows` suffixes. `/api/compare_regions` accepts `pricingModel=payg|sp1year|sp3year`; this affects regional cost sorting, not VM recommendations.
+
+Rates come from nested `savingsPlan` entries on eligible Consumption meters using Retail Prices API `2023-01-01-preview`. Hourly precision is retained, monthly values are hourly times 730, and missing rates stay null/N/A. Windows estimates require matched Linux and Windows PAYG components. No extra Discount % is applied to savings plan rates, including export columns. Recommendation scores and their default order remain PAYG-based.
+
+Monthly figures assume full eligible usage coverage under a fixed hourly commitment. Unused commitment expires; excess usage is PAYG. Software, storage, and networking are not covered by the compute savings benefit. This is public retail guidance, not bill prediction or commitment sizing; non-USD values are reference estimates.
+
+### Cache and deployment
+
+Deploy the API before expecting populated rates. The next successful regional cache refresh stores authoritative nullable savings fields in `savingsPlanPricing` JSON (avoiding stale values retained by merge upserts). `savingsPlanPricingStatus` is `not_refreshed` for old entries, `unavailable` for completed fetches without eligible rates, and `available` when a term has a rate. Incomplete pagination aborts persisted refreshes; coverage telemetry reports refreshed rows and each term's count. Existing USD cache entries show N/A until refreshed; there is no per-SKU backfill storm.
+
+PR Static Web Apps previews call the existing production Functions URL. A frontend-only preview can show the new controls but cannot show cached savings rates until the matching API is deployed and refreshed. Do not treat a successful frontend workflow as proof the API feature is live.
+
+Offline checks:
+```powershell
+python -m pytest web-app\api\tests\test_unit.py -m unit -k "SavingsPlanPricing or BuildGridRow"
+node scripts\test_savings_plan_ui.js
+python scripts\test_mcp_pricing.py
+pwsh -NoProfile -File scripts\Test-SavingsPlanPricing.ps1
+```
 
 ## Prerequisites
 

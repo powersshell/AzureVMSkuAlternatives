@@ -9,10 +9,9 @@
 
 ## 📋 Recent Changes
 
-### 2026-10-09
-- **fix:** Pinned MCP container deployments to the built image digest so successful deployments actually publish the new tool schema instead of retaining an unchanged `latest` revision.
-- **fix:** Corrected Source Gen / Target Gen to use Hyper-V Gen1/Gen2 compatibility, not hardware SKU versions. Dual-generation sources require an explicit choice for same-generation preference; Any disables that preference. Cross-generation and unknown-support warnings remain visible.
-- **fix:** Restored safe recommendation ordering with an explicit retirement/capacity recommendation penalty while retaining independent temporary-disk risk. Added matching MCP generation controls and regression coverage; live recommendation and MCP checks now run after successful deployments.
+### 2026-10-12
+- **feature:** Added 1-year and 3-year compute savings plan pricing across comparisons, Browse, regional price comparisons, CSV/XLSX exports, MCP tools, and PowerShell without changing PAYG-based recommendation ranking. Windows totals are clearly labeled compute-plus-licensing estimates; unavailable rates stay N/A and extra discounts are not applied.
+- **improvement:** Added preview Retail Prices API ingestion, nullable savings plan cache coverage, and pricing regressions. Monthly estimates assume 730 fully covered hours; commitment, licensing, and cache-refresh limitations are explained.
 
 📄 [Full changelog →](CHANGELOG.md)
 
@@ -21,6 +20,8 @@
 ## 🎯 What is This?
 
 In **Find Alternatives → Advanced Options**, Source Gen refers to the existing VM's Hyper-V boot generation, not the size's `_vN` hardware version. Automatic detection works only for sizes supporting one boot generation. For a dual-generation size, select the actual Gen1 or Gen2 of your existing VM; it cannot be inferred from the SKU. Target Gen defaults to the same generation; Any removes the preference. Cross-generation moves may require a rebuild or a supported migration process, not an ordinary resize.
+
+The pricing controls in **Find Alternatives** and **Browse all VMs** include **1yr SP** and **3yr SP**. These select published compute savings plan rates for costs and explicit price sorting, not recommendation scoring. Windows totals add an estimated PAYG licensing surcharge. Monthly figures assume 730 eligible hours fully covered by a fixed hourly commitment: unused commitment expires, excess usage is PAYG, and storage/networking are additional. The extra Discount % is not applied to savings plan rates. Missing rates are N/A; USD cache entries need a successful refresh after the API update before rates appear. This is retail guidance, not commitment sizing or a bill forecast.
 
 Azure VM SKU Alternatives helps you discover similar or alternative VM SKUs when:
 - 🚫 Your preferred SKU isn't available in a region

@@ -70,6 +70,228 @@ from function_app import (
 # build_grid_row tests
 # ============================================================================
 
+@pytest.mark.unit
+class TestSavingsPlanPricing:
+    @staticmethod
+    def meter(windows=False, **overrides):
+        return {
+            'type': 'Consumption', 'armSkuName': 'Standard_D4s_v5',
+            'armRegionName': 'eastus', 'skuName': 'D4s v5',
+            'productName': 'Virtual Machines Dsv5 Series' + (' Windows' if windows else ''),
+            'currencyCode': 'USD', 'unitOfMeasure': '1 Hour',
+            'unitPrice': 0.376 if windows else 0.192,
+            'savingsPlan': [
+                {'term': '1 Year', 'unitPrice': 0.1316736},
+                {'term': '3 Years', 'unitPrice': 0.0883584},
+            ] if not windows else [],
+            **overrides,
+        }
+
+    def pricing(self, linux=None, windows=None):
+        import function_app as app
+        pricing = {'currency': 'USD'}
+        app._add_savings_plan_pricing(
+            pricing, linux if linux is not None else self.meter(),
+            windows if windows is not None else self.meter(True))
+        return pricing
+
+    def test_exact_rates_and_windows_estimate(self):
+        pricing = self.pricing()
+        assert pricing['sp1YearHourly'] == 0.1316736
+        assert pricing['sp3YearHourly'] == 0.0883584
+        assert pricing['sp1YearMonthly'] == 96.12
+        assert pricing['sp1YearHourlyWindows'] == pytest.approx(0.3156736)
+        assert pricing['sp3YearMonthlyWindows'] == round((0.0883584 + 0.184) * 730, 2)
+        assert pricing['savingsPlanWindowsEstimated'] is True
+        assert pricing['savingsPlanPricingStatus'] == 'available'
+
+    @pytest.mark.parametrize('overrides', [
+        {'type': 'Reservation'}, {'skuName': 'D4s v5 Spot'},
+        {'skuName': 'D4s v5 Low Priority'}, {'productName': 'DedicatedHost'},
+        {'productName': 'Cloud Services'}, {'productName': 'Virtual Machines Windows'},
+        {'unitOfMeasure': '1 Month'}, {'currencyCode': 'EUR'},
+    ])
+    def test_ineligible_meters_never_supply_rates(self, overrides):
+        pricing = self.pricing(self.meter(**overrides))
+        assert pricing['sp1YearHourly'] is None
+        assert pricing['savingsPlanPricingStatus'] == 'unavailable'
+
+    @pytest.mark.parametrize('rate', [None, -1, float('nan'), float('inf'), '0.1', True])
+    def test_invalid_rates_are_not_prices(self, rate):
+        assert self.pricing(self.meter(savingsPlan=[
+            {'term': '1 Year', 'unitPrice': rate}
+        ]))['sp1YearHourly'] is None
+
+    def test_zero_and_missing_terms(self):
+        pricing = self.pricing(self.meter(savingsPlan=[
+            {'term': '1 Year', 'unitPrice': 0}, {'term': '3 Year', 'unitPrice': 0.1}
+        ]))
+        assert pricing['sp1YearHourly'] == pricing['sp1YearMonthly'] == 0
+        assert pricing['sp3YearHourly'] is None
+
+    @pytest.mark.parametrize('overrides', [
+        {'unitPrice': None}, {'unitPrice': 0.1}, {'currencyCode': 'EUR'},
+        {'armRegionName': 'westus'}, {'skuName': 'D4s v5 Spot'},
+        {'armSkuName': 'Standard_D2s_v5'}, {'unitOfMeasure': '1 Month'},
+    ])
+    def test_windows_requires_valid_matching_components(self, overrides):
+        pricing = self.pricing(windows=self.meter(True, **overrides))
+        assert pricing['sp1YearHourly'] is not None
+        assert pricing['sp1YearHourlyWindows'] is None
+
+    def test_cache_round_trip_and_merge_removes_missing_terms(self):
+        import function_app as app
+        entity = app._savings_plan_cache_fields(self.pricing())
+        entity.update(app._savings_plan_cache_fields(self.pricing(self.meter(savingsPlan=[]))))
+        recovered = app._cached_savings_plan_pricing(entity)
+        assert recovered['sp1YearHourly'] is None
+        assert recovered['savingsPlanPricingStatus'] == 'unavailable'
+        assert app._cached_savings_plan_pricing({})['savingsPlanPricingStatus'] == 'not_refreshed'
+        recovered = app._cached_savings_plan_pricing(app._savings_plan_cache_fields(self.pricing()))
+        assert recovered['sp3YearHourly'] == 0.0883584
+
+    def test_grid_preserves_zero_and_never_mixes_currencies(self):
+        import function_app as app
+        pricing = self.pricing(self.meter(savingsPlan=[{'term': '1 Year', 'unitPrice': 0}]))
+        row = build_grid_row({'name': 'Standard_D4s_v5', **app._savings_plan_cache_fields(pricing)})
+        assert row['sp1YearHourlyLinux'] == 0
+        row = build_grid_row({'name': 'Standard_D4s_v5', **app._savings_plan_cache_fields(pricing)},
+                             pricing_override={})
+        assert row['sp1YearHourlyLinux'] is None
+        assert row['savingsPlanPricingStatus'] == 'unavailable'
+
+    @pytest.mark.parametrize('changes,expected_invalid', [
+        ({}, False), ({'sp1YearMonthlyLinux': 1}, True),
+        ({'sp1YearHourlyLinux': 0.0883584, 'sp1YearMonthlyLinux': 64.5}, True),
+        ({'sp1YearHourlyWindows': 0.1316736}, True),
+        ({'sp1YearHourlyLinux': 100}, True),
+    ])
+    def test_live_invariant_guard_detects_corruption(self, changes, expected_invalid):
+        import function_app as app
+        filename = os.path.join(os.path.dirname(__file__), '..', '..', '..',
+                                'scripts', 'check_pricing_invariants.py')
+        spec = importlib.util.spec_from_file_location('pricing_guard', filename)
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        pricing = self.pricing()
+        row = build_grid_row({
+            'name': 'Standard_D4s_v5', 'hourlyPriceUSD': 0.192,
+            'hourlyPriceUSDWindows': 0.376, **app._savings_plan_cache_fields(pricing),
+        })
+        invalid, _, _ = guard.check_savings_plan_row({**row, **changes}, [self.meter()])
+        assert bool(invalid) is expected_invalid
+
+    @pytest.mark.parametrize('fetcher', ['get_vm_pricing', 'fetch_bulk_region_pricing'])
+    def test_ingestion_preview_version_and_pagination(self, monkeypatch, fetcher):
+        import function_app as app
+        urls = []
+        def get(url, **kwargs):
+            urls.append(url)
+            payload = {'Items': [self.meter()], 'NextPageLink': 'https://prices.azure.com/page2'} \
+                if len(urls) == 1 else {'Items': [self.meter(True)], 'NextPageLink': None}
+            return types.SimpleNamespace(ok=True, json=lambda: payload)
+        monkeypatch.setattr(app.requests, 'get', get)
+        if fetcher == 'get_vm_pricing':
+            pricing = app.get_vm_pricing('Standard_D4s_v5', 'eastus', 'USD')
+        else:
+            pricing = app.fetch_bulk_region_pricing('eastus')['Standard_D4s_v5']
+        assert 'api-version=2023-01-01-preview' in urls[0]
+        assert len(urls) == 2
+        assert pricing['sp1YearHourlyWindows'] == pytest.approx(0.3156736)
+
+    def test_partial_refresh_raises(self, monkeypatch):
+        import function_app as app
+        monkeypatch.setattr(app.requests, 'get', lambda *a, **kw: types.SimpleNamespace(
+            ok=False, status_code=503))
+        monkeypatch.setattr(app.time, 'sleep', lambda *a: None)
+        with pytest.raises(RuntimeError, match='incomplete'):
+            app.fetch_bulk_region_pricing('eastus', require_complete=True)
+
+    def test_regional_selection_uses_terms_and_windows_totals(self):
+        items = [self.meter(), self.meter(True)]
+        assert select_region_prices(items)['eastus']['hourlyPrice'] == 0.192
+        assert select_region_prices(items, 'linux', 'sp1year')['eastus']['hourlyPrice'] == 0.1316736
+        assert select_region_prices(items, 'windows', 'sp3year')['eastus']['hourlyPrice'] == \
+            pytest.approx(0.2723584)
+        assert select_region_prices([self.meter(savingsPlan=[])], 'linux', 'sp1year') == {}
+
+    @pytest.mark.parametrize('model,status', [
+        ('payg', 200), ('sp1year', 200), ('sp3year', 200), ('invalid', 400),
+    ])
+    def test_regional_route_contract(self, monkeypatch, model, status):
+        import json
+        import function_app as app
+        class Response:
+            def __init__(self, body, status_code=200, **kwargs):
+                self.body = json.loads(body)
+                self.status_code = status_code
+        monkeypatch.setattr(app.func, 'HttpResponse', Response)
+        monkeypatch.setattr(app, '_fetch_all_region_pricing', lambda *a: [
+            self.meter(), self.meter(True),
+        ])
+        request = types.SimpleNamespace(params={
+            'skuName': 'Standard_D4s_v5', 'os': 'windows', 'pricingModel': model,
+        })
+        response = app.compare_regions(request)
+        assert response.status_code == status
+        if status == 200:
+            assert response.body['pricingModel'] == model
+            assert response.body['regionCount'] == 1
+            if model == 'sp1year':
+                assert response.body['cheapest']['hourlyPrice'] == pytest.approx(0.3156736)
+
+    def test_details_require_both_prices(self):
+        pricing = self.pricing()
+        source = {'name': 'Standard_D4s_v5'}
+        alternative = {'name': 'Standard_D4s_v6'}
+        result = calculate_detailed_differences(source, alternative, pricing, pricing)['pricing']
+        assert result['sp1Year']['hourly']['target'] == 0.1316736
+        assert result['sp1YearWindows']['estimated'] is True
+        missing = {**pricing, 'sp1YearHourly': None}
+        result = calculate_detailed_differences(source, alternative, pricing, missing)['pricing']
+        assert result['sp1Year'] is None
+
+    @pytest.mark.parametrize('priority', ['balanced', 'cost'])
+    def test_savings_data_and_display_selection_do_not_change_ranking(self, monkeypatch, priority):
+        import json
+        import function_app as app
+
+        class Response:
+            def __init__(self, body, status_code=200, **kwargs):
+                self.body = json.loads(body)
+                self.status_code = status_code
+
+        catalog = []
+        for name, monthly in [('Standard_D4s_v5', 140), ('Standard_D4s_v6', 120),
+                              ('Standard_D4as_v5', 110)]:
+            catalog.append({'name': name, 'pricing': {
+                'hourlyPrice': monthly / 730, 'monthlyPrice': monthly,
+                'currency': 'USD', 'ri1YearMonthly': 80,
+            }, 'capabilities': [
+                {'name': 'vCPUs', 'value': '4'}, {'name': 'MemoryGB', 'value': '16'},
+                {'name': 'HyperVGenerations', 'value': 'V1,V2'},
+            ]})
+        monkeypatch.setenv('AZURE_SUBSCRIPTION_ID', 'test')
+        monkeypatch.setattr(app.func, 'HttpResponse', Response)
+        monkeypatch.setattr(app, 'get_access_token', lambda: 'test')
+        monkeypatch.setattr(app, 'get_vm_skus_with_cache', lambda *args: (catalog, 'cache'))
+        body = {'skuName': 'Standard_D4s_v5', 'location': 'eastus',
+                'priorityMode': priority, 'minSimilarityScore': 0,
+                'sourceGen': 'gen1', 'targetGen': 'same'}
+        request = types.SimpleNamespace(method='POST', get_json=lambda: body)
+        before = app.compare_vms(request)
+        assert before.status_code == 200
+        for idx, sku in enumerate(catalog):
+            sku['pricing'].update({'sp1YearHourly': idx, 'sp1YearMonthly': idx * 730})
+        body['pricingModel'] = 'sp1year'
+        after = app.compare_vms(request)
+        assert after.status_code == 200
+        assert [(a['name'], a['recommendationScore'], a['scoreBreakdown'])
+                for a in before.body['alternatives']] == [
+                    (a['name'], a['recommendationScore'], a['scoreBreakdown'])
+                    for a in after.body['alternatives']]
+
+
 class TestBuildGridRow:
 
     @pytest.mark.unit

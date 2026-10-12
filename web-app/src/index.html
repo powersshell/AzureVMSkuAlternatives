@@ -123,7 +123,7 @@
                 <small id="skuCount" class="sku-count"></small>
             </div>
             <div class="config-field config-field-sm downstream-field">
-                <label for="discountPct">Discount %</label>
+                <label for="discountPct">Extra Discount %</label>
                 <input type="number" id="discountPct" value="0" min="0" max="100" step="0.1" placeholder="0">
                 <small id="discountHint" class="discount-hint"></small>
             </div>
@@ -314,11 +314,20 @@
                             <button id="btn-spot" class="btn-pricing" onclick="setPricingModel('spot')" title="Linux Spot pricing (variable, evictable)">Spot</button>
                             <button id="btn-ri1year" class="btn-pricing" onclick="setPricingModel('ri1year')">1yr RI</button>
                             <button id="btn-ri3year" class="btn-pricing" onclick="setPricingModel('ri3year')">3yr RI</button>
+                            <button id="btn-sp1year" class="btn-pricing" onclick="setPricingModel('sp1year')" title="1-year Azure Savings Plan for compute">1yr SP</button>
+                            <button id="btn-sp3year" class="btn-pricing" onclick="setPricingModel('sp3year')" title="3-year Azure Savings Plan for compute">3yr SP</button>
                         </div>
                         <div class="os-pricing-toggle" id="osPricingToggle">
                             <button id="btn-linux-pricing" class="btn-os active" onclick="setPricingOS('linux')">Linux</button>
                             <button id="btn-windows-pricing" class="btn-os" onclick="setPricingOS('windows')">Windows</button>
                         </div>
+                        <label class="comparison-sort-label" for="comparisonSort">Sort
+                            <select id="comparisonSort" onchange="displayAlternatives(filterResults(currentResults.alternatives))">
+                                <option value="recommendation">Recommendation (PAYG-based)</option>
+                                <option value="price-asc">Monthly price: low to high</option>
+                                <option value="price-desc">Monthly price: high to low</option>
+                            </select>
+                        </label>
                         <button id="expandAllBtn" class="expand-all-btn" type="button" aria-pressed="false" title="Expand all result details">
                             <svg class="expand-all-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                                 <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -338,6 +347,7 @@
                             Excel
                         </button>
                     </div>
+                    <p class="pricing-assumptions">SP = Azure Savings Plan for compute (1 or 3 years): fixed hourly commitment. Monthly = hourly × 730 with full eligible usage coverage; unused commitment expires; excess usage is PAYG. Compute rates exclude licensing, storage and networking. Windows SP totals are estimates including the PAYG Windows–Linux license delta. Extra Discount % is not applied to SP. Recommendation ranking and scores remain PAYG-based.</p>
                 </div>
 
                 <!-- Result Filters -->
@@ -440,6 +450,8 @@
                     <button id="btn-grid-spot" class="btn-pricing" type="button" onclick="setPricingModel('spot')" title="Linux Spot pricing (variable, evictable)">Spot</button>
                     <button id="btn-grid-ri1year" class="btn-pricing" type="button" onclick="setPricingModel('ri1year')">1yr RI</button>
                     <button id="btn-grid-ri3year" class="btn-pricing" type="button" onclick="setPricingModel('ri3year')">3yr RI</button>
+                    <button id="btn-grid-sp1year" class="btn-pricing" type="button" onclick="setPricingModel('sp1year')" title="1-year Azure Savings Plan for compute">1yr SP</button>
+                    <button id="btn-grid-sp3year" class="btn-pricing" type="button" onclick="setPricingModel('sp3year')" title="3-year Azure Savings Plan for compute">3yr SP</button>
                 </div>
                 <div class="os-pricing-toggle">
                     <button id="btn-grid-linux" class="btn-os active" type="button" onclick="setPricingOS('linux')">Linux</button>
@@ -455,6 +467,7 @@
                         Excel
                     </button>
                 </div>
+                <p class="pricing-assumptions">SP = Azure Savings Plan for compute (1 or 3 years): fixed hourly commitment. Monthly = hourly × 730 with full eligible usage coverage; unused commitment expires; excess usage is PAYG. Compute rates exclude licensing, storage and networking. Windows SP totals are estimates including the PAYG Windows–Linux license delta. Extra Discount % is not applied to SP.</p>
             </div>
         </div>
 

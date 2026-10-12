@@ -97,6 +97,10 @@ async def main(url, location):
               props.get("source_gen", {}).get("enum") == ["auto", "gen1", "gen2"])
         check("target_gen exposes same/any/Gen1/Gen2 choices",
               props.get("target_gen", {}).get("enum") == ["same", "any", "gen1", "gen2"])
+        region_tool = next((t for t in tools if t.name == "compare_regions_for_sku"), None)
+        region_props = (region_tool.inputSchema or {}).get("properties", {}) if region_tool else {}
+        check("regional pricing exposes savings plan terms",
+              region_props.get("pricing_model", {}).get("enum") == ["payg", "sp1year", "sp3year"])
 
         # ---- health -------------------------------------------------------
         h = payload(await client.call_tool("health_check", {}))
@@ -232,12 +236,23 @@ async def main(url, location):
             prices = [p for p in prices if isinstance(p, (int, float))]
             check("region prices sorted cheapest-first",
                   prices == sorted(prices), str(prices[:4]))
+        savings = payload(await client.call_tool("compare_regions_for_sku", {
+            "target_sku": "Standard_D4s_v5", "pricing_model": "sp1year"}))
+        savings_regions = savings.get("regions") or []
+        check("savings plan regional choice reaches API",
+              savings.get("pricingModel") == "sp1year" and len(savings_regions) > 5
+              and all(x.get("hourlyPrice") == x.get("sp1YearHourly") for x in savings_regions))
 
         # ---- list_region_vm_grid ------------------------------------------
         r = payload(await client.call_tool("list_region_vm_grid", {"location": location}))
         grid = r.get("skus") or []
         check("list_region_vm_grid returns the full grid", len(grid) > 500,
               str(len(grid)) + " rows")
+        check("grid exposes nullable savings plan rates and cache status",
+              bool(grid) and all(
+                  "sp1YearHourlyLinux" in x and "sp3YearHourlyWindows" in x
+                  and x.get("savingsPlanPricingStatus") in ("available", "unavailable", "not_refreshed")
+                  and x.get("savingsPlanWindowsEstimated") is True for x in grid))
 
         # ---- get_sku_price_history ----------------------------------------
         r = payload(await client.call_tool("get_sku_price_history", {

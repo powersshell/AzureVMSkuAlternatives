@@ -8,9 +8,9 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 | Tool | Description |
 |------|-------------|
 | `find_alternative_skus` | Find SKUs ranked by recommendation score, with boot-generation preferences, migration risks and lifecycle status |
-| `compare_sku_details` | Detailed side-by-side comparison between two SKUs (PAYG, Spot & reserved pricing) |
+| `compare_sku_details` | Detailed side-by-side comparison between two SKUs (PAYG, Spot, reserved & savings plan pricing) |
 | `compare_regions_for_sku` | Cross-region "where is this cheapest?" price comparison for one SKU |
-| `list_region_vm_grid` | Every SKU in a region with full specs and all pricing models (PAYG, Spot, reserved) |
+| `list_region_vm_grid` | Every SKU in a region with full specs and all pricing models (PAYG, Spot, reserved, savings plans) |
 | `get_sku_price_history` | Daily price-history series (Linux/Windows/Spot) for one or more SKUs |
 | `list_retiring_skus` | List VM sizes announced for retirement or already retired |
 | `list_growth_restricted_skus` | List VM sizes with capacity limitations (growth-restricted; no new quota) |
@@ -23,6 +23,14 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 `find_alternative_skus` accepts `source_gen` (`auto`, `gen1`, `gen2`) and `target_gen` (`same`, `any`, `gen1`, `gen2`). These are **Hyper-V boot generations**, not `_vN` hardware versions. `auto` infers the source only when its SKU supports one generation; otherwise `generationContext.warning` asks for the existing VM's actual generation. `same` prefers that generation, while `any` disables the preference. Cross-generation results remain visible and flag the need to plan a supported migration or rebuild. Temporary-disk loss and retirement/capacity risks affect ranking independently.
 
 ## Quick Start — Remote HTTP (Easiest)
+
+### Savings plan pricing
+
+Comparison pricing includes nullable `sp1YearHourly`, `sp1YearMonthly`, `sp3YearHourly`, and `sp3YearMonthly`, with `Windows` suffixes for estimated Windows totals. Grid fields use `Linux` or `Windows` suffixes. Detailed comparisons expose `sp1Year`, `sp3Year`, `sp1YearWindows`, and `sp3YearWindows` hourly/monthly differences only when both SKUs have a rate.
+
+`compare_regions_for_sku` accepts `pricing_model="payg"` (default), `"sp1year"`, or `"sp3year"` and sorts eligible regions by that model. Savings plan data never changes PAYG-based recommendation ranking. Missing rates are null, not PAYG or Linux fallbacks.
+
+Windows savings totals are compute rates plus an estimated licensing surcharge derived from matched PAYG Windows/Linux meters. Monthly figures use 730 fully covered eligible hours. Savings plans require a fixed hourly commitment, unused commitment expires, excess usage is PAYG, and software/storage/networking are excluded from the compute benefit. Extra discounts are not applied. `savingsPlanPricingStatus` distinguishes `not_refreshed` old cache data, `unavailable` rates, and `available` rates; cached USD entries populate after the API's next successful regional refresh.
 
 The MCP server is hosted publicly at:
 

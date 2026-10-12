@@ -169,6 +169,7 @@ function getPriorityWeight(id) {
 }
 
 function getDiscountMultiplier() {
+    if (isSavingsPlan()) return 1.0;
     const val = parseFloat(document.getElementById('discountPct').value);
     if (isNaN(val) || val <= 0) return 1.0;
     if (val >= 100) return 0.0;
@@ -209,7 +210,40 @@ function hideGettingStarted() {
 
 let currentResults = null;
 let currentPricingOS = 'linux';
-let currentPricingModel = 'payg'; // 'payg', 'ri1year', 'ri3year'
+let currentPricingModel = 'payg'; // PAYG, Spot, RI, or Savings Plan display only
+let regionPriceSku = null;
+let regionPriceRequestVersion = 0;
+const SAVINGS_PLAN_ASSUMPTIONS = 'Fixed hourly commitment for the selected term; monthly = hourly × 730 assuming full eligible usage coverage. Unused commitment expires; excess usage is PAYG. Savings Plan compute rates exclude licensing, storage and networking. Windows totals are estimates: compute plus the PAYG Windows–Linux license delta (licensing included). Extra Discount % does not apply to Savings Plans. Recommendation ranking and scores remain PAYG-based.';
+const SAVINGS_PLAN_EXPORT_COLUMNS = [
+    ['sp1YearHourly', '1yr SP Hourly (Linux)', 7],
+    ['sp1YearMonthly', '1yr SP Monthly (Linux)', 2],
+    ['sp3YearHourly', '3yr SP Hourly (Linux)', 7],
+    ['sp3YearMonthly', '3yr SP Monthly (Linux)', 2],
+    ['sp1YearHourlyWindows', '1yr SP Hourly (Windows estimated total)', 7],
+    ['sp1YearMonthlyWindows', '1yr SP Monthly (Windows estimated total)', 2],
+    ['sp3YearHourlyWindows', '3yr SP Hourly (Windows estimated total)', 7],
+    ['sp3YearMonthlyWindows', '3yr SP Monthly (Windows estimated total)', 2]
+];
+
+function isSavingsPlan() {
+    return currentPricingModel === 'sp1year' || currentPricingModel === 'sp3year';
+}
+
+function savingsPlanLabel() {
+    return `${currentPricingModel === 'sp1year' ? '1yr' : '3yr'} Savings Plan (${currentPricingOS === 'windows' ? 'Windows estimated total' : 'Linux compute'})`;
+}
+
+function savingsPlanExportValues(pricing) {
+    return SAVINGS_PLAN_EXPORT_COLUMNS.map(([key, , precision]) =>
+        pricing?.[key] == null ? 'N/A' : Number(pricing[key]).toFixed(precision));
+}
+
+function refreshOpenRegionPricing() {
+    const modal = document.getElementById('regionPriceModal');
+    if (regionPriceSku && modal && !modal.classList.contains('hidden')) {
+        showRegionPriceComparison(regionPriceSku);
+    }
+}
 let locationChoices = null; // Choices.js instance for location
 let skuChoices = null; // Choices.js instance for SKU
 const expandedDetailsCache = new Map(); // Cache for expanded row details (Phase 2)
@@ -393,7 +427,14 @@ function updateSkuCount(count) {
 
 function updateDiscountHint() {
     const hint = document.getElementById('discountHint');
-    const val = parseFloat(document.getElementById('discountPct').value);
+    const input = document.getElementById('discountPct');
+    input.disabled = isSavingsPlan();
+    const val = parseFloat(input.value);
+    if (isSavingsPlan()) {
+        hint.textContent = `Extra Discount % is not applied to Savings Plans. Entered value (${input.value || '0'}%) is preserved for other pricing models.`;
+        hint.style.color = '';
+        return;
+    }
     if (isNaN(val) || val <= 0) {
         hint.textContent = 'No discount applied. Enter 0–100 to reduce displayed prices.';
         hint.style.color = '';
@@ -648,9 +689,10 @@ function setPricingOS(os) {
     }
     syncGridPricingButtons();
     if (currentMode === 'browse' && gridRows.length) renderGrid();
+    refreshOpenRegionPricing();
 }
 
-// Pricing model toggle (PAYG / 1-Year RI / 3-Year RI)
+// Display pricing changes never enter the PAYG-based comparison scoring request.
 function setPricingModel(model) {
     currentPricingModel = model;
     trackEvent('pricing_model_toggled', { model });
@@ -658,10 +700,13 @@ function setPricingModel(model) {
     document.getElementById('btn-spot')?.classList.toggle('active', model === 'spot');
     document.getElementById('btn-ri1year')?.classList.toggle('active', model === 'ri1year');
     document.getElementById('btn-ri3year')?.classList.toggle('active', model === 'ri3year');
+    document.getElementById('btn-sp1year')?.classList.toggle('active', model === 'sp1year');
+    document.getElementById('btn-sp3year')?.classList.toggle('active', model === 'sp3year');
 
     // Spot pricing is Linux-only — force Linux OS and disable the Windows toggle
     applySpotOsLock(model === 'spot');
 
+    updateDiscountHint();
     updatePricingHeaders();
     if (currentResults) {
         displayAlternatives(filterResults(currentResults.alternatives));
@@ -669,6 +714,7 @@ function setPricingModel(model) {
     }
     syncGridPricingButtons();
     if (currentMode === 'browse' && gridRows.length) renderGrid();
+    refreshOpenRegionPricing();
 }
 
 // Spot pricing exists for Linux only; lock the OS toggle to Linux while Spot is selected.
@@ -693,7 +739,10 @@ function updatePricingHeaders() {
     const thHourly = document.getElementById('th-hourly');
     const thMonthly = document.getElementById('th-monthly');
     const osLabel = currentPricingOS === 'windows' ? 'Win' : 'Linux';
-    if (currentPricingModel === 'spot') {
+    if (isSavingsPlan()) {
+        thHourly.textContent = `Hourly Cost (${savingsPlanLabel()})`;
+        thMonthly.textContent = `Monthly Cost (${savingsPlanLabel()})`;
+    } else if (currentPricingModel === 'spot') {
         thHourly.textContent = 'Hourly Cost (Spot, Linux)';
         thMonthly.textContent = 'Monthly Cost (Spot, Linux)';
     } else if (currentPricingModel === 'ri1year') {
@@ -706,10 +755,18 @@ function updatePricingHeaders() {
         thHourly.textContent = `Hourly Cost (${osLabel})`;
         thMonthly.textContent = `Monthly Cost (${osLabel})`;
     }
+    const label = isSavingsPlan() ? savingsPlanLabel()
+        : `${currentPricingModel === 'payg' ? 'PAYG' : currentPricingModel === 'spot' ? 'Spot' : currentPricingModel === 'ri1year' ? '1yr RI' : '3yr RI'}, ${osLabel}`;
+    document.querySelector('#gridTable th[data-sort="hourly"]')?.replaceChildren(`Hourly (${label})`);
+    document.querySelector('#gridTable th[data-sort="monthly"]')?.replaceChildren(`Monthly (${label})`);
 }
 
 function getHourlyPrice(pricing) {
     if (!pricing) return null;
+    if (isSavingsPlan()) {
+        const key = currentPricingModel === 'sp1year' ? 'sp1YearHourly' : 'sp3YearHourly';
+        return pricing[key + (currentPricingOS === 'windows' ? 'Windows' : '')] ?? null;
+    }
     if (currentPricingModel === 'spot') {
         return pricing.spotHourly ?? null;
     }
@@ -730,6 +787,10 @@ function getHourlyPrice(pricing) {
 
 function getMonthlyPrice(pricing) {
     if (!pricing) return null;
+    if (isSavingsPlan()) {
+        const key = currentPricingModel === 'sp1year' ? 'sp1YearMonthly' : 'sp3YearMonthly';
+        return pricing[key + (currentPricingOS === 'windows' ? 'Windows' : '')] ?? null;
+    }
     if (currentPricingModel === 'spot') {
         return pricing.spotMonthly ?? null;
     }
@@ -759,12 +820,16 @@ function getPaygMonthlyPrice(pricing) {
 // Render RI savings badge for monthly column
 function renderRiSavings(pricing) {
     if (currentPricingModel === 'payg' || !pricing) return '';
-    const payg = getPaygMonthlyPrice(pricing);
+    const badge = isSavingsPlan()
+        ? ` <span class="ri-savings" title="${SAVINGS_PLAN_ASSUMPTIONS}">${currentPricingModel === 'sp1year' ? '1yr' : '3yr'} SP${currentPricingOS === 'windows' ? ' est.' : ''}</span>`
+        : '';
+    const payg = isSavingsPlan() && currentPricingOS === 'windows'
+        ? pricing.monthlyPriceWindows : getPaygMonthlyPrice(pricing);
     const ri = getMonthlyPrice(pricing);
-    if (!payg || payg <= 0 || ri == null) return '';
+    if (!payg || payg <= 0 || ri == null) return badge;
     const pct = ((payg - ri) / payg * 100).toFixed(0);
-    if (pct <= 0) return '';
-    return ` <span class="ri-savings">(-${pct}%)</span>`;
+    if (pct <= 0) return badge;
+    return `${badge} <span class="ri-savings">(-${pct}%)</span>`;
 }
 
 // Null-safe price formatters — return 'N/A' when price is unavailable
@@ -878,6 +943,15 @@ function filterResults(alternatives) {
     if (hideRestricted && hideRestricted.checked) {
         filtered = filtered.filter(alt => !alt.growthRestricted);
     }
+    const sort = document.getElementById('comparisonSort')?.value || 'recommendation';
+    if (sort !== 'recommendation') {
+        filtered = [...filtered].sort((a, b) => {
+            const pa = getMonthlyPrice(a.pricing), pb = getMonthlyPrice(b.pricing);
+            if (pa == null) return pb == null ? 0 : 1;
+            if (pb == null) return -1;
+            return (pa - pb) * (sort === 'price-desc' ? -1 : 1);
+        });
+    }
     return filtered;
 }
 
@@ -945,7 +1019,8 @@ function displayTargetSku(targetSku) {
         ? `${targetSku.cpuGeneration} — score ${targetSku.cpuPerfScore}`
         : null;
     const gpuPerfDisplay = formatGpuPerformance(targetSku);
-    const pricingLabel = currentPricingModel === 'ri1year' ? '1yr RI'
+    const pricingLabel = isSavingsPlan() ? savingsPlanLabel()
+        : currentPricingModel === 'ri1year' ? '1yr RI'
         : currentPricingModel === 'ri3year' ? '3yr RI'
         : (currentPricingOS === 'windows' ? 'Windows' : 'Linux');
     const html = `
@@ -1054,6 +1129,8 @@ async function showRegionPriceComparison(skuName) {
     const body = document.getElementById('regionPriceBody');
     const title = document.getElementById('regionPriceModalTitle');
     if (!modal || !body) return;
+    regionPriceSku = skuName;
+    const requestVersion = ++regionPriceRequestVersion;
 
     const currency = document.getElementById('currencyCode')?.value || 'USD';
     const os = currentPricingOS === 'windows' ? 'windows' : 'linux';
@@ -1072,12 +1149,14 @@ async function showRegionPriceComparison(skuName) {
     });
 
     try {
-        const url = `${API_BASE_URL}/compare_regions?skuName=${encodeURIComponent(skuName)}&currency=${encodeURIComponent(currency)}&os=${encodeURIComponent(os)}`;
+        const pricingModel = isSavingsPlan() ? currentPricingModel : 'payg';
+        const url = `${API_BASE_URL}/compare_regions?skuName=${encodeURIComponent(skuName)}&currency=${encodeURIComponent(currency)}&os=${encodeURIComponent(os)}&pricingModel=${pricingModel}`;
         const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`Request failed (${response.status})`);
         }
         const data = await response.json();
+        if (requestVersion !== regionPriceRequestVersion) return;
         renderRegionPriceComparison(data, osLabel, currentRegion);
 
         // Adoption + value: how many regions were compared and the savings surfaced.
@@ -1101,6 +1180,7 @@ async function showRegionPriceComparison(skuName) {
             currencyCode: currency
         }, resultMeasurements);
     } catch (err) {
+        if (requestVersion !== regionPriceRequestVersion) return;
         body.innerHTML = `<div class="region-price-error"><p>⚠️ Couldn't load regional pricing.</p><p class="region-price-error-detail">${escapeHtml(err.message)}</p></div>`;
     }
 }
@@ -1109,8 +1189,26 @@ function renderRegionPriceComparison(data, osLabel, currentRegion) {
     const body = document.getElementById('regionPriceBody');
     if (!body) return;
 
+    if (isSavingsPlan()) {
+        const regions = (data.regions || []).map(row => ({
+            ...row, hourlyPrice: getHourlyPrice(row), monthlyPrice: getMonthlyPrice(row)
+        })).sort((a, b) => {
+            if (a.monthlyPrice == null) return b.monthlyPrice == null ? 0 : 1;
+            if (b.monthlyPrice == null) return -1;
+            return a.monthlyPrice - b.monthlyPrice;
+        });
+        const available = regions.filter(row => row.monthlyPrice != null && row.hourlyPrice != null);
+        const cheapest = available[0] || null;
+        data = { ...data, regions, cheapest, maxMonthlySavings: cheapest
+            ? available[available.length - 1].monthlyPrice - cheapest.monthlyPrice : null };
+        regions.forEach(row => {
+            row.monthlyVsCheapest = cheapest && row.monthlyPrice != null ? row.monthlyPrice - cheapest.monthlyPrice : null;
+            row.pctAboveCheapest = cheapest?.monthlyPrice > 0 && row.monthlyPrice != null
+                ? (row.monthlyVsCheapest / cheapest.monthlyPrice * 100).toFixed(1) : null;
+        });
+    }
     if (!data.regions || data.regions.length === 0) {
-        body.innerHTML = `<div class="region-price-empty"><p>${escapeHtml(data.message || 'No pay-as-you-go pricing found for this SKU across regions.')}</p></div>`;
+        body.innerHTML = `<div class="region-price-empty"><p>${escapeHtml(data.message || `No ${isSavingsPlan() ? 'Savings Plan' : 'pay-as-you-go'} pricing found for this SKU across regions.`)}</p></div>`;
         return;
     }
 
@@ -1122,22 +1220,22 @@ function renderRegionPriceComparison(data, osLabel, currentRegion) {
         <div class="region-price-summary">
             <div class="region-price-summary-item">
                 <span class="rp-label">Cheapest region</span>
-                <span class="rp-value rp-cheapest">${escapeHtml(cheapest.location)} <small>(${escapeHtml(cheapest.region)})</small></span>
+                <span class="rp-value rp-cheapest">${cheapest ? `${escapeHtml(cheapest.location)} <small>(${escapeHtml(cheapest.region)})</small>` : 'N/A'}</span>
             </div>
             <div class="region-price-summary-item">
                 <span class="rp-label">From</span>
-                <span class="rp-value">${formatHourlyCurrency(cheapest.hourlyPrice, currency)}/hr · ${formatCurrency(cheapest.monthlyPrice, currency)}/mo</span>
+                <span class="rp-value">${cheapest ? `${formatHourlyCurrency(cheapest.hourlyPrice, currency)}/hr · ${formatCurrency(cheapest.monthlyPrice, currency)}/mo` : 'N/A'}</span>
             </div>
             <div class="region-price-summary-item">
                 <span class="rp-label">Max monthly savings</span>
-                <span class="rp-value rp-savings">${formatCurrency(savings, currency)}/mo</span>
+                <span class="rp-value rp-savings">${savings == null ? 'N/A' : `${formatCurrency(savings, currency)}/mo`}</span>
             </div>
         </div>
-        <p class="region-price-note">${osLabel} pay-as-you-go pricing across ${data.regionCount} region${data.regionCount === 1 ? '' : 's'}. Prices are guidance — validate before production decisions.</p>
+        <p class="region-price-note">${isSavingsPlan() ? savingsPlanLabel() : `${osLabel} pay-as-you-go`} pricing across ${data.regionCount} region${data.regionCount === 1 ? '' : 's'}. Prices are guidance — validate before production decisions.${isSavingsPlan() ? ` ${SAVINGS_PLAN_ASSUMPTIONS}` : ''}</p>
     `;
 
     const rows = data.regions.map(r => {
-        const isCheapest = r.region === cheapest.region;
+        const isCheapest = r.region === cheapest?.region;
         const isCurrent = currentRegion && r.region === currentRegion;
         const rowClass = [
             isCheapest ? 'rp-row-cheapest' : '',
@@ -1149,12 +1247,13 @@ function renderRegionPriceComparison(data, osLabel, currentRegion) {
         ].filter(Boolean).join(' ');
         const deltaText = isCheapest
             ? '—'
-            : `+${r.pctAboveCheapest}% · +${formatCurrency(r.monthlyVsCheapest, currency)}/mo`;
+            : r.monthlyVsCheapest == null ? 'N/A'
+            : `${r.pctAboveCheapest == null ? '' : `+${r.pctAboveCheapest}% · `}+${formatCurrency(r.monthlyVsCheapest, currency)}/mo`;
         return `
             <tr class="${rowClass}">
                 <td class="rp-region">${escapeHtml(r.location)} <small>${escapeHtml(r.region)}</small> ${badges}</td>
-                <td class="rp-hourly">${formatHourlyCurrency(r.hourlyPrice, currency)}</td>
-                <td class="rp-monthly">${formatCurrency(r.monthlyPrice, currency)}</td>
+                <td class="rp-hourly">${r.hourlyPrice == null ? 'N/A' : formatHourlyCurrency(r.hourlyPrice, currency)}</td>
+                <td class="rp-monthly">${r.monthlyPrice == null ? 'N/A' : formatCurrency(r.monthlyPrice, currency)}</td>
                 <td class="rp-delta">${deltaText}</td>
             </tr>
         `;
@@ -1179,6 +1278,8 @@ function renderRegionPriceComparison(data, osLabel, currentRegion) {
 }
 
 function closeRegionPriceModal() {
+    regionPriceRequestVersion++;
+    regionPriceSku = null;
     const modal = document.getElementById('regionPriceModal');
     if (modal) modal.classList.add('hidden');
     document.body.classList.remove('modal-open');
@@ -1794,7 +1895,7 @@ function updateResultsCaption(alternatives) {
     }
 
     if (note) {
-        const topScore = shown > 0 ? (alternatives[0].recommendationScore ?? alternatives[0].similarityScore) : null;
+        const topScore = shown > 0 ? Math.max(...alternatives.map(alt => alt.recommendationScore ?? alt.similarityScore)) : null;
         if (topScore != null && topScore < STRONG_MATCH) {
             note.textContent = 'No strong matches for this SKU — these are the closest available alternatives. Check the match score on each card.';
             note.classList.remove('hidden');
@@ -1836,7 +1937,7 @@ function displayAlternatives(alternatives) {
         if (targetSku) {
             const targetPrice = getMonthlyPrice(targetSku.pricing);
             const altPrice = getMonthlyPrice(alt.pricing);
-            if (targetPrice && altPrice && targetPrice > 0) {
+            if (targetPrice != null && altPrice != null && targetPrice > 0) {
                 const pctDiff = ((altPrice - targetPrice) / targetPrice * 100).toFixed(0);
                 if (pctDiff < -1) {
                     deltaHtml = `<span class="card-price-delta delta-save">${pctDiff}% ↓</span>`;
@@ -2326,7 +2427,7 @@ function renderOptionalNumericDiff(label, diff) {
 }
 
 function renderPriceDiff(label, diff) {
-    if (!diff) return `<div class="diff-item same">● ${label}: N/A</div>`;
+    if (!diff || diff.target == null || diff.alternative == null) return `<div class="diff-item same">● ${label}: N/A</div>`;
     if (!diff.changed) {
         return `<div class="diff-item same">● ${label}: ${diff.currency} ${diff.alternative} (same)</div>`;
     }
@@ -2351,7 +2452,12 @@ function renderPricingSection(pricing) {
     const isWindows = currentPricingOS === 'windows';
     const osLabel = isWindows ? 'Windows' : 'Linux';
 
-    if (currentPricingModel === 'spot' && pricing.spot) {
+    if (isSavingsPlan()) {
+        const key = (currentPricingModel === 'sp1year' ? 'sp1Year' : 'sp3Year') + (isWindows ? 'Windows' : '');
+        hourly = pricing[key]?.hourly;
+        monthly = pricing[key]?.monthly;
+        modelLabel = savingsPlanLabel();
+    } else if (currentPricingModel === 'spot' && pricing.spot) {
         hourly = pricing.spot.hourly;
         monthly = pricing.spot.monthly;
         modelLabel = 'Spot (Linux)';
@@ -2376,7 +2482,9 @@ function renderPricingSection(pricing) {
     let html = `<div class="diff-item same" style="font-size:0.85em;opacity:0.7">Pricing model: ${modelLabel}</div>`;
     html += renderPriceDiff('Hourly Price', hourly);
     html += renderPriceDiff('Monthly Price', monthly);
-    html += renderEfficiency(pricing.efficiency);
+    html += isSavingsPlan()
+        ? `<p class="pricing-assumptions">${SAVINGS_PLAN_ASSUMPTIONS}</p>`
+        : renderEfficiency(pricing.efficiency);
     return html;
 }
 
@@ -2575,6 +2683,8 @@ function buildComparisonExportModel() {
         `3yr RI Monthly (Linux)${discountNote}`,
         `3yr RI Hourly (Windows)${discountNote}`,
         `3yr RI Monthly (Windows)${discountNote}`,
+        ...SAVINGS_PLAN_EXPORT_COLUMNS.map(([, label]) => label),
+        'Savings Plan assumptions (no Extra Discount)',
         'Currency',
         'Availability Zones'
     ];
@@ -2627,6 +2737,8 @@ function buildComparisonExportModel() {
             alt.pricing && alt.pricing.ri3YearMonthly != null ? (alt.pricing.ri3YearMonthly * discount).toFixed(2) : 'N/A',
             alt.pricing && alt.pricing.ri3YearHourlyWindows != null ? (alt.pricing.ri3YearHourlyWindows * discount).toFixed(4) : 'N/A',
             alt.pricing && alt.pricing.ri3YearMonthlyWindows != null ? (alt.pricing.ri3YearMonthlyWindows * discount).toFixed(2) : 'N/A',
+            ...savingsPlanExportValues(alt.pricing),
+            SAVINGS_PLAN_ASSUMPTIONS,
             alt.pricing?.currency || 'N/A',
             alt.zones || 'N/A'
         ];
@@ -2656,6 +2768,8 @@ function buildComparisonExportModel() {
         ['Location', exportLocation],
         ['Currency', currency],
         ['Displayed pricing OS', pricingOs.charAt(0).toUpperCase() + pricingOs.slice(1)],
+        ['Displayed pricing model', currentPricingModel],
+        ['Savings Plan assumptions', SAVINGS_PLAN_ASSUMPTIONS],
         ['Discount applied', discount < 1.0 ? `${((1 - discount) * 100).toFixed(1)}%` : 'None'],
         ['Alternatives', String(currentResults.alternatives.length)],
         ['Region availability column', regionAvailabilityData ? regionAvailabilityData.region : 'N/A']
@@ -3111,6 +3225,14 @@ function gridRowPricing(row) {
         ri1YearMonthlyWindows: row.ri1YearMonthlyWindows,
         ri3YearHourlyWindows: row.ri3YearHourlyWindows,
         ri3YearMonthlyWindows: row.ri3YearMonthlyWindows,
+        sp1YearHourly: row.sp1YearHourlyLinux,
+        sp1YearMonthly: row.sp1YearMonthlyLinux,
+        sp3YearHourly: row.sp3YearHourlyLinux,
+        sp3YearMonthly: row.sp3YearMonthlyLinux,
+        sp1YearHourlyWindows: row.sp1YearHourlyWindows,
+        sp1YearMonthlyWindows: row.sp1YearMonthlyWindows,
+        sp3YearHourlyWindows: row.sp3YearHourlyWindows,
+        sp3YearMonthlyWindows: row.sp3YearMonthlyWindows,
         currency: gridCurrencyLoaded || 'USD'
     };
 }
@@ -3332,6 +3454,8 @@ function syncGridPricingButtons() {
     document.getElementById('btn-grid-spot')?.classList.toggle('active', currentPricingModel === 'spot');
     document.getElementById('btn-grid-ri1year')?.classList.toggle('active', currentPricingModel === 'ri1year');
     document.getElementById('btn-grid-ri3year')?.classList.toggle('active', currentPricingModel === 'ri3year');
+    document.getElementById('btn-grid-sp1year')?.classList.toggle('active', currentPricingModel === 'sp1year');
+    document.getElementById('btn-grid-sp3year')?.classList.toggle('active', currentPricingModel === 'sp3year');
     document.getElementById('btn-grid-linux')?.classList.toggle('active', currentPricingOS === 'linux');
     document.getElementById('btn-grid-windows')?.classList.toggle('active', currentPricingOS === 'windows');
 }
@@ -3383,6 +3507,8 @@ function buildGridExportModel() {
         `3yr RI Hourly (Linux)${discountNote}`, `3yr RI Monthly (Linux)${discountNote}`,
         `1yr RI Hourly (Windows)${discountNote}`, `1yr RI Monthly (Windows)${discountNote}`,
         `3yr RI Hourly (Windows)${discountNote}`, `3yr RI Monthly (Windows)${discountNote}`,
+        ...SAVINGS_PLAN_EXPORT_COLUMNS.map(([, label]) => label),
+        'Savings Plan assumptions (no Extra Discount)',
         'Currency'
     ];
 
@@ -3399,6 +3525,8 @@ function buildGridExportModel() {
         fx4(r.spotHourlyLinux), fx2(r.spotMonthlyLinux),
         fx4(r.ri1YearHourlyLinux), fx2(r.ri1YearMonthlyLinux), fx4(r.ri3YearHourlyLinux), fx2(r.ri3YearMonthlyLinux),
         fx4(r.ri1YearHourlyWindows), fx2(r.ri1YearMonthlyWindows), fx4(r.ri3YearHourlyWindows), fx2(r.ri3YearMonthlyWindows),
+        ...savingsPlanExportValues(gridRowPricing(r)),
+        SAVINGS_PLAN_ASSUMPTIONS,
         currency
     ]);
 
@@ -3409,6 +3537,7 @@ function buildGridExportModel() {
         ['Currency', currency],
         ['Displayed pricing OS', currentPricingOS.charAt(0).toUpperCase() + currentPricingOS.slice(1)],
         ['Displayed pricing model', currentPricingModel],
+        ['Savings Plan assumptions', SAVINGS_PLAN_ASSUMPTIONS],
         ['Discount applied', discount < 1.0 ? `${((1 - discount) * 100).toFixed(1)}%` : 'None'],
         ['Rows exported', String(rows.length)],
         ['Total in region', String(gridRows.length)]
