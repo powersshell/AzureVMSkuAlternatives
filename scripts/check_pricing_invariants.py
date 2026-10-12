@@ -72,6 +72,7 @@ Exits non-zero if any invariant is violated, so it can gate CI.
 
 import argparse
 import json
+import math
 import sys
 import time
 import urllib.error
@@ -152,7 +153,7 @@ def _get_json(url: str, timeout: int = 90, retries: int = 4):
 def fetch_retail_meters(location: str):
     """Every Virtual Machines meter for a region, keyed by armSkuName."""
     url = (
-        f"{RETAIL_API}?currencyCode=USD&$filter=serviceName eq 'Virtual Machines'"
+        f"{RETAIL_API}?api-version=2023-01-01-preview&currencyCode=USD&$filter=serviceName eq 'Virtual Machines'"
         f" and armRegionName eq '{location}'"
         f" and (type eq 'Consumption' or type eq 'Reservation')"
     ).replace(" ", "%20")
@@ -198,6 +199,51 @@ def fetch_grid(api_base: str, location: str):
     raise RuntimeError("Unrecognised /api/grid response shape")
 
 
+def check_savings_plan_row(row, items):
+    """Check nullable savings rates against eligible nested Consumption meters."""
+    violations, stale = [], []
+    comparable = 0
+    for term, label in ((1, "1 Year"), (3, "3 Years")):
+        prefix = f"sp{term}Year"
+        rate = row.get(prefix + "HourlyLinux")
+        if rate is None:
+            continue
+        if not isinstance(rate, (int, float)) or not math.isfinite(rate) or rate < 0:
+            violations.append(f"{prefix}: invalid rate {rate}")
+            continue
+        monthly = row.get(prefix + "MonthlyLinux")
+        if monthly is None or abs(monthly - round(rate * 730, 2)) > TOLERANCE:
+            violations.append(f"{prefix}: monthly is not hourly x 730")
+        eligible = [i for i in items if classify(i) == "linux"
+                    and i.get("type") == "Consumption"
+                    and i.get("unitOfMeasure", "1 Hour") == "1 Hour"]
+        rates = [sp["unitPrice"] for item in eligible for sp in item.get("savingsPlan", [])
+                 if sp.get("term") == label and sp.get("unitPrice") is not None]
+        if rates:
+            comparable += 1
+            if not any(abs(rate - p) <= TOLERANCE for p in rates):
+                other = [sp["unitPrice"] for item in eligible for sp in item.get("savingsPlan", [])
+                         if sp.get("term") != label and sp.get("unitPrice") is not None]
+                if any(abs(rate - p) <= TOLERANCE for p in other):
+                    violations.append(f"{prefix}: rate belongs to the other commitment term")
+                else:
+                    stale.append(f"{prefix}: published {rate}, current {rates[0]}")
+        payg = row.get("hourlyLinux")
+        if payg is not None and rate > payg + TOLERANCE:
+            violations.append(f"{prefix}: rate exceeds PAYG {payg}")
+        windows = row.get(prefix + "HourlyWindows")
+        if windows is not None:
+            windows_payg = row.get("hourlyWindows")
+            if payg is None or windows_payg is None or windows_payg < payg:
+                violations.append(f"{prefix}: Windows estimate lacks valid licensing components")
+            elif abs(windows - (rate + windows_payg - payg)) > 0.0001:
+                violations.append(f"{prefix}: Windows estimate has wrong licensing surcharge")
+            windows_monthly = row.get(prefix + "MonthlyWindows")
+            if windows_monthly is None or abs(windows_monthly - round(windows * 730, 2)) > TOLERANCE:
+                violations.append(f"{prefix}: Windows monthly is not hourly x 730")
+    return violations, stale, comparable
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -232,6 +278,9 @@ def main():
     spot_comparable = 0
     linux_comparable = 0
     unmatched = 0
+    savings_invalid = []
+    savings_stale = []
+    savings_comparable = 0
 
     for row in rows:
         name = row.get("name") or row.get("skuName")
@@ -239,6 +288,10 @@ def main():
             continue
         linux = row.get("hourlyLinux")
         spot = row.get("spotHourlyLinux")
+        invalid, stale, comparable = check_savings_plan_row(row, meters.get(name, []))
+        savings_invalid.extend(f"{name}: {message}" for message in invalid)
+        savings_stale.extend(f"{name}: {message}" for message in stale)
+        savings_comparable += comparable
 
         buckets = defaultdict(list)
         for item in meters.get(name, []):
@@ -298,6 +351,7 @@ def main():
         ("spot price is a plausible fraction of pay-as-you-go", spot_implausible),
         ("linux price is not another meter kind", linux_wrong_meter),
         ("hourly fields are hourly (not term totals)", implausible_hourly),
+        ("savings plan rates and Windows estimates are consistent", savings_invalid),
     ]
 
     for label, violations in checks:
@@ -316,6 +370,7 @@ def main():
     for label, stale, comparable in (
         ("spot prices are current", spot_stale, spot_comparable),
         ("linux prices are current", linux_stale, linux_comparable),
+        ("savings plan prices are current", savings_stale, savings_comparable),
     ):
         if not stale:
             print(f"  ok   {label}")

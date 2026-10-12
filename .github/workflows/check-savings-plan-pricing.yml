@@ -1,0 +1,57 @@
+name: Check Savings Plan Pricing
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-app/api/**'
+      - 'web-app/src/**'
+      - 'mcp-server/**'
+      - 'powershell-script/**'
+      - 'scripts/*pricing*'
+      - 'scripts/test_savings_plan_ui.js'
+      - 'scripts/Test-SavingsPlanPricing.ps1'
+      - '.github/workflows/check-savings-plan-pricing.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'web-app/api/**'
+      - 'web-app/src/**'
+      - 'mcp-server/**'
+      - 'powershell-script/**'
+      - 'scripts/*pricing*'
+      - 'scripts/test_savings_plan_ui.js'
+      - 'scripts/Test-SavingsPlanPricing.ps1'
+      - '.github/workflows/check-savings-plan-pricing.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures:
+    name: Validate offline savings pricing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install existing Python test dependencies
+        run: |
+          python -m pip install -r web-app/api/requirements-dev.txt
+          python -m pip install -r mcp-server/requirements.txt
+      - name: Check API savings plan and grid fixtures
+        run: python -m pytest web-app/api/tests/test_unit.py -m unit -k "SavingsPlanPricing or BuildGridRow" -q
+      - name: Check website syntax and pricing fixtures
+        run: |
+          node --check web-app/src/app.js
+          node scripts/test_savings_plan_ui.js
+      - name: Check MCP forwarding fixtures
+        run: python scripts/test_mcp_pricing.py
+      - name: Check PowerShell pricing fixtures
+        shell: pwsh
+        run: ./scripts/Test-SavingsPlanPricing.ps1

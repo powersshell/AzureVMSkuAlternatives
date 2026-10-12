@@ -50,8 +50,11 @@
     Growth-restricted series can't be deployed by new subscriptions and won't be granted
     additional quota. Use -HideGrowthRestricted to drop them entirely.
 .PARAMETER PricingModel
-    Pricing model to display and use for cost-efficiency: PAYG, RI1Year, or RI3Year (default: PAYG).
-    Reserved Instance models show $null/N/A for SKUs without RI pricing.
+    Pricing for cost displays/comparison: PAYG, RI1Year, RI3Year, SP1Year, or SP3Year (default: PAYG).
+    Commitment models show $null/N/A when unavailable, with no PAYG or Linux fallback.
+    Savings plan compute rates assume full coverage by an hourly spend commitment.
+    Software is excluded; Windows totals estimate the additional PAYG license surcharge.
+    Recommendation scores and default ranking always use Linux PAYG, not the selected model.
 .PARAMETER OS
     Operating system for pricing: Linux or Windows (default: Linux).
 .PARAMETER CheckRegion
@@ -72,6 +75,8 @@
     .\Compare-AzureVms.ps1 -SkuName "Standard_D4as_v5" -Location "eastus" -CpuVendor AMD,ARM
 .EXAMPLE
     .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -PricingModel RI3Year -OS Windows
+.EXAMPLE
+    .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -PricingModel SP1Year -OS Windows
 .EXAMPLE
     .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -CheckRegion "westeurope" -ExportCsv ".\results.csv"
 #>
@@ -139,7 +144,7 @@ param(
     [switch]$HideGrowthRestricted,
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet('PAYG', 'RI1Year', 'RI3Year')]
+    [ValidateSet('PAYG', 'RI1Year', 'RI3Year', 'SP1Year', 'SP3Year')]
     [string]$PricingModel = 'PAYG',
 
     [Parameter(Mandatory = $false)]
@@ -1286,7 +1291,7 @@ function Get-SelectedPrice {
     <#
     .SYNOPSIS
         Pick hourly/monthly price from a pricing object based on PricingModel and OS.
-        RI models are strict: returns $null if the requested term is unavailable.
+        RI and SP models are strict: returns $null if the requested term/OS is unavailable.
         PAYG falls back from Windows to Linux when no Windows price exists.
     #>
     param(
@@ -1299,6 +1304,15 @@ function Get-SelectedPrice {
     $wantWindows = ($OS -eq 'Windows')
 
     switch ($Model) {
+        { $_ -in @('SP1Year', 'SP3Year') } {
+            $term = if ($Model -eq 'SP1Year') { '1Year' } else { '3Year' }
+            $suffix = if ($wantWindows) { 'Windows' } else { '' }
+            $hourly = $Pricing."sp${term}Hourly$suffix"
+            $monthly = $Pricing."sp${term}Monthly$suffix"
+            if ($null -eq $hourly -or $null -eq $monthly) { return $null }
+            $source = if ($wantWindows) { "Savings Plan $term (Windows estimated total)" } else { "Savings Plan $term (compute only)" }
+            return @{ Hourly = $hourly; Monthly = $monthly; Source = $source }
+        }
         'RI1Year' {
             if ($wantWindows) {
                 if ($null -ne $Pricing.Ri1YearMonthlyWindows) {
@@ -1324,14 +1338,28 @@ function Get-SelectedPrice {
             if ($wantWindows -and $null -ne $Pricing.MonthlyPriceWindows) {
                 return @{ Hourly = $Pricing.HourlyPriceWindows; Monthly = $Pricing.MonthlyPriceWindows; Source = 'PAYG (Windows)' }
             }
+            if ($null -eq $Pricing.HourlyPrice -or $null -eq $Pricing.MonthlyPrice) { return $null }
             return @{ Hourly = $Pricing.HourlyPrice; Monthly = $Pricing.MonthlyPrice; Source = 'PAYG' }
         }
     }
 }
 
 # Function to get pricing information for VM SKUs.
-# Fetches both Consumption (PAYG) and Reservation (RI) prices, for Linux and Windows.
+# Fetches Consumption (PAYG + nested savings plans) and Reservation (RI) prices.
 # Ported from get_vm_pricing / _compute_windows_ri in web-app/api/function_app.py.
+function Get-ValidHourlyRate {
+    param($Value)
+
+    if ($null -eq $Value -or $Value -is [bool]) { return $null }
+    $rate = 0.0
+    if ([double]::TryParse([string]$Value, [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture, [ref]$rate) -and
+        -not [double]::IsNaN($rate) -and -not [double]::IsInfinity($rate) -and $rate -ge 0) {
+        return $rate
+    }
+    return $null
+}
+
 function Get-VmPricingInfo {
     param(
         [Parameter(Mandatory = $true)]
@@ -1350,9 +1378,9 @@ function Get-VmPricingInfo {
         $filter = "serviceName eq 'Virtual Machines' and armSkuName eq '$SkuName' and armRegionName eq '$Location' and (type eq 'Consumption' or type eq 'Reservation')"
 
         if ($CurrencyCode -ne 'USD') {
-            $requestUrl = "$($apiUrl)?currencyCode='$CurrencyCode'&`$filter=$filter"
+            $requestUrl = "$($apiUrl)?api-version=2023-01-01-preview&currencyCode='$CurrencyCode'&`$filter=$filter"
         } else {
-            $requestUrl = "$($apiUrl)?`$filter=$filter"
+            $requestUrl = "$($apiUrl)?api-version=2023-01-01-preview&`$filter=$filter"
         }
 
         Write-Verbose "Fetching pricing data from: $requestUrl"
@@ -1380,8 +1408,12 @@ function Get-VmPricingInfo {
             } while ($retryCount -lt $maxRetries)
 
             if ($response.Items) { foreach ($it in $response.Items) { $items.Add($it) } }
-            # NextPageLink already carries currencyCode and the filter; use it as-is
+            # Retain the preview version even if a next-page link omits it.
             $requestUrl = $response.NextPageLink
+            if ($requestUrl -and $requestUrl -notmatch '[?&]api-version=') {
+                $separator = if ($requestUrl.Contains('?')) { '&' } else { '?' }
+                $requestUrl = "${requestUrl}${separator}api-version=2023-01-01-preview"
+            }
         }
 
         if ($items.Count -eq 0) {
@@ -1392,12 +1424,16 @@ function Get-VmPricingInfo {
         # Linux PAYG: exclude DedicatedHost/Cloud/Windows/Spot/Low Priority
         $linuxItem = $items | Where-Object {
             $_.type -eq 'Consumption' -and $_.productName -and
+            $_.armSkuName -eq $SkuName -and $_.armRegionName -eq $Location -and
+            $_.currencyCode -eq $CurrencyCode -and $_.unitOfMeasure -eq '1 Hour' -and
+            "$($_.productName) $($_.skuName) $($_.meterName)" -notmatch '(?i)spot|low priority|dedicated\s*host|cloud|windows' -and
             $_.productName -notlike '*dedicatedhost*' -and
             $_.productName -notlike '*Cloud*' -and
             $_.productName -notlike '*Windows*' -and
             $_.skuName -notlike '*Spot*' -and
             $_.skuName -notlike '*Low Priority*'
         } | Select-Object -First 1
+        $matchedLinuxItem = $linuxItem
 
         # Windows PAYG: require Windows, exclude DedicatedHost/Cloud/Spot/Low Priority
         $windowsItem = $items | Where-Object {
@@ -1423,11 +1459,13 @@ function Get-VmPricingInfo {
             return $null
         }
 
+        $paygRate = Get-ValidHourlyRate -Value $linuxItem.unitPrice
+        $windowsPaygRate = if ($windowsItem) { Get-ValidHourlyRate -Value $windowsItem.unitPrice } else { $null }
         $pricing = @{
-            HourlyPrice           = [Math]::Round($linuxItem.unitPrice, 4)
-            MonthlyPrice          = [Math]::Round($linuxItem.unitPrice * 730, 2)  # 730 hours = ~1 month
-            HourlyPriceWindows    = if ($windowsItem) { [Math]::Round($windowsItem.unitPrice, 4) } else { $null }
-            MonthlyPriceWindows   = if ($windowsItem) { [Math]::Round($windowsItem.unitPrice * 730, 2) } else { $null }
+            HourlyPrice           = if ($null -ne $paygRate) { [Math]::Round($paygRate, 4) } else { $null }
+            MonthlyPrice          = if ($null -ne $paygRate) { [Math]::Round($paygRate * 730, 2) } else { $null }
+            HourlyPriceWindows    = if ($null -ne $windowsPaygRate) { [Math]::Round($windowsPaygRate, 4) } else { $null }
+            MonthlyPriceWindows   = if ($null -ne $windowsPaygRate) { [Math]::Round($windowsPaygRate * 730, 2) } else { $null }
             Currency              = $linuxItem.currencyCode
             ProductName           = $linuxItem.productName
             Ri1YearMonthly        = $null
@@ -1438,6 +1476,48 @@ function Get-VmPricingInfo {
             Ri1YearHourlyWindows  = $null
             Ri3YearMonthlyWindows = $null
             Ri3YearHourlyWindows  = $null
+            sp1YearHourly         = $null
+            sp1YearMonthly        = $null
+            sp3YearHourly         = $null
+            sp3YearMonthly        = $null
+            sp1YearHourlyWindows  = $null
+            sp1YearMonthlyWindows = $null
+            sp3YearHourlyWindows  = $null
+            sp3YearMonthlyWindows = $null
+        }
+
+        # Only the matched Linux compute meter can supply savings plan rates.
+        # The legacy PAYG fallback above must never become a savings plan source.
+        if ($matchedLinuxItem) {
+            $linuxPayg = Get-ValidHourlyRate -Value $matchedLinuxItem.unitPrice
+            $matchedWindowsItem = $items | Where-Object {
+                $_.type -eq 'Consumption' -and $_.armSkuName -eq $SkuName -and
+                $_.armRegionName -eq $Location -and $_.currencyCode -eq $matchedLinuxItem.currencyCode -and
+                $_.unitOfMeasure -eq $matchedLinuxItem.unitOfMeasure -and
+                $_.skuName -eq $matchedLinuxItem.skuName -and $_.meterName -eq $matchedLinuxItem.meterName -and
+                $_.productName -like '*Windows*' -and
+                ($_.productName -replace '\s+Windows\b', '').Trim() -eq $matchedLinuxItem.productName.Trim()
+            } | Select-Object -First 1
+            $windowsPayg = if ($matchedWindowsItem) { Get-ValidHourlyRate -Value $matchedWindowsItem.unitPrice } else { $null }
+            $windowsSurcharge = if ($null -ne $linuxPayg -and $null -ne $windowsPayg -and $windowsPayg -ge $linuxPayg) {
+                $windowsPayg - $linuxPayg
+            } else { $null }
+
+            foreach ($term in @('1Year', '3Year')) {
+                $apiTerm = if ($term -eq '1Year') { '1 Year' } else { '3 Years' }
+                foreach ($plan in @($matchedLinuxItem.savingsPlan | Where-Object { $_.term -eq $apiTerm })) {
+                    $value = if ($null -ne $plan.unitPrice) { $plan.unitPrice } else { $plan.retailPrice }
+                    $hourly = Get-ValidHourlyRate -Value $value
+                    if ($null -eq $hourly) { continue }
+                    $pricing["sp${term}Hourly"] = $hourly
+                    $pricing["sp${term}Monthly"] = $hourly * 730
+                    if ($null -ne $windowsSurcharge) {
+                        $pricing["sp${term}HourlyWindows"] = $hourly + $windowsSurcharge
+                        $pricing["sp${term}MonthlyWindows"] = ($hourly + $windowsSurcharge) * 730
+                    }
+                    break
+                }
+            }
         }
 
         # Reserved Instance pricing (unitPrice = full term total)
@@ -1460,7 +1540,7 @@ function Get-VmPricingInfo {
         }
 
         # Windows RI = RI compute + Windows license surcharge (Windows PAYG hourly - Linux PAYG hourly)
-        if ($null -ne $pricing.HourlyPriceWindows) {
+        if ($null -ne $pricing.HourlyPriceWindows -and $null -ne $pricing.HourlyPrice) {
             $licenseSurcharge = $pricing.HourlyPriceWindows - $pricing.HourlyPrice
             if ($licenseSurcharge -gt 0) {
                 if ($null -ne $pricing.Ri1YearHourly) {
@@ -1633,6 +1713,13 @@ foreach ($category in $capabilityDisplay.Keys | Sort-Object) {
 Write-Host "`nFetching pricing information for target SKU..." -ForegroundColor Cyan
 $targetPricing = Get-VmPricingInfo -SkuName $SkuName -Location $Location -CurrencyCode $CurrencyCode
 $targetSelectedPrice = Get-SelectedPrice -Pricing $targetPricing -Model $PricingModel -OS $OS
+$targetRankingPrice = Get-SelectedPrice -Pricing $targetPricing -Model PAYG -OS Linux
+$savingsPlanAssumptions = 'Estimated at 730 hours/month; requires a 1-year or 3-year hourly spend commitment and full coverage. Compute rates exclude software; Windows totals add an estimated PAYG license surcharge. No extra discount applied.'
+$pricingAssumptions = if ($PricingModel -like 'SP*') {
+    $savingsPlanAssumptions
+} else { 'Estimated at 730 hours/month.' }
+Write-Host "  $pricingAssumptions" -ForegroundColor DarkGray
+Write-Host "  Recommendation scoring/ranking uses Linux PAYG regardless of the displayed pricing model." -ForegroundColor DarkGray
 $targetCostPerVCPU = $null
 $targetCostPerGB = $null
 if ($targetSelectedPrice) {
@@ -2060,6 +2147,7 @@ $similarSkus = $allSkus | Where-Object {
             Write-Verbose "Fetching pricing for $($sku.Name)..."
             $pricingInfo = Get-VmPricingInfo -SkuName $sku.Name -Location $Location -CurrencyCode $CurrencyCode
             $selectedPrice = Get-SelectedPrice -Pricing $pricingInfo -Model $PricingModel -OS $OS
+            $rankingPrice = Get-SelectedPrice -Pricing $pricingInfo -Model PAYG -OS Linux
 
             # CPU performance / generation
             $cpuPerf = Get-CpuPerformance -SkuName $sku.Name
@@ -2077,8 +2165,8 @@ $similarSkus = $allSkus | Where-Object {
             # the size is and how closely it matches the source's workload family.
             $candidateIdentity = Get-SkuIdentity -SkuName $sku.Name
             $savingPercent = 0
-            if ($PriorityMode -eq 'cost' -and $targetSelectedPrice -and $selectedPrice -and $targetSelectedPrice.Hourly -gt 0) {
-                $savingPercent = (($targetSelectedPrice.Hourly - $selectedPrice.Hourly) / $targetSelectedPrice.Hourly) * 100
+            if ($PriorityMode -eq 'cost' -and $targetRankingPrice -and $rankingPrice -and $targetRankingPrice.Hourly -gt 0) {
+                $savingPercent = (($targetRankingPrice.Hourly - $rankingPrice.Hourly) / $targetRankingPrice.Hourly) * 100
             }
             $recommendation = Get-RecommendationScore `
                 -SimilarityScore $similarityScore `
@@ -2143,6 +2231,21 @@ $similarSkus = $allSkus | Where-Object {
                 "MonthlyPrice($CurrencyCode)"     = if ($selectedPrice) { $selectedPrice.Monthly } else { 'N/A' }
                 "CostPerVCPU($CurrencyCode)"      = $costPerVCPU
                 "CostPerGB($CurrencyCode)"        = $costPerGB
+                PricingModel                      = $PricingModel
+                OS                                = $OS
+                Currency                          = $CurrencyCode
+                PricingSource                     = if ($selectedPrice) { $selectedPrice.Source } else { 'N/A' }
+                PricingAssumptions                = $pricingAssumptions
+                SavingsPlanAssumptions            = $savingsPlanAssumptions
+                RecommendationPaygMonthly         = if ($rankingPrice) { $rankingPrice.Monthly } else { $null }
+                sp1YearHourly                     = if ($pricingInfo) { $pricingInfo.sp1YearHourly } else { $null }
+                sp1YearMonthly                    = if ($pricingInfo) { $pricingInfo.sp1YearMonthly } else { $null }
+                sp3YearHourly                     = if ($pricingInfo) { $pricingInfo.sp3YearHourly } else { $null }
+                sp3YearMonthly                    = if ($pricingInfo) { $pricingInfo.sp3YearMonthly } else { $null }
+                sp1YearHourlyWindows              = if ($pricingInfo) { $pricingInfo.sp1YearHourlyWindows } else { $null }
+                sp1YearMonthlyWindows             = if ($pricingInfo) { $pricingInfo.sp1YearMonthlyWindows } else { $null }
+                sp3YearHourlyWindows              = if ($pricingInfo) { $pricingInfo.sp3YearHourlyWindows } else { $null }
+                sp3YearMonthlyWindows             = if ($pricingInfo) { $pricingInfo.sp3YearMonthlyWindows } else { $null }
             }
 
             # Add cross-region availability column when -CheckRegion is supplied
@@ -2238,11 +2341,10 @@ $similarSkus = $allSkus | Where-Object {
 } | Sort-Object -Property `
     @{ Expression = 'RecommendationScore'; Descending = $true }, `
     @{ Expression = { if ($_.CpuPerfScore -eq 'N/A') { 0 } else { [double]$_.CpuPerfScore } }; Descending = $true }, `
-    @{ Expression = { if ($_."MonthlyPrice($CurrencyCode)" -eq 'N/A') { [double]::MaxValue } else { [double]$_."MonthlyPrice($CurrencyCode)" } }; Descending = $false }, `
+    @{ Expression = { if ($null -eq $_.RecommendationPaygMonthly) { [double]::MaxValue } else { [double]$_.RecommendationPaygMonthly } }; Descending = $false }, `
     @{ Expression = 'SkuName'; Descending = $false }
 
-# Remove any SKUs with N/A pricing
-$similarSkus = $similarSkus | Where-Object { $_."MonthlyPrice($($CurrencyCode))" -ne 'N/A' }
+# Keep missing selected-term prices visible as N/A without changing recommendation membership.
 
 # Display results
 if ($similarSkus.Count -gt 0) {

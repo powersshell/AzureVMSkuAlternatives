@@ -219,7 +219,7 @@ async def list_vm_skus(location: str) -> dict:
     and a workload-aware score normalized to A100 80 GB = 100. GPU fields are null or
     absent for non-GPU sizes and unsupported first-party specifications.
     Each SKU also carries pricing across models (Linux/Windows pay-as-you-go, Linux
-    Spot, and 1-year reserved) and, when applicable, retirement info
+    Spot, reserved and 1-/3-year savings plans) and, when applicable, retirement info
     (retirementStatus "Announced"/"Retired", retirementDate, migrationGuideUrl) and
     capacity-limitation info (growthRestricted true, growthRestrictionSeries,
     recommendedTargets, growthRestrictionDocUrl). Retirement and growth restriction are
@@ -384,7 +384,11 @@ async def compare_sku_details(
     throughput, disks, NVMe), networking
     (NICs, accelerated networking), features (Premium IO, encryption, ephemeral OS
     disk, Hyper-V Gen 2), and pricing — pay-as-you-go plus Linux Spot and 1-year
-    reserved, with percentage change and cost-per-vCPU metrics. CPU performance scores
+    reserved and 1-/3-year savings plans, with percentage change and cost-per-vCPU metrics.
+    Savings plan Windows totals are estimated compute plus PAYG licensing, with
+    nullable missing rates and 730 fully covered hours per month. Extra discounts
+    are not applied; savings plan data never changes PAYG-based recommendations.
+    CPU performance scores
     are normalized to Ice Lake = 100, enabling cross-architecture comparison (Intel vs
     AMD vs ARM). The response also includes retirement status for each side
     (targetRetirement / alternativeRetirement) when a size is announced/retired, and
@@ -442,12 +446,13 @@ async def compare_regions_for_sku(
     target_sku: str,
     os_type: str = "linux",
     currency: str = "USD",
+    pricing_model: Literal["payg", "sp1year", "sp3year"] = "payg",
 ) -> dict:
     """
     Compare a single Azure VM SKU's price across every region where it's offered
     ("where is this cheapest?").
 
-    Returns each region's hourly and monthly pay-as-you-go price sorted cheapest-first,
+    Returns each region's selected hourly and monthly price sorted cheapest-first,
     the cheapest region, and the maximum monthly savings versus the most expensive
     region. Useful for finding the lowest-cost region to run a given size.
 
@@ -455,11 +460,16 @@ async def compare_regions_for_sku(
         target_sku: ARM SKU name, e.g. "Standard_D8s_v5"
         os_type:    "linux" (default) or "windows"
         currency:   ISO currency code, default "USD"
+        pricing_model: PAYG (default), 1-year or 3-year compute savings plan.
+            Savings plan Windows totals are compute plus estimated PAYG licensing.
+            Monthly figures assume 730 fully covered hours; unused hourly commitment
+            expires and excess usage is PAYG. Extra discounts are not applied.
     """
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         resp = await client.get(
             f"{API_BASE}/compare_regions",
-            params={"skuName": target_sku, "os": os_type, "currency": currency},
+            params={"skuName": target_sku, "os": os_type, "currency": currency,
+                    "pricingModel": pricing_model},
         )
         resp.raise_for_status()
         return resp.json()
@@ -480,7 +490,11 @@ async def list_region_vm_grid(
     migrationGuideUrl when applicable), capacity-limitation status (growthRestricted/
     growthRestrictionSeries/recommendedTargets when applicable), and pricing across pricing models: Linux and
     Windows pay-as-you-go, Linux Spot (deeply discounted, interruptible), and 1-year
-    reserved-instance prices (hourly and monthly). Use this to browse, filter, or rank
+    reserved-instance and 1-/3-year savings plan prices (hourly and monthly).
+    Savings plan Windows totals are compute plus estimated PAYG licensing, not
+    discounted software. Missing rates are null, never PAYG fallbacks. Monthly
+    figures assume 730 fully covered hours; unused hourly commitment expires and
+    excess usage is PAYG. Extra discounts are not applied. Use this to browse, filter, or rank
     an entire region; for a focused set of alternatives to a specific size use
     find_alternative_skus instead.
 

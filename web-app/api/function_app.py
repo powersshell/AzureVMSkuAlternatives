@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import re
+import math
 import requests
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
@@ -22,6 +23,86 @@ app = func.FunctionApp()
 # Price-history (I-G) configuration
 HISTORY_TABLE = "vmskuhistory"
 HISTORY_RETENTION_DAYS = 365
+RETAIL_PRICING_VERSION = '2023-01-01-preview'
+SAVINGS_PLAN_FIELDS = {
+    f'sp{term}Year{period}{os_suffix}': f'sp{term}Year{period}USD{os_suffix}'
+    for term in (1, 3)
+    for period in ('Hourly', 'Monthly')
+    for os_suffix in ('', 'Windows')
+}
+SAVINGS_PLAN_ASSUMPTIONS = (
+    'Monthly estimates use 730 hours of eligible usage fully covered by a fixed hourly '
+    'commitment. Unused commitment expires; excess usage is PAYG. Compute savings plans '
+    'exclude software licensing, storage and networking. Windows totals are estimates '
+    'including the PAYG Windows licensing surcharge. Extra discounts are not applied.'
+)
+
+
+def _valid_savings_rate(value):
+    return (
+        isinstance(value, (int, float)) and not isinstance(value, bool)
+        and math.isfinite(value) and value >= 0
+    )
+
+
+def _add_savings_plan_pricing(pricing: Dict, linux_item: Dict,
+                             windows_item: Optional[Dict] = None) -> None:
+    """Add compute rates and nullable estimated Windows totals from matched meters."""
+    pricing.update({key: None for key in SAVINGS_PLAN_FIELDS})
+    pricing['savingsPlanPricingStatus'] = 'available' if _is_payg_item(linux_item) else 'unavailable'
+    pricing['savingsPlanWindowsEstimated'] = True
+    pricing['savingsPlanAssumptions'] = SAVINGS_PLAN_ASSUMPTIONS
+    if (
+        not _is_payg_item(linux_item)
+        or 'windows' in linux_item.get('productName', '').lower()
+        or linux_item.get('unitOfMeasure', '1 Hour') != '1 Hour'
+        or linux_item.get('currencyCode', pricing.get('currency')) != pricing.get('currency')
+    ):
+        pricing['savingsPlanPricingStatus'] = 'unavailable'
+        return
+    linux_payg = linux_item.get('unitPrice')
+    windows_payg = (windows_item or {}).get('unitPrice')
+    windows_matched = windows_item and all(
+        windows_item.get(key) == linux_item.get(key)
+        for key in ('armSkuName', 'armRegionName', 'currencyCode', 'unitOfMeasure', 'skuName')
+    ) and _is_payg_item(windows_item)
+    surcharge = None
+    if windows_matched and _valid_savings_rate(linux_payg) and _valid_savings_rate(windows_payg):
+        if windows_payg >= linux_payg:
+            surcharge = windows_payg - linux_payg
+        else:
+            logging.warning('Invalid Windows licensing delta for %s', linux_item.get('armSkuName'))
+    for item in linux_item.get('savingsPlan') or []:
+        prefix = {'1 Year': 'sp1Year', '3 Years': 'sp3Year'}.get(item.get('term'))
+        rate = item.get('unitPrice')
+        if prefix and _valid_savings_rate(rate):
+            pricing[prefix + 'Hourly'] = rate
+            pricing[prefix + 'Monthly'] = round(rate * 730, 2)
+            if surcharge is not None:
+                pricing[prefix + 'HourlyWindows'] = rate + surcharge
+                pricing[prefix + 'MonthlyWindows'] = round((rate + surcharge) * 730, 2)
+    if not any(pricing[f'sp{term}YearHourly'] is not None for term in (1, 3)):
+        pricing['savingsPlanPricingStatus'] = 'unavailable'
+
+
+def _cached_savings_plan_pricing(entity: Dict) -> Dict:
+    values = json.loads(entity['savingsPlanPricing']) if entity.get('savingsPlanPricing') else {}
+    return {
+        **{key: values.get(key) for key in SAVINGS_PLAN_FIELDS},
+        'savingsPlanPricingStatus': entity.get('savingsPlanPricingStatus', 'not_refreshed'),
+        'savingsPlanWindowsEstimated': True,
+        'savingsPlanAssumptions': SAVINGS_PLAN_ASSUMPTIONS,
+    }
+
+
+def _savings_plan_cache_fields(pricing: Optional[Dict]) -> Dict:
+    return {
+        **{cache_key: pricing.get(key) for key, cache_key in SAVINGS_PLAN_FIELDS.items()
+           if pricing and pricing.get(key) is not None},
+        'savingsPlanPricingStatus': (pricing or {}).get('savingsPlanPricingStatus', 'unavailable'),
+        # One authoritative value replaces nullable rates even with Table's merge upserts.
+        'savingsPlanPricing': json.dumps({key: (pricing or {}).get(key) for key in SAVINGS_PLAN_FIELDS}),
+    }
 
 
 def normalize_location(location):
@@ -785,19 +866,20 @@ def _fetch_all_region_pricing(sku_name: str, currency_code: str = 'USD') -> List
         f"and armSkuName eq '{sku_name}' "
         "and type eq 'Consumption'"
     )
-    url = f"{api_url}?currencyCode={currency_code}&$filter={filter_str}"
+    url = f"{api_url}?api-version={RETAIL_PRICING_VERSION}&currencyCode={currency_code}&$filter={filter_str}"
 
     items: List[Dict] = []
     pages = 0
     while url and pages < 50:
         response = requests.get(url, headers={'Accept': 'application/json'}, timeout=15)
         if not response.ok:
-            logging.warning(f'Region pricing fetch for {sku_name} returned {response.status_code}')
-            break
+            raise RuntimeError(f'Region pricing fetch for {sku_name} returned {response.status_code}')
         data = response.json()
         items.extend(data.get('Items', []))
         url = data.get('NextPageLink')
         pages += 1
+    if url:
+        raise RuntimeError(f'Region pricing fetch for {sku_name} exceeded the pagination limit')
     return items
 
 
@@ -814,12 +896,13 @@ def _is_payg_item(item: Dict) -> bool:
     )
 
 
-def select_region_prices(items: List[Dict], os_type: str = 'linux') -> Dict[str, Dict]:
-    """Group retail-price ``items`` by region and pick the PAYG price per region.
+def select_region_prices(items: List[Dict], os_type: str = 'linux',
+                         pricing_model: str = 'payg') -> Dict[str, Dict]:
+    """Group retail-price ``items`` by region and pick the selected model's price.
 
     Returns ``{region: {region, location, hourlyPrice, monthlyPrice, currency}}``.
     ``os_type`` selects Linux (default) or Windows meters. Regions with no valid
-    non-zero PAYG price are omitted.
+    non-zero PAYG price are omitted; savings plan selection also requires its rate.
     """
     want_windows = os_type == 'windows'
 
@@ -860,6 +943,18 @@ def select_region_prices(items: List[Dict], os_type: str = 'linux') -> Dict[str,
             'monthlyPrice': round(hourly * 730, 2),
             'currency': chosen.get('currencyCode', 'USD'),
         }
+        linux_item = next((i for i in payg if 'windows' not in i.get('productName', '').lower()), None)
+        windows_item = next((i for i in payg if 'windows' in i.get('productName', '').lower()), None)
+        _add_savings_plan_pricing(result[region], linux_item or {}, windows_item)
+        if pricing_model in ('sp1year', 'sp3year'):
+            prefix = 'sp1Year' if pricing_model == 'sp1year' else 'sp3Year'
+            suffix = 'Windows' if want_windows else ''
+            rate = result[region].get(prefix + 'Hourly' + suffix)
+            if rate is None:
+                del result[region]
+                continue
+            result[region]['hourlyPrice'] = rate
+            result[region]['monthlyPrice'] = result[region][prefix + 'Monthly' + suffix]
 
     return result
 
@@ -872,12 +967,19 @@ def compare_regions(req: func.HttpRequest) -> func.HttpResponse:
     - skuName: ARM SKU name (e.g. 'Standard_D8s_v5') (required)
     - currency: ISO currency code (default 'USD')
     - os: 'linux' (default) or 'windows'
+    - pricingModel: 'payg' (default), 'sp1year', or 'sp3year'
     """
     logging.info('Processing compare_regions request')
 
     sku_name = req.params.get('skuName') or req.params.get('sku')
     currency_code = (req.params.get('currency') or 'USD').upper()
     os_type = (req.params.get('os') or 'linux').lower()
+    pricing_model = (req.params.get('pricingModel') or 'payg').lower()
+    if pricing_model not in ('payg', 'sp1year', 'sp3year'):
+        return func.HttpResponse(
+            json.dumps({'error': 'pricingModel must be payg, sp1year or sp3year'}),
+            mimetype='application/json', status_code=400,
+        )
 
     if not sku_name:
         return func.HttpResponse(
@@ -906,7 +1008,7 @@ def compare_regions(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         items = _fetch_all_region_pricing(sku_name, currency_code)
-        region_prices = select_region_prices(items, os_type)
+        region_prices = select_region_prices(items, os_type, pricing_model)
         regions = sorted(region_prices.values(), key=lambda r: r['hourlyPrice'])
 
         if not regions:
@@ -917,7 +1019,8 @@ def compare_regions(req: func.HttpRequest) -> func.HttpResponse:
                     'currency': currency_code,
                     'regionCount': 0,
                     'regions': [],
-                    'message': 'No pay-as-you-go pricing found for this SKU across regions.',
+                    'pricingModel': pricing_model,
+                    'message': 'No eligible pricing found for the selected model across regions.',
                 }),
                 mimetype='application/json',
                 status_code=200,
@@ -935,6 +1038,8 @@ def compare_regions(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         response_data = {
+            'pricingModel': pricing_model,
+            'savingsPlanAssumptions': SAVINGS_PLAN_ASSUMPTIONS,
             'skuName': sku_name,
             'os': os_type,
             'currency': regions[0]['currency'],
@@ -1008,9 +1113,12 @@ def get_sku_from_cache(sku_name: str, location: str) -> dict:
                 'ri1YearMonthlyWindows': entity.get('ri1YearMonthlyUSDWindows'),
                 'ri3YearHourlyWindows': entity.get('ri3YearHourlyUSDWindows'),
                 'ri3YearMonthlyWindows': entity.get('ri3YearMonthlyUSDWindows'),
-                'currency': entity.get('pricingCurrency', 'USD')
+                'currency': entity.get('pricingCurrency', 'USD'),
+                **_cached_savings_plan_pricing(entity),
             }
         
+        if entity.get('pricing'):
+            entity['pricing'].update(_cached_savings_plan_pricing(entity))
         _enrich_gpu_perf(entity, sku_name)
         return entity
         
@@ -1146,7 +1254,7 @@ def build_grid_row(entity: Dict, pricing_override: Optional[Dict] = None) -> Dic
     pricing = pricing_override or {}
 
     def price(override_key: str, entity_key: str):
-        if pricing_override is not None and override_key in pricing:
+        if pricing_override is not None:
             return _grid_price_or_none(pricing.get(override_key))
         return _grid_price_or_none(entity.get(entity_key))
 
@@ -1186,6 +1294,15 @@ def build_grid_row(entity: Dict, pricing_override: Optional[Dict] = None) -> Dic
         'ri3YearHourlyWindows': price('ri3YearHourlyWindows', 'ri3YearHourlyUSDWindows'),
         'ri3YearMonthlyWindows': price('ri3YearMonthlyWindows', 'ri3YearMonthlyUSDWindows'),
     }
+    sp_pricing = pricing if pricing_override is not None else _cached_savings_plan_pricing(entity)
+    for key in SAVINGS_PLAN_FIELDS:
+        grid_key = key if key.endswith('Windows') else key + 'Linux'
+        value = sp_pricing.get(key)
+        row[grid_key] = value if _valid_savings_rate(value) else None
+    row['savingsPlanPricingStatus'] = sp_pricing.get(
+        'savingsPlanPricingStatus', 'unavailable' if pricing_override is not None else 'not_refreshed')
+    row['savingsPlanWindowsEstimated'] = True
+    row['savingsPlanAssumptions'] = SAVINGS_PLAN_ASSUMPTIONS
     _enrich_cpu_perf(row, name)
     _enrich_gpu_perf(row, name, entity.get('gpuCount', 0))
     retirement_info = _get_retirement_info(name)
@@ -1253,7 +1370,7 @@ def grid(req: func.HttpRequest) -> func.HttpResponse:
         skus = []
         prices_as_of = None
         for entity in entities:
-            pricing_override = pricing_by_sku.get(entity.get('name')) if currency != 'USD' else None
+            pricing_override = pricing_by_sku.get(entity.get('name'), {}) if currency != 'USD' else None
             skus.append(build_grid_row(entity, pricing_override=pricing_override))
             stamp = entity.get('pricingLastUpdated') or entity.get('lastUpdated')
             if stamp and (prices_as_of is None or stamp > prices_as_of):
@@ -2350,7 +2467,7 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
     try:
         api_url = 'https://prices.azure.com/api/retail/prices'
         filter_str = f"serviceName eq 'Virtual Machines' and armSkuName eq '{sku_name}' and armRegionName eq '{location}' and (type eq 'Consumption' or type eq 'Reservation')"
-        url = f"{api_url}?currencyCode={currency_code}&$filter={filter_str}"
+        url = f"{api_url}?api-version={RETAIL_PRICING_VERSION}&currencyCode={currency_code}&$filter={filter_str}"
 
         items = []
         while url:
@@ -2453,6 +2570,7 @@ def get_vm_pricing(sku_name: str, location: str, currency_code: str) -> Optional
             pricing['ri3YearHourly'] = round(total_3yr / (36 * 730), 4)
 
         _compute_windows_ri(pricing)
+        _add_savings_plan_pricing(pricing, linux_item, windows_item)
 
         return pricing
 
@@ -2574,7 +2692,8 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         'ri1YearMonthlyWindows': entity.get('ri1YearMonthlyUSDWindows'),
                         'ri3YearHourlyWindows': entity.get('ri3YearHourlyUSDWindows'),
                         'ri3YearMonthlyWindows': entity.get('ri3YearMonthlyUSDWindows'),
-                        'currency': entity.get('pricingCurrency', 'USD')
+                        'currency': entity.get('pricingCurrency', 'USD'),
+                        **_cached_savings_plan_pricing(entity),
                     } if entity.get('hourlyPriceUSD') is not None else None,
                     'networkBandwidthMbps': entity.get('networkBandwidthMbps')
                 }
@@ -2671,7 +2790,7 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD', require_comp
     """
     api_url = 'https://prices.azure.com/api/retail/prices'
     filter_str = f"serviceName eq 'Virtual Machines' and armRegionName eq '{location}' and (type eq 'Consumption' or type eq 'Reservation')"
-    url = f"{api_url}?currencyCode={currency}&$filter={filter_str}"
+    url = f"{api_url}?api-version={RETAIL_PRICING_VERSION}&currencyCode={currency}&$filter={filter_str}"
 
     all_items = []
     page = 0
@@ -2804,6 +2923,7 @@ def fetch_bulk_region_pricing(location: str, currency: str = 'USD', require_comp
             pricing['ri3YearHourly'] = round(total_3yr / (36 * 730), 4)
 
         _compute_windows_ri(pricing)
+        _add_savings_plan_pricing(pricing, linux_item, windows_item)
 
         result[sku_name] = pricing
 
@@ -3847,7 +3967,8 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'pricingCurrency': pricing['currency'] if pricing else 'USD',
                 'pricingLastUpdated': timestamp,
                 'availabilityZones': ','.join(zones) if zones else '',
-                'lastUpdated': timestamp
+                'lastUpdated': timestamp,
+                **_savings_plan_cache_fields(pricing),
             }
             # Only include networkBandwidthMbps when we have actual data —
             # writing None to Table Storage coerces to integer 0
@@ -4333,6 +4454,10 @@ def _compute_region_coverage(region: str, entities: List[Dict]) -> Dict:
         'ri3Year': has_ri3year,
         'ri1YearWindows': has_ri1year_win,
         'ri3YearWindows': has_ri3year_win,
+        'savingsPlanRefreshed': sum(
+            e.get('savingsPlanPricingStatus') in ('available', 'unavailable') for e in entities),
+        'sp1Year': sum(_cached_savings_plan_pricing(e)['sp1YearHourly'] is not None for e in entities),
+        'sp3Year': sum(_cached_savings_plan_pricing(e)['sp3YearHourly'] is not None for e in entities),
         'vCPUs': has_vcpus,
         'memory': has_memory,
         'diskIOPS': has_disk_iops,
@@ -4452,6 +4577,9 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
             'paygWindowsCount': cov['paygWindows'],
             'ri1YearCount': cov['ri1Year'],
             'ri3YearCount': cov['ri3Year'],
+            'savingsPlanRefreshedCount': cov.get('savingsPlanRefreshed', 0),
+            'sp1YearCount': cov.get('sp1Year', 0),
+            'sp3YearCount': cov.get('sp3Year', 0),
             'networkBandwidthCount': cov['networkBandwidth'],
             'missingPricingSkus': cov.get('missingPricingSkus', []),
             'missingRiSkus': cov.get('missingRiSkus', [])[:20],
@@ -4481,6 +4609,9 @@ def _emit_coverage_telemetry(all_region_coverage: List[Dict]) -> None:
         'event_type': 'sku_coverage_summary',
         'totalRegions': len(all_region_coverage),
         'totalSkus': totals,
+        'savingsPlanRefreshedCount': sum(c.get('savingsPlanRefreshed', 0) for c in all_region_coverage),
+        'sp1YearCount': sum(c.get('sp1Year', 0) for c in all_region_coverage),
+        'sp3YearCount': sum(c.get('sp3Year', 0) for c in all_region_coverage),
         'paygEligibleSkus': payg_totals,
         'riEligibleSkus': ri_totals,
         'ri3EligibleSkus': ri3_totals,
@@ -4677,7 +4808,7 @@ def calculate_numeric_diff(target_val, alt_val, unit: str = '') -> dict:
     }
 
 
-def calculate_price_diff(target_price, alt_price, currency: str) -> dict:
+def calculate_price_diff(target_price, alt_price, currency: str, precision: Optional[int] = 4) -> dict:
     """Calculate price difference (higher = negative, lower = positive)."""
     if target_price is None or alt_price is None:
         return {
@@ -4691,9 +4822,9 @@ def calculate_price_diff(target_price, alt_price, currency: str) -> dict:
     percent_change = (delta / target_price) * 100 if target_price != 0 else None
     
     return {
-        'target': round(target_price, 4),
-        'alternative': round(alt_price, 4),
-        'delta': round(delta, 4),
+        'target': round(target_price, precision) if precision is not None else target_price,
+        'alternative': round(alt_price, precision) if precision is not None else alt_price,
+        'delta': round(delta, precision) if precision is not None else delta,
         'percentChange': round(percent_change, 1) if percent_change is not None else None,
         'direction': 'higher' if delta > 0 else 'lower' if delta < 0 else 'same',
         'changed': delta != 0,
@@ -4951,6 +5082,24 @@ def calculate_detailed_differences(target_sku: dict, alternative_sku: dict,
                 )
             } if target_pricing.get('ri3YearMonthlyWindows') is not None else None
         }
+        for term in (1, 3):
+            for suffix in ('', 'Windows'):
+                prefix = f'sp{term}Year'
+                hourly_key = prefix + 'Hourly' + suffix
+                monthly_key = prefix + 'Monthly' + suffix
+                differences['pricing'][prefix + suffix] = {
+                    'hourly': calculate_price_diff(
+                        target_pricing.get(hourly_key), alt_pricing.get(hourly_key), currency,
+                        precision=None,
+                    ),
+                    'monthly': calculate_price_diff(
+                        target_pricing.get(monthly_key), alt_pricing.get(monthly_key), currency
+                    ),
+                    'estimated': bool(suffix),
+                } if (
+                    target_pricing.get(hourly_key) is not None
+                    and alt_pricing.get(hourly_key) is not None
+                ) else None
     
     # Storage differences
     differences['storage'] = {

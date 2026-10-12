@@ -27,7 +27,7 @@ A powerful PowerShell script for comparing Azure VM SKUs based on comprehensive 
 - **Growth Restriction Awareness**: Flags capacity-limited (growth-restricted) SKUs that new subscriptions can't deploy and that won't be granted additional quota, applies a ranking penalty, and surfaces recommended migration targets
 - **Customizable Weighting System**: Adjust importance of different capabilities (CPU, Memory, GPU, Storage, Network, Features)
 - **Intelligent Scoring**: Weighted similarity scores (0-100) to rank alternatives
-- **Pricing Integration**: Real-time pricing data from Azure Retail Prices API, including **Reserved Instance (1-year / 3-year)** and **Windows** pricing
+- **Pricing Integration**: Real-time pricing data from Azure Retail Prices API, including **Reserved Instance** and **compute savings plan (1-year / 3-year)** rates, plus **Windows** pricing estimates
 - **Cost-Efficiency Metrics**: Cost per vCPU and cost per GB for the selected pricing model
 - **Availability Zone Information**: Shows which availability zones each SKU supports
 - **Cross-Region Availability Check**: Optionally check whether each alternative is available in a second region
@@ -79,7 +79,7 @@ Connect-AzAccount
 | `CpuVendor` | String[] | *(all)* | Filter alternatives by CPU vendor: `Intel`, `AMD`, `ARM` (one or more) |
 | `HideRetiring` | Bool | `$true` | Exclude retiring/retired SKUs (matches the website). Use `-HideRetiring:$false` to include them |
 | `HideGrowthRestricted` | Switch | Off | Exclude growth-restricted (capacity-limited) SKUs. Shown by default with a warning + ranking penalty, matching the website |
-| `PricingModel` | String | PAYG | Pricing to display/use: `PAYG`, `RI1Year`, `RI3Year` |
+| `PricingModel` | String | PAYG | Cost displays/comparison: `PAYG`, `RI1Year`, `RI3Year`, `SP1Year`, `SP3Year`; recommendation ranking remains Linux PAYG-based |
 | `OS` | String | Linux | Operating system for pricing: `Linux` or `Windows` |
 | `CheckRegion` | String | *(none)* | Second region to check each alternative's availability in |
 | `ExportCsv` | String | *(none)* | Path to export the full result set as CSV |
@@ -147,6 +147,41 @@ Compare using 3-year Reserved Instance pricing for Windows:
 .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -PricingModel RI3Year -OS Windows
 ```
 
+### Compute Savings Plan Pricing
+Display 1-year compute savings plan pricing, including an estimated Windows total:
+```powershell
+.\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -PricingModel SP1Year -OS Windows
+
+# Display 3-year Linux compute rates and export both savings plan terms.
+.\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -PricingModel SP3Year -ExportCsv ".\results.csv"
+```
+
+Savings plan rates come from the nested `savingsPlan` entries (`1 Year`, `3 Years`)
+on the matched Linux Consumption meter using Retail Prices API
+`api-version=2023-01-01-preview`. Spot, Low Priority, Dedicated Host, and cloud
+products are excluded. Hourly precision is retained; monthly estimates equal the
+hourly rate × 730, not a total commitment charge.
+
+**Commitment assumptions:** Rates assume a 1-year or 3-year hourly spend commitment
+with full savings plan coverage. Uncovered usage is billed at PAYG rates; unused
+commitment is still payable. Compute rates exclude software licenses. Windows
+totals are **estimates**: savings plan compute + matched Windows PAYG − matched
+Linux PAYG. This estimate is available only when all components are valid and the
+license surcharge is nonnegative. No additional discount is applied to savings
+plan rates. Other software, disks, networking, and related charges are not included.
+
+Unavailable commitment terms/Windows estimates remain `$null` in raw fields and
+`N/A` in selected cost columns, with **no PAYG or Linux fallback**. Such alternatives
+remain in the results. Selected prices affect cost metrics, price summaries, and
+explicit price sorting, **not recommendation scores or default ordering**:
+cost-priority scoring and the default price tie-break use Linux PAYG.
+
+To explicitly sort by the selected monthly price (unavailable prices last):
+```powershell
+$alternatives = .\Compare-AzureVms.ps1 -SkuName "Standard_D4s_v5" -Location "eastus" -PricingModel SP3Year
+$alternatives | Sort-Object { if ($_.'MonthlyPrice(USD)' -eq 'N/A') { [double]::MaxValue } else { [double]$_.'MonthlyPrice(USD)' } }
+```
+
 ### Include Retiring SKUs
 Show retiring/retired SKUs (a ranking penalty is applied):
 ```powershell
@@ -199,6 +234,16 @@ The script provides detailed output including:
   `GpuMemoryGB`, `GpuFp32Tflops`, `GpuFp16Bf16TensorTflops`,
   `GpuMemoryBandwidthGBps`, `GpuAiScore`, `GpuGraphicsScore`,
   `GpuComparisonScore`, `GpuSimilarityScore`, `GpuScoringBasis`, and source URLs
+- Selected pricing metadata (`PricingModel`, `OS`, `Currency`, `PricingSource`,
+  `PricingAssumptions`) also accompanies CSV exports, identifying Windows estimates
+  and savings plan coverage assumptions
+- `SavingsPlanAssumptions` labels the raw savings plan fields even when the selected
+  display model is PAYG or RI
+- Raw savings plan fields in the selected currency: `sp1YearHourly`,
+  `sp1YearMonthly`, `sp3YearHourly`, `sp3YearMonthly`, and their `Windows`-suffixed
+  estimated totals; unavailable values are null (blank in CSV)
+- `RecommendationPaygMonthly`: Linux PAYG monthly price used by the default
+  recommendation price tie-break, independently of the selected display model
 
 ### Summary Statistics
 - Average and highest similarity scores
@@ -211,8 +256,8 @@ The script provides detailed output including:
 2. **Weighted Scoring**: Each capability is assigned a weight based on its category
 3. **Similarity Calculation**: Compares each alternative SKU across all capabilities
 4. **Filtering**: Applies tolerance ranges and optional filters (NVMe, GPU)
-5. **Ranking**: Sorts results by similarity score
-6. **Pricing**: Fetches real-time pricing from Azure Retail Prices API
+5. **Ranking**: Sorts results by recommendation score, CPU performance, Linux PAYG monthly price, then SKU name; cost-priority scoring also uses Linux PAYG
+6. **Pricing**: Fetches real-time pricing from Azure Retail Prices API; the selected model controls cost displays/comparison, not recommendation ranking
 
 ### Similarity Scoring
 
@@ -290,6 +335,19 @@ specifications.
 > topology, and workload efficiency.
 
 ## Troubleshooting
+
+### Offline Savings Plan Regression Checks
+
+From the repository root:
+```powershell
+pwsh -NoProfile -File .\scripts\Test-SavingsPlanPricing.ps1
+```
+
+On Windows PowerShell 5.1, use `powershell -NoProfile -File .\scripts\Test-SavingsPlanPricing.ps1`.
+The fixtures require no Azure modules, sign-in, network access, or additional
+dependencies. They cover null/unavailable rates, hourly/monthly precision, matched
+Windows license estimates, term/OS selection, CSV assumptions, and PAYG-based
+recommendation scoring/default ordering across all pricing models.
 
 ### Common Issues
 

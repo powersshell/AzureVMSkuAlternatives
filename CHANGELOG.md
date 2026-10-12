@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-12
+- **feature:** Added 1-year and 3-year compute savings plan pricing across comparisons, Browse, regional price comparisons, CSV/XLSX exports, MCP tools, and PowerShell without changing PAYG-based recommendation ranking. Windows totals are clearly labeled compute-plus-licensing estimates; unavailable rates stay N/A and extra discounts are not applied.
+- **improvement:** Added preview Retail Prices API ingestion, nullable savings plan cache coverage, and pricing regressions. Monthly estimates assume 730 fully covered hours; commitment, licensing, and cache-refresh limitations are explained.
+- **improvement:** Added a main-only manual pricing-cache refresh workflow using the existing CI identity and full regional timer, with completion telemetry verification before reporting success.
+
 ## 2026-10-09
 - **fix:** Pinned MCP container deployments to the built image digest so successful deployments actually publish the new tool schema instead of retaining an unchanged `latest` revision.
 - **fix:** Corrected Source Gen / Target Gen to use Hyper-V Gen1/Gen2 compatibility, not hardware SKU versions. Dual-generation sources require an explicit choice for same-generation preference; Any disables that preference. Cross-generation and unknown-support warnings remain visible.

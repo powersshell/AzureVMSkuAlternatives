@@ -10,6 +10,41 @@ import pytest
 import requests
 
 
+@pytest.mark.api
+class TestSavingsPlanContracts:
+    def test_grid_exposes_nullable_terms_and_refresh_status(self, api_base_url):
+        resp = requests.get(f"{api_base_url}/grid", params={'location': 'eastus'}, timeout=60)
+        resp.raise_for_status()
+        rows = resp.json()['skus']
+        assert rows
+        for row in rows:
+            assert row['savingsPlanPricingStatus'] in ('available', 'unavailable', 'not_refreshed')
+            for term in (1, 3):
+                for os_name in ('Linux', 'Windows'):
+                    hourly = row[f'sp{term}YearHourly{os_name}']
+                    monthly = row[f'sp{term}YearMonthly{os_name}']
+                    if hourly is None:
+                        assert monthly is None
+                    else:
+                        assert hourly >= 0
+                        assert monthly == pytest.approx(round(hourly * 730, 2))
+
+    @pytest.mark.parametrize('model', ['sp1year', 'sp3year'])
+    def test_regional_selection_uses_savings_rate(self, api_base_url, model):
+        resp = requests.get(f"{api_base_url}/compare_regions", params={
+            'skuName': 'Standard_D4s_v5', 'pricingModel': model,
+        }, timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+        assert data['pricingModel'] == model
+        regions = data['regions']
+        assert regions
+        assert [row['hourlyPrice'] for row in regions] == sorted(
+            row['hourlyPrice'] for row in regions)
+        prefix = 'sp1Year' if model == 'sp1year' else 'sp3Year'
+        assert all(row['hourlyPrice'] == row[prefix + 'Hourly'] for row in regions)
+
+
 # ============================================================================
 # Health Endpoint
 # ============================================================================
