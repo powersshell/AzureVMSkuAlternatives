@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-10-14
+- **feature:** Added a site-wide System / Light / Dark theme selector with browser-local persistence, live device-theme updates, accessible palettes, and themed dropdowns, migration guidance, tables, dialogs, and price-history charts. Switching themes preserves results and selections without changing pricing, ranking, or exports.
 - **fix:** Kept the Extra Discount % label on one line and aligned comparison-form inputs at desktop widths, while preserving mobile stacking and all discount/pricing behavior.
 - **fix:** Corrected local temporary-disk capability parsing and cache persistence across SCSI, NVMe, and diskless VM sizes, restoring disk-loss migration warnings and existing recommendation penalties. PowerShell uses matching detection; genuinely missing data remains unknown. Added refresh-to-comparison regressions and a full-region metadata verification gate.
 
