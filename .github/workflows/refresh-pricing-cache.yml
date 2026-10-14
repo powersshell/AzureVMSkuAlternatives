@@ -21,6 +21,10 @@ jobs:
       FUNCTION_APP: vmsku-api-func-cus
       WORKSPACE: vmsku-alternatives-webapp-logs
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - name: Azure Login via OIDC
         uses: azure/login@v1
         with:
@@ -93,3 +97,13 @@ jobs:
           else:
               raise SystemExit("No completed refresh was observed within 20 minutes.")
           PY
+      - name: Verify temporary-disk metadata in every refreshed region
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          python scripts/check_temp_disk_metadata.py --locations \
+            eastus eastus2 westus westus2 westus3 centralus northcentralus southcentralus westcentralus \
+            canadacentral canadaeast brazilsouth northeurope westeurope uksouth ukwest \
+            francecentral germanywestcentral norwayeast switzerlandnorth swedencentral \
+            eastasia southeastasia japaneast japanwest australiaeast australiasoutheast \
+            centralindia southindia westindia koreacentral koreasouth uaenorth southafricanorth

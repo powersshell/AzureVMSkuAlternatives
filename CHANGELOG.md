@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-10-14
+- **fix:** Corrected local temporary-disk capability parsing and cache persistence across SCSI, NVMe, and diskless VM sizes, restoring disk-loss migration warnings and existing recommendation penalties. PowerShell uses matching detection; genuinely missing data remains unknown. Added refresh-to-comparison regressions and a full-region metadata verification gate.
+
 ## 2026-10-12
 - **improvement:** Simplified the website Target Gen dropdown to Any Generation, Prefer Gen1, and Prefer Gen2, with Any Generation as the default. Source generation still determines migration-path guidance; default comparisons no longer apply generation preference penalties. API, MCP, and PowerShell defaults remain unchanged.
 - **improvement:** Reduced migration guidance to compact, collapsed path/effort rows with details on demand. Missing backend assessments no longer repeat empty guidance panels on every result; generation selectors, independent risk badges, and export guidance remain available.

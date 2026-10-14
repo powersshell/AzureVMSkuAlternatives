@@ -1280,15 +1280,22 @@ function Get-GenerationPath {
 
 function Get-TempDiskPresence {
     param([hashtable]$Capabilities)
-    $known = 0
-    foreach ($name in @('ResourceDiskSizeInMB', 'NvmeDiskSizeInMiB')) {
+    $resourceName = if ($Capabilities.ContainsKey('MaxResourceVolumeMB')) { 'MaxResourceVolumeMB' } else { 'ResourceDiskSizeInMB' }
+    $resourceSize = $null
+    $nvmeSize = $null
+    foreach ($name in @($resourceName, 'NvmeDiskSizeInMiB')) {
+        if (-not $Capabilities.ContainsKey($name)) { continue }
         $size = 0.0
-        if ($Capabilities.ContainsKey($name) -and [double]::TryParse([string]$Capabilities[$name], [ref]$size) -and $size -ge 0) {
+        if ([double]::TryParse([string]$Capabilities[$name], [ref]$size) -and
+            -not [double]::IsNaN($size) -and -not [double]::IsInfinity($size) -and $size -ge 0) {
             if ($size -gt 0) { return $true }
-            $known++
+            if ($name -eq $resourceName) { $resourceSize = $size } else { $nvmeSize = $size }
+        } elseif ($null -ne $Capabilities[$name] -and [string]$Capabilities[$name] -ne '') {
+            Write-Warning "Invalid temporary-disk capability ${name}: $($Capabilities[$name])"
         }
     }
-    if ($known -eq 2) { return $false }
+    if ($null -ne $resourceSize -and $resourceSize -eq 0 -and
+        (-not $Capabilities.ContainsKey('NvmeDiskSizeInMiB') -or ($null -ne $nvmeSize -and $nvmeSize -eq 0))) { return $false }
     return $null
 }
 

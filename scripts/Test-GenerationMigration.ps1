@@ -53,6 +53,15 @@ Assert-True ($risks.Effort -eq 'New VM/image planning' -and $risks.Reasons.Count
 Assert-True ($true -eq (Get-TempDiskPresence @{ ResourceDiskSizeInMB = '16384'; NvmeDiskSizeInMiB = '0' })) 'SCSI temporary disks count.'
 Assert-True ($false -eq (Get-TempDiskPresence @{ ResourceDiskSizeInMB = '0'; NvmeDiskSizeInMiB = '0' })) 'Known no temporary disk.'
 Assert-True ($null -eq (Get-TempDiskPresence @{})) 'Missing temporary-disk metadata remains unknown.'
+Assert-True ($true -eq (Get-TempDiskPresence @{ MaxResourceVolumeMB = '32768' })) 'Compute SCSI capability is authoritative.'
+Assert-True ($false -eq (Get-TempDiskPresence @{ MaxResourceVolumeMB = '0' })) 'Explicit zero resource volume without optional NVMe means no disk.'
+Assert-True ($true -eq (Get-TempDiskPresence @{ MaxResourceVolumeMB = '0'; NVMeDiskSizeInMiB = '153600' })) 'Canonical NVMe spelling counts.'
+Assert-True ($null -eq (Get-TempDiskPresence @{ NvmeDiskSizeInMiB = '0' })) 'Zero NVMe alone cannot exclude SCSI storage.'
+foreach ($invalid in @('-1', 'bad', 'NaN', 'Infinity', '')) {
+    Assert-True ($null -eq (Get-TempDiskPresence @{ MaxResourceVolumeMB = $invalid; NvmeDiskSizeInMiB = '0' })) 'Invalid resource capacity remains unknown.'
+    Assert-True ($null -eq (Get-TempDiskPresence @{ MaxResourceVolumeMB = '0'; NvmeDiskSizeInMiB = $invalid })) 'Invalid NVMe capacity does not imply diskless.'
+}
+Assert-True ($false -eq (Get-TempDiskPresence @{ MaxResourceVolumeMB = '0'; ResourceDiskSizeInMB = '32768' })) 'Canonical field overrides legacy alias.'
 
 # Fixed scoring subcomponents isolate the newly added boot-preference penalties.
 function Get-ModernizationScore { param($Identity, $FamilyGenerations, $CpuPerfScore) 100 }

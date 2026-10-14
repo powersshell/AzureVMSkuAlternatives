@@ -53,7 +53,11 @@ node scripts\test_generation_ui.js
 pwsh -NoProfile -File scripts\Test-GenerationMigration.ps1
 ```
 
-PR previews call the shared production API. New selectors can appear before backend assessment metadata is deployed; missing metadata is explained once in the shared guidance, not repeated as a panel on every card. A frontend-only deployment is not proof that the API or MCP feature is live. No pricing cache refresh is required for this computed metadata.
+PR previews call the shared production API. New selectors can appear before backend assessment metadata is deployed; missing metadata is explained once in the shared guidance, not repeated as a panel on every card. A frontend-only deployment is not proof that the API or MCP feature is live. No pricing cache refresh is required for this computed generation metadata.
+
+Local temporary-disk presence is separate cached capability data. Detection reads Compute's `MaxResourceVolumeMB` for SCSI and `NVMeDiskSizeInMiB` for local NVMe, with case-insensitive names and the legacy resource-disk alias supported. An explicit zero resource volume with zero or absent optional NVMe capacity means no local disk; incomplete/invalid data stays unknown unless a positive capacity proves presence. See the [official capability reference](https://learn.microsoft.com/en-us/azure/virtual-machines/enable-nvme-temp-faqs).
+
+Cache refreshes persist `hasTempDisk` with `hasTempDiskKnown`; when the latter is false, readers return unknown regardless of a stale boolean retained by merge upserts. Known false is explicitly stored. Legacy cache rows without the marker still use an existing boolean or positive NVMe flag, otherwise unknown. `/grid` exposes nullable `hasTempDisk` for verification and API consumers. Deploy the API correction before refreshing regions: the existing full-region refresh workflow now compares every published disk flag with authoritative Compute capabilities using `scripts/check_temp_disk_metadata.py`. This restores the existing disk-loss warning and penalty without changing generation preferences or scoring weights.
 
 ## Savings plan pricing
 
