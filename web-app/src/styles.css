@@ -139,6 +139,18 @@ body {
 }
 .config-field-grow { flex: 1; min-width: 220px; }
 .config-field-sm { min-width: 80px; max-width: 110px; }
+.config-field-discount { min-width: 140px; max-width: 140px; }
+.config-field-discount label { white-space: nowrap; }
+.config-field-discount input { min-width: 0; width: 100%; }
+.config-row .config-field > label {
+    display: flex;
+    align-items: center;
+    line-height: 18px;
+    min-height: 18px;
+}
+.config-row .config-field > input,
+.config-row .config-field > select { min-height: 40px; }
+.config-row .choices__inner { min-height: 40px !important; }
 
 .config-field select,
 .config-field input {
@@ -1408,7 +1420,8 @@ body {
         flex-direction: column;
         align-items: stretch;
     }
-    .config-field-sm { max-width: none; }
+    .config-field-sm,
+    .config-field-discount { max-width: none; }
     .advanced-grid {
         grid-template-columns: repeat(2, 1fr);
     }
