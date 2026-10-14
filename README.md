@@ -10,6 +10,7 @@
 ## 📋 Recent Changes
 
 ### 2026-10-14
+- **feature:** Added a site-wide System / Light / Dark theme selector with browser-local persistence, live device-theme updates, accessible palettes, and themed dropdowns, migration guidance, tables, dialogs, and price-history charts. Switching themes preserves results and selections without changing pricing, ranking, or exports.
 - **fix:** Kept the Extra Discount % label on one line and aligned comparison-form inputs at desktop widths, while preserving mobile stacking and all discount/pricing behavior.
 - **fix:** Corrected local temporary-disk capability parsing and cache persistence across SCSI, NVMe, and diskless VM sizes, restoring disk-loss migration warnings and existing recommendation penalties. PowerShell uses matching detection; genuinely missing data remains unknown. Added refresh-to-comparison regressions and a full-region metadata verification gate.
 
@@ -45,6 +46,7 @@ Azure VM SKU Alternatives helps you discover similar or alternative VM SKUs when
 **Live Demo:** https://blue-grass-0e1bb5e10.7.azurestaticapps.net
 
 **Features:**
+- **Light and dark themes** - The header's Theme selector defaults to System and follows device-theme changes. Choose Light or Dark to override it; the preference is saved locally for this browser and site origin. If browser storage is unavailable, the choice still works for the current visit. Theme changes do not reset results or selections, and downloaded files are unchanged.
 - ✨ **Searchable dropdown** - Type "D2s" to filter 1000+ SKUs
 - ⚡ **Blazing fast** - Results in 10-50ms (cached data)
 - 💰 **Live pricing** - See hourly/monthly costs

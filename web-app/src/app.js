@@ -422,7 +422,7 @@ let allSkusForRegion = [];
 function updateSkuCount(count) {
     const skuCount = document.getElementById('skuCount');
     skuCount.textContent = `${count} SKUs available`;
-    skuCount.style.color = '#107c10'; // Success green
+    skuCount.style.color = 'var(--success)';
 }
 
 function updateDiscountHint() {
@@ -440,10 +440,10 @@ function updateDiscountHint() {
         hint.style.color = '';
     } else if (val > 100) {
         hint.textContent = 'Discount must be between 0 and 100.';
-        hint.style.color = '#a80000';
+        hint.style.color = 'var(--danger)';
     } else {
         hint.textContent = `Prices shown at ${(100 - val).toFixed(val % 1 === 0 ? 0 : 1)}% of list price (${val}% discount applied).`;
-        hint.style.color = '#107c10';
+        hint.style.color = 'var(--success)';
     }
 }
 
@@ -472,7 +472,7 @@ async function loadSkusForRegion(location) {
         skuChoices.setChoices([{ value: '', label: 'Loading SKUs...', disabled: true }], 'value', 'label', true);
         skuChoices.disable();
         skuCount.textContent = 'Loading...';
-        skuCount.style.color = '#666';
+        skuCount.style.color = 'var(--text-secondary)';
         
         // Fetch from cached API
         const response = await fetch(`${API_BASE_URL}/skus?location=${location}`);
@@ -488,7 +488,7 @@ async function loadSkusForRegion(location) {
             allSkusForRegion = [];
             skuChoices.setChoices([{ value: '', label: 'No SKUs available for this region', disabled: true }], 'value', 'label', true);
             skuCount.textContent = 'No SKUs found';
-            skuCount.style.color = '#d13438';
+            skuCount.style.color = 'var(--danger)';
             return;
         }
         
@@ -506,7 +506,7 @@ async function loadSkusForRegion(location) {
         console.error('Failed to load SKUs:', error);
         skuChoices.setChoices([{ value: '', label: 'Error loading SKUs - try again', disabled: true }], 'value', 'label', true);
         skuCount.textContent = 'Failed to load SKUs';
-        skuCount.style.color = '#d13438'; // Error red
+        skuCount.style.color = 'var(--danger)';
     }
 }
 
@@ -1322,7 +1322,7 @@ function renderSparklineInto(el, series) {
     const first = linux[0], last = linux[linux.length - 1];
     const pct = first ? ((last - first) / first * 100) : 0;
     const dir = pct < -0.5 ? 'down' : pct > 0.5 ? 'up' : 'flat';
-    const stroke = dir === 'down' ? '#107c10' : dir === 'up' ? '#d13438' : '#8a8886';
+    const stroke = dir === 'down' ? 'var(--success)' : dir === 'up' ? 'var(--danger)' : 'var(--text-muted)';
     const arrow = dir === 'down' ? '↓' : dir === 'up' ? '↑' : '→';
     const badge = dir === 'flat'
         ? '<span class="sparkline-badge flat">±0%</span>'
@@ -1445,9 +1445,9 @@ function buildHistoryChart(points) {
     const W = 640, H = 220, padL = 54, padR = 16, padT = 16, padB = 34;
     const dates = points.map(p => p.date);
     const seriesDefs = [
-        { key: 'hourlyLinux', color: '#0078d4', label: 'Linux' },
-        { key: 'hourlyWindows', color: '#8661c5', label: 'Windows' },
-        { key: 'hourlySpot', color: '#d97706', label: 'Spot' },
+        { key: 'hourlyLinux', color: 'var(--chart-linux)', label: 'Linux' },
+        { key: 'hourlyWindows', color: 'var(--chart-windows)', label: 'Windows' },
+        { key: 'hourlySpot', color: 'var(--chart-spot)', label: 'Spot' },
     ];
 
     const allVals = [];
@@ -1463,7 +1463,7 @@ function buildHistoryChart(points) {
     let grid = '';
     [max, (max + min) / 2, min].forEach(val => {
         const y = yAt(val);
-        grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="#eee" stroke-width="1"/>`;
+        grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="1"/>`;
         grid += `<text x="${padL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" class="hist-axis">${fmtUsd(val)}</text>`;
     });
 
