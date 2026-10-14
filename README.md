@@ -10,6 +10,7 @@
 ## 📋 Recent Changes
 
 ### 2026-10-14
+- **fix:** Kept the Extra Discount % label on one line and aligned comparison-form inputs at desktop widths, while preserving mobile stacking and all discount/pricing behavior.
 - **fix:** Corrected local temporary-disk capability parsing and cache persistence across SCSI, NVMe, and diskless VM sizes, restoring disk-loss migration warnings and existing recommendation penalties. PowerShell uses matching detection; genuinely missing data remains unknown. Added refresh-to-comparison regressions and a full-region metadata verification gate.
 
 📄 [Full changelog →](CHANGELOG.md)
