@@ -1271,6 +1271,7 @@ def build_grid_row(entity: Dict, pricing_override: Optional[Dict] = None) -> Dic
         'acu': entity.get('acu', 0),
         'vCPUsPerCore': entity.get('vCPUsPerCore', 0),
         'nvme': bool(entity.get('nvme', False)),
+        'hasTempDisk': _cached_temp_disk_presence(entity),
         'cpuVendor': entity.get('cpuVendor', 'Intel'),
         'architecture': entity.get('architecture', 'x64'),
         'maxNics': entity.get('maxNics', 0),
@@ -1962,14 +1963,48 @@ def _effective_vcpus(capabilities: Dict) -> int:
     return 0
 
 
+def _temp_disk_size(capabilities: Dict, names: tuple) -> Optional[float]:
+    values = {name.lower(): value for name, value in capabilities.items()}
+    for name in names:
+        if name.lower() not in values:
+            continue
+        raw = values[name.lower()]
+        if raw is None or raw == '':
+            return None
+        try:
+            size = float(raw)
+        except (TypeError, ValueError):
+            size = float('nan')
+        if not math.isfinite(size) or size < 0:
+            logging.warning('Invalid temporary-disk capability %s: %r', name, raw)
+            return None
+        return size
+    return None
+
+
 def _has_temp_disk(capabilities: Dict) -> Optional[bool]:
-    """Include SCSI resource disks and local NVMe; missing cache data is unknown."""
-    resource_disk_mb = capabilities.get('ResourceDiskSizeInMB')
-    if float(capabilities.get('NvmeDiskSizeInMiB') or 0) > 0:
+    """Use Compute's resource volume and optional local NVMe capacity."""
+    resource_disk_mb = _temp_disk_size(
+        capabilities, ('MaxResourceVolumeMB', 'ResourceDiskSizeInMB'))
+    nvme_mib = _temp_disk_size(capabilities, ('NvmeDiskSizeInMiB',))
+    if (resource_disk_mb or 0) > 0 or (nvme_mib or 0) > 0:
         return True
-    if resource_disk_mb is None or resource_disk_mb == '':
+    # NVMe is optional on older sizes. An explicit zero resource volume with
+    # no NVMe capacity field is authoritative; a malformed field is not.
+    nvme_keys = [key for key in capabilities if key.lower() == 'nvmedisksizeinmib']
+    if resource_disk_mb == 0 and (not nvme_keys or nvme_mib == 0):
+        return False
+    return None
+
+
+def _cached_temp_disk_presence(entity: Dict) -> Optional[bool]:
+    # The marker overrides stale booleans left by Table Storage merge upserts.
+    if entity.get('hasTempDiskKnown') is False:
         return None
-    return float(resource_disk_mb) > 0
+    value = entity.get('hasTempDisk')
+    if isinstance(value, bool):
+        return value
+    return True if entity.get('nvme') is True else None
 
 
 def extract_capabilities(sku: Dict) -> Dict:
@@ -1990,7 +2025,7 @@ def extract_capabilities(sku: Dict) -> Dict:
         'encryptionAtHost': capabilities.get('EncryptionAtHostSupported') == 'True',
         'gpuCount': int(capabilities.get('GPUs', 0)),
         'gpuType': capabilities.get('GPUName') or capabilities.get('GPUType'),
-        'nvme': int(capabilities.get('NvmeDiskSizeInMiB', 0)) > 0,
+        'nvme': (_temp_disk_size(capabilities, ('NvmeDiskSizeInMiB',)) or 0) > 0,
         'hasTempDisk': _has_temp_disk(capabilities),
         'uncachedDiskIOPS': int(capabilities.get('UncachedDiskIOPS', 0)),
         'uncachedDiskBytesPerSecond': int(capabilities.get('UncachedDiskBytesPerSecond', 0)),
@@ -2738,9 +2773,10 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                         {'name': 'EncryptionAtHostSupported', 'value': 'True' if entity['encryptionAtHost'] else 'False'},
                         {'name': 'EphemeralOSDiskSupported', 'value': 'True' if entity['ephemeralOSDisk'] else 'False'},
                         {'name': 'NvmeDiskSizeInMiB', 'value': '1' if entity.get('nvme', False) else '0'},
-                        {'name': 'ResourceDiskSizeInMB', 'value': (
-                            '1' if entity['hasTempDisk'] else '0'
-                        ) if 'hasTempDisk' in entity else ''},
+                        {'name': 'MaxResourceVolumeMB', 'value': (
+                            '' if _cached_temp_disk_presence(entity) is None else
+                            '1' if _cached_temp_disk_presence(entity) else '0'
+                        )},
                         {'name': 'OSVhdSizeMB', 'value': str(entity.get('osVhdSizeMB', 0))},
                         {'name': 'HyperVGenerations', 'value': entity.get('hyperVGenerations', '')},
                         {'name': 'ACUs', 'value': str(entity.get('acu', 0))},
@@ -4017,6 +4053,8 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'encryptionAtHost': capabilities['encryptionAtHost'],
                 'ephemeralOSDisk': capabilities['ephemeralOSDisk'],
                 'nvme': capabilities['nvme'],
+                'hasTempDisk': capabilities.get('hasTempDisk') is True,
+                'hasTempDiskKnown': capabilities.get('hasTempDisk') is not None,
                 'architecture': capabilities['architecture'],
                 'cpuVendor': cpu_vendor,
                 'osVhdSizeMB': capabilities['osVhdSizeMB'],
@@ -4719,9 +4757,8 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
         'acceleratedNetworking': capabilities.get('AcceleratedNetworkingEnabled', '').lower() == 'true',
         'encryptionAtHost': capabilities.get('EncryptionAtHostSupported', '').lower() == 'true',
         'ephemeralOSDisk': capabilities.get('EphemeralOSDiskSupported', '').lower() == 'true',
-        'nvme': int(capabilities.get('NvmeDiskSizeInMiB', 0)) > 0,
-        **({'hasTempDisk': _has_temp_disk(capabilities)}
-           if _has_temp_disk(capabilities) is not None else {}),
+        'nvme': (_temp_disk_size(capabilities, ('NvmeDiskSizeInMiB',)) or 0) > 0,
+        'hasTempDisk': _has_temp_disk(capabilities),
         'architecture': capabilities.get('CpuArchitectureType', 'x64'),
         'osVhdSizeMB': int(capabilities.get('OSVhdSizeMB', 0)),
         'hyperVGenerations': capabilities.get('HyperVGenerations', ''),
@@ -4831,7 +4868,7 @@ def extract_capabilities_for_diff(sku: dict) -> dict:
     caps['premiumIO'] = sku.get('premiumIO', False)
     caps['ephemeralOSDisk'] = sku.get('ephemeralOSDisk', False)
     caps['nvme'] = sku.get('nvme', False)
-    caps['hasTempDisk'] = sku.get('hasTempDisk', True if caps['nvme'] else None)
+    caps['hasTempDisk'] = _cached_temp_disk_presence(sku)
     caps['osVhdSizeMB'] = sku.get('osVhdSizeMB')
     caps['maxNics'] = sku.get('maxNics')
     caps['networkBandwidthMbps'] = sku.get('networkBandwidthMbps')

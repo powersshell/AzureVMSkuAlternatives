@@ -829,7 +829,7 @@ class TestBootGenerationRecommendations:
                         {'name': 'vCPUs', 'value': '2'},
                         {'name': 'MemoryGB', 'value': '8'},
                         {'name': 'HyperVGenerations', 'value': boot},
-                        {'name': 'ResourceDiskSizeInMB', 'value': '0'},
+                        {'name': 'MaxResourceVolumeMB', 'value': '0'},
                     ]}
 
         catalog = [sku('Standard_D2s_v3', 'V1,V2'), sku('Standard_D2s_v5', 'V1,V2'),
@@ -883,11 +883,162 @@ class TestTemporaryDisks:
             {'name': 'NvmeDiskSizeInMiB', 'value': nvme_mib},
         ]}
         if resource_mb is not None:
-            sku['capabilities'].append({'name': 'ResourceDiskSizeInMB', 'value': resource_mb})
+            sku['capabilities'].append({'name': 'MaxResourceVolumeMB', 'value': resource_mb})
         assert extract_capabilities(sku)['hasTempDisk'] is expected
         cached = extract_capabilities_for_cache(sku)
         assert cached.get('hasTempDisk') is expected
         assert extract_capabilities_for_diff(cached)['hasTempDisk'] is expected
+
+    @pytest.mark.parametrize('caps,expected', [
+        ({'MaxResourceVolumeMB': '32768'}, True),
+        ({'MaxResourceVolumeMB': '0'}, False),
+        ({'MaxResourceVolumeMB': '0', 'NVMeDiskSizeInMiB': '153600'}, True),
+        ({'NvmeDiskSizeInMiB': '153600'}, True),
+        ({'NvmeDiskSizeInMiB': '0'}, None),
+        ({'ResourceDiskSizeInMB': '32768'}, True),
+        ({'MaxResourceVolumeMB': '0', 'ResourceDiskSizeInMB': '32768'}, False),
+        ({'MaxResourceVolumeMB': 'bad', 'NvmeDiskSizeInMiB': '0'}, None),
+        ({'MaxResourceVolumeMB': '-1'}, None),
+        ({'MaxResourceVolumeMB': 'NaN'}, None),
+        ({'MaxResourceVolumeMB': 'Infinity'}, None),
+        ({'MaxResourceVolumeMB': '0', 'NvmeDiskSizeInMiB': 'bad'}, None),
+        ({'MaxResourceVolumeMB': '0', 'NvmeDiskSizeInMiB': ''}, None),
+        ({}, None),
+    ])
+    def test_real_capability_names_and_unknowns(self, caps, expected):
+        sku = {'capabilities': [{'name': k, 'value': v} for k, v in caps.items()]}
+        assert extract_capabilities(sku)['hasTempDisk'] is expected
+        assert extract_capabilities_for_cache(sku).get('hasTempDisk') is expected
+
+    @pytest.mark.parametrize('entity,expected', [
+        ({}, None),
+        ({'nvme': False}, None),
+        ({'nvme': True}, True),
+        ({'hasTempDisk': False}, False),
+        ({'hasTempDisk': True}, True),
+        ({'hasTempDisk': True, 'hasTempDiskKnown': False}, None),
+        ({'hasTempDisk': False, 'hasTempDiskKnown': True}, False),
+    ])
+    def test_legacy_and_explicit_unknown_cache(self, entity, expected):
+        assert extract_capabilities_for_diff(entity)['hasTempDisk'] is expected
+        assert build_grid_row(entity)['hasTempDisk'] is expected
+
+    @pytest.mark.parametrize('fallback', [False, True])
+    def test_actual_refresh_persistence_round_trip(self, monkeypatch, fallback):
+        import function_app as app
+
+        cases = [
+            ('Standard_D4s_v3', {'MaxResourceVolumeMB': '32768'}, True),
+            ('Standard_D4s_v5', {'MaxResourceVolumeMB': '0'}, False),
+            ('Standard_D4ds_v5', {'MaxResourceVolumeMB': '153600'}, True),
+            ('Standard_D4ds_v6', {'MaxResourceVolumeMB': '0', 'NVMeDiskSizeInMiB': '153600'}, True),
+            ('Standard_D4s_v7', {}, None),
+            ('Standard_D4s_v6', {'MaxResourceVolumeMB': 'bad'}, None),
+        ]
+        skus = []
+        for name, caps, _ in cases:
+            skus.append({'name': name, 'resourceType': 'virtualMachines', 'capabilities': [
+                {'name': k, 'value': v} for k, v in {
+                    'vCPUs': '4', 'MemoryGB': '16', 'HyperVGenerations': 'V1,V2', **caps
+                }.items()
+            ]})
+
+        class Table:
+            def __init__(self):
+                self.rows = {name: {'hasTempDisk': True, 'nvme': True} for name, _, _ in cases}
+
+            def submit_transaction(self, operations):
+                if fallback:
+                    raise RuntimeError('Simulated batch failure')
+                for operation, entity in operations:
+                    assert operation == 'upsert'
+                    self.upsert_entity(entity)
+
+            def upsert_entity(self, entity):
+                self.rows[entity['RowKey']].update(entity)
+
+            def query_entities(self, **kwargs):
+                return list(self.rows.values())
+
+            def get_entity(self, partition_key, row_key):
+                assert partition_key == 'eastus'
+                return self.rows[row_key]
+
+        table = Table()
+        monkeypatch.setattr(app.requests, 'get', lambda *args, **kwargs:
+                            types.SimpleNamespace(ok=True, json=lambda: {'value': skus}))
+        monkeypatch.setattr(app, 'fetch_bulk_region_pricing', lambda *args, **kwargs: {})
+        monkeypatch.setenv('SKU_CACHE_STORAGE_ACCOUNT', 'fixture')
+        monkeypatch.setattr(app, 'TableServiceClient', lambda **kwargs:
+                            types.SimpleNamespace(get_table_client=lambda *args, **kw: table))
+        monkeypatch.setattr(app, '_enrich_network_bw', lambda *args: None)
+
+        updated, coverage = app.refresh_region('eastus', 'subscription', 'token', table)
+        assert updated == len(cases)
+        assert coverage['skusFailedToPersist'] == 0
+        reconstructed, source = app.get_vm_skus_with_cache('subscription', 'eastus', 'token')
+        assert source == 'cache'
+        reconstructed = {sku['name']: sku for sku in reconstructed}
+        for name, _, expected in cases:
+            stored = table.rows[name]
+            assert stored['hasTempDiskKnown'] is (expected is not None)
+            assert stored['hasTempDisk'] is (expected is True)
+            assert extract_capabilities(reconstructed[name])['hasTempDisk'] is expected
+            read = app.get_sku_from_cache(name, 'eastus')
+            assert extract_capabilities_for_diff(read)['hasTempDisk'] is expected
+            assert build_grid_row(read)['hasTempDisk'] is expected
+
+        diff = calculate_detailed_differences(
+            table.rows['Standard_D4s_v3'], table.rows['Standard_D4s_v5'], {}, {})
+        assert diff['storage']['tempDisk']['target'] is True
+        assert diff['storage']['tempDisk']['alternative'] is False
+        import json
+
+        class Response:
+            def __init__(self, body, status_code=200, **kwargs):
+                self.body = json.loads(body)
+                self.status_code = status_code
+
+        monkeypatch.setattr(app.func, 'HttpResponse', Response)
+        monkeypatch.setenv('AZURE_SUBSCRIPTION_ID', 'subscription')
+        monkeypatch.setattr(app, 'get_access_token', lambda: 'token')
+        monkeypatch.setattr(app, 'get_vm_pricing', lambda *args: {
+            'hourlyPrice': 0.1, 'monthlyPrice': 73,
+        })
+        response = app.compare_vms(types.SimpleNamespace(
+            method='POST', get_json=lambda: {
+                'skuName': 'Standard_D4s_v3', 'location': 'eastus',
+                'sourceGen': 'gen1', 'targetGen': 'any',
+                'minSimilarityScore': 0, 'maxResults': 50,
+            }))
+        assert response.status_code == 200
+        assert response.body['dataSource'] == 'cache'
+        assert response.body['targetSku']['capabilities']['hasTempDisk'] is True
+        alternatives = {alt['name']: alt for alt in response.body['alternatives']}
+        for name, _, expected in cases[1:]:
+            alt = alternatives[name]
+            assert alt['migrationReadiness']['hasTempDisk'] is expected
+            assert alt['migrationReadiness']['tempDiskMismatch'] is (expected is False)
+            assert alt['scoreBreakdown']['tempDiskPenalty'] == (12 if expected is False else 0)
+
+    def test_live_metadata_guard(self, monkeypatch):
+        monkeypatch.syspath_prepend(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../scripts')))
+        import check_temp_disk_metadata as guard
+        raw = [
+            {'resourceType': 'virtualMachines', 'name': 'Standard_D4s_v3',
+             'capabilities': [{'name': 'MaxResourceVolumeMB', 'value': '32768'}]},
+            {'resourceType': 'virtualMachines', 'name': 'Standard_D4s_v5',
+             'capabilities': [{'name': 'MaxResourceVolumeMB', 'value': '0'}]},
+        ]
+        rows = [{'name': raw[0]['name'], 'hasTempDisk': True},
+                {'name': raw[1]['name'], 'hasTempDisk': False}]
+        monkeypatch.setattr(guard, 'fetch_json', lambda url, **kwargs:
+                            {'skus': rows} if '/grid?' in url else {'value': raw})
+        assert guard.check_region('eastus', 'subscription', 'token') == 0
+        rows[1]['hasTempDisk'] = None
+        assert guard.check_region('eastus', 'subscription', 'token') == 1
+        del rows[0]['hasTempDisk']
+        assert guard.check_region('eastus', 'subscription', 'token') == 2
 
     @pytest.mark.parametrize('candidate,penalty', [(False, 12.0), (True, 0.0), (None, 0.0)])
     def test_loss_penalty_and_badge_agree(self, candidate, penalty):

@@ -14,12 +14,17 @@ const context = vm.createContext({
     getDiscountMultiplier: () => 1, savingsPlanExportValues: () => [],
     formatCapabilityValue: () => 'N/A',
 });
-for (const name of ['escapeHtml', 'getMigrationAssessment', 'renderMigrationAssessment', 'renderMigrationEffortPanel', 'buildComparisonExportModel']) {
+for (const name of ['escapeHtml', 'getMigrationAssessment', 'renderMigrationAssessment', 'renderMigrationEffortPanel', 'buildComparisonExportModel', 'renderTempDiskDiff']) {
     const match = source.match(new RegExp(`^function ${name}\\b[\\s\\S]*?^}`, 'm'));
     assert.ok(match, name);
     vm.runInContext(match[0], context);
 }
 vm.runInContext(source.match(/^const MIGRATION_JOURNEY = \[[\s\S]*?^\];/m)[0], context);
+assert.match(context.renderTempDiskDiff({ target: true, alternative: false }), /Yes → No/);
+assert.match(context.renderTempDiskDiff({ target: true, alternative: false }), /pagefile\/swap/);
+assert.doesNotMatch(context.renderTempDiskDiff({ target: true, alternative: true }), /No local scratch/);
+assert.match(context.renderTempDiskDiff({ target: null, alternative: null }), /Unknown → Unknown/);
+assert.doesNotMatch(context.renderTempDiskDiff({ target: null, alternative: null }), /No local scratch/);
 for (const id of ['sourceGen', 'targetGen']) {
     assert.equal((html.match(new RegExp(`id="${id}"`, 'g')) || []).length, 1);
     assert.ok(html.indexOf(`id="${id}"`) < html.indexOf('<!-- Advanced Options -->'));
