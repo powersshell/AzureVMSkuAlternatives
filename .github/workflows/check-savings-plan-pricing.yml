@@ -51,7 +51,7 @@ jobs:
           python -m pip install -r web-app/api/requirements-dev.txt
           python -m pip install -r mcp-server/requirements.txt
       - name: Check API savings plan, grid and generation fixtures
-        run: python -m pytest web-app/api/tests/test_unit.py -m unit -k "SavingsPlanPricing or BuildGridRow or BootGeneration or TemporaryDisks" -q
+        run: python -m pytest web-app/api/tests/test_unit.py -m unit -k "SavingsPlanPricing or BuildGridRow or BootGeneration or TemporaryDisks or RecommendationScoring" -q
       - name: Check website syntax and pricing fixtures
         run: |
           node --check web-app/src/app.js

@@ -1053,8 +1053,8 @@ $script:AdjacentWorkloadClasses = @(
 
 # Blend weights per priority mode: similarity, modernization, family affinity.
 $script:RecommendationModeWeights = @{
-    'balanced' = @{ Similarity = 0.60; Modernization = 0.25; FamilyAffinity = 0.15 }
-    'cost'     = @{ Similarity = 0.55; Modernization = 0.20; FamilyAffinity = 0.15 }
+    'balanced' = @{ Similarity = 0.55; Modernization = 0.20; FamilyAffinity = 0.25 }
+    'cost'     = @{ Similarity = 0.50; Modernization = 0.15; FamilyAffinity = 0.25 }
 }
 
 # Maximum bonus (points) awarded in cost mode for the cheapest candidate.
@@ -1368,7 +1368,9 @@ function Get-RecommendationScore {
         [double]$CpuPerfScore = 0,
         [double]$SavingPercent = 0,
         [Nullable[int]]$TargetGenerationPreference,
-        [int[]]$CandidateGenerations = @()
+        [int[]]$CandidateGenerations = @(),
+        [Nullable[bool]]$SourceHasTempDisk,
+        [Nullable[bool]]$CandidateHasTempDisk
     )
 
     $weights = $script:RecommendationModeWeights[$Mode]
@@ -1399,6 +1401,11 @@ function Get-RecommendationScore {
         elseif ($CandidateGenerations -notcontains $TargetGenerationPreference) { $generationMismatchPenalty = 30 }
     }
     $score -= $generationMismatchPenalty + $generationUnknownPenalty
+    $tempDiskPenalty = 0
+    if ($SourceHasTempDisk -eq $true -and $CandidateHasTempDisk -eq $false) {
+        $tempDiskPenalty = 8
+        $score -= $tempDiskPenalty
+    }
 
     return [PSCustomObject]@{
         Score                  = [Math]::Round([Math]::Max(0.0, $score), 2)
@@ -1408,6 +1415,7 @@ function Get-RecommendationScore {
         OlderGenerationPenalty = $olderGenerationPenalty
         GenerationMismatchPenalty = $generationMismatchPenalty
         GenerationUnknownPenalty = $generationUnknownPenalty
+        TempDiskPenalty        = $tempDiskPenalty
     }
 }
 
@@ -2296,6 +2304,7 @@ $similarSkus = $allSkus | Where-Object {
             if ($PriorityMode -eq 'cost' -and $targetRankingPrice -and $rankingPrice -and $targetRankingPrice.Hourly -gt 0) {
                 $savingPercent = (($targetRankingPrice.Hourly - $rankingPrice.Hourly) / $targetRankingPrice.Hourly) * 100
             }
+            $candidateHasTempDisk = Get-TempDiskPresence -Capabilities $skuCapabilities
             $recommendation = Get-RecommendationScore `
                 -SimilarityScore $similarityScore `
                 -TargetIdentity $targetIdentity `
@@ -2305,7 +2314,9 @@ $similarSkus = $allSkus | Where-Object {
                 -CpuPerfScore $(if ($cpuPerf) { [double]$cpuPerf.Score } else { 0 }) `
                 -SavingPercent $savingPercent `
                 -TargetGenerationPreference $generationContext.TargetGeneration `
-                -CandidateGenerations @(Get-SupportedBootGenerations $skuCapabilities['HyperVGenerations'])
+                -CandidateGenerations @(Get-SupportedBootGenerations $skuCapabilities['HyperVGenerations']) `
+                -SourceHasTempDisk $sourceHasTempDisk `
+                -CandidateHasTempDisk $candidateHasTempDisk
 
             $migrationReadiness = Get-MigrationReadiness `
                 -Identity $candidateIdentity `
@@ -2315,7 +2326,6 @@ $similarSkus = $allSkus | Where-Object {
                 -HasLocalNvmeTempDisk $skuHasNVMe `
                 -HyperVGenerations $(if ($skuCapabilities.ContainsKey('HyperVGenerations')) { $skuCapabilities['HyperVGenerations'] } else { '' })
             $candidateArchitecture = if ($skuArch -match '(?i)arm') { 'arm64' } else { 'x64' }
-            $candidateHasTempDisk = Get-TempDiskPresence -Capabilities $skuCapabilities
             $assessment = Get-MigrationAssessment -HyperVGenerations $skuCapabilities['HyperVGenerations'] `
                 -SourceGeneration $generationContext.SourceGeneration -TargetGeneration $generationContext.TargetGeneration `
                 -ArchitectureChange ($candidateArchitecture -ne $targetArchitecture) `

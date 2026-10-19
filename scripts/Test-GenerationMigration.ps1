@@ -79,4 +79,24 @@ foreach ($preference in @($null, 1, 2)) {
 }
 Assert-True ($source -match "\[ValidateSet\('auto', 'gen1', 'gen2'\)\]") 'SourceGen parameter is validated.'
 Assert-True ($source -match "\[ValidateSet\('same', 'any', 'gen1', 'gen2'\)\]") 'TargetGen parameter is validated.'
+$weightsNode = $ast.Find({ param($n)
+    $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+    $n.Left.Extent.Text -eq '$script:RecommendationModeWeights'
+}, $true)
+if (-not $weightsNode) { throw 'Missing production recommendation weights.' }
+. ([scriptblock]::Create($weightsNode.Extent.Text))
+function Get-FamilyAffinity { param($TargetIdentity, $CandidateIdentity) $CandidateIdentity.Affinity }
+$sameFamily = [pscustomobject]@{ Version = 2; Affinity = 100 }
+$otherFamily = [pscustomobject]@{ Version = 7; Affinity = 40 }
+$identity.Version = 1
+foreach ($mode in @('balanced', 'cost')) {
+    $same = Get-RecommendationScore -SimilarityScore 92.31 -TargetIdentity $identity -CandidateIdentity $sameFamily -FamilyGenerations @{} -Mode $mode -SourceHasTempDisk $true -CandidateHasTempDisk $false
+    $other = Get-RecommendationScore -SimilarityScore 100 -TargetIdentity $identity -CandidateIdentity $otherFamily -FamilyGenerations @{} -Mode $mode -SourceHasTempDisk $true -CandidateHasTempDisk $true
+    Assert-True ($same.Score -gt $other.Score) 'Suitable same-family candidate must lead despite disk loss.'
+    Assert-True ($same.TempDiskPenalty -eq 8 -and $other.TempDiskPenalty -eq 0) 'Disk-loss penalty must be 8 only for known loss.'
+    $unknown = Get-RecommendationScore -SimilarityScore 92.31 -TargetIdentity $identity -CandidateIdentity $sameFamily -FamilyGenerations @{} -Mode $mode -SourceHasTempDisk $true
+    Assert-True ($unknown.TempDiskPenalty -eq 0) 'Unknown candidate disk status must not imply loss.'
+    $discounted = Get-RecommendationScore -SimilarityScore 92.31 -TargetIdentity $identity -CandidateIdentity $sameFamily -FamilyGenerations @{} -Mode $mode -SavingPercent 50
+    Assert-True ($discounted.CostBonus -eq $(if ($mode -eq 'cost') { 5 } else { 0 })) 'Only cost mode receives the unchanged savings bonus.'
+}
 Write-Host "PASS: $count generation path, prerequisite, unknown, independent risk and preference scoring assertions."

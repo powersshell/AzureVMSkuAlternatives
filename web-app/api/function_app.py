@@ -2184,8 +2184,8 @@ _ADJACENT_WORKLOAD_CLASSES = frozenset({
 
 # Blend weights per priority mode: (similarity, modernization, familyAffinity).
 RECOMMENDATION_MODE_WEIGHTS = {
-    'balanced': (0.60, 0.25, 0.15),
-    'cost': (0.55, 0.20, 0.15),
+    'balanced': (0.55, 0.20, 0.25),
+    'cost': (0.50, 0.15, 0.25),
 }
 
 # Maximum bonus (in points) awarded in cost mode for the cheapest candidate.
@@ -2515,7 +2515,7 @@ def calculate_recommendation_score(similarity_score: float, target_identity: Dic
 
     temp_disk_penalty = 0.0
     if source_has_temp_disk is True and candidate_has_temp_disk is False:
-        temp_disk_penalty = 12.0
+        temp_disk_penalty = 8.0
         score -= temp_disk_penalty
 
     older_generation_penalty = 0.0
