@@ -212,12 +212,24 @@ assert.equal(context.browseMatch(gen2Only, { ...context.browseEmptyFilters(),
 context.gridRows = [{ ...row, browseCapabilities: undefined, architecture: 'arm64' }];
 const architectureOptions = context.browseMultiOptions(architecture, []);
 assert.equal(architectureOptions.length, 2, 'legacy API still presents both architecture choices');
-assert.equal(architectureOptions.find(option => option.value === 'x64').label, 'x64 (no verified data in this region)');
-assert.equal(context.browseCapability({ ...row, browseCapabilities: undefined }, 'architecture'), null,
+assert.equal(architectureOptions.find(option => option.value === 'x64').label, 'x64 (verification pending)');
+assert.equal(architectureOptions.find(option => option.value === 'arm64').label, 'Arm64');
+const legacyX64 = { ...row, architecture: 'x64', browseCapabilities: undefined };
+assert.equal(context.browseCapability(legacyX64, 'architecture'), null,
     'static options do not fabricate known x64 capability data');
+const x64Filter = { ...context.browseEmptyFilters(), values: { architecture: ['x64'] } };
+assert.equal(context.browseMatch(legacyX64, x64Filter).matches, false);
+assert.equal(context.browseMatch(legacyX64, { ...x64Filter, includeUnknown: true }).unverified, true);
 context.setBrowseMultiValues(architecture, ['arm64', 'x64']);
 context.updateBrowseFacets();
+assert.ok(node('browseApiNotice').textContent.includes('Legacy x64 values may be defaults'));
+assert.ok(node('browseApiNotice').textContent.includes('Unverified does not mean unavailable'));
 assert.equal(context.readBrowseFilters().values.architecture.join(','), 'arm64,x64');
+context.gridRows = [row];
+context.updateBrowseFacets();
+assert.equal(context.browseMultiOptions(architecture, []).find(option => option.value === 'x64').label, 'x64',
+    'explicit architecture data removes the pending-verification label');
+assert.ok(node('browseApiNotice').textContent.includes('Unverified does not mean unavailable'));
 context.gridRows = [];
 context.updateBrowseFacets();
 assert.equal(context.readBrowseFilters().values.architecture.join(','), 'arm64,x64',

@@ -55,7 +55,7 @@ function browseMultiOptions(field, selected) {
         .sort((a, b) => browseOptionLabel(field, a).localeCompare(browseOptionLabel(field, b)))
         .map(value => ({
             value, selected: selected.includes(value),
-            label: browseOptionLabel(field, value) + (available.has(value) ? '' : ' (no verified data in this region)')
+            label: browseOptionLabel(field, value) + (available.has(value) ? '' : ' (verification pending)')
         }));
 }
 
@@ -252,8 +252,8 @@ function updateBrowseFacets() {
         setBrowseMultiValues(field, selected);
     }
     document.getElementById('browseApiNotice').textContent = gridRows.some(row => row.browseCapabilities?.schemaVersion === 1)
-        ? 'Unknown fields may need a successful capability-cache refresh. Published limits are not guaranteed workload performance.'
-        : 'This API has not published the advanced capability contract yet. Unsupported fields remain unknown; full coverage requires the reviewed API release and cache refresh.';
+        ? 'Unknown fields may need a successful capability-cache refresh. Unverified does not mean unavailable in this region. Published limits are not guaranteed workload performance.'
+        : 'This preview uses an older API. Some fields, including x64 architecture, require the reviewed API release and capability-cache refresh for verification. Legacy x64 values may be defaults. Unverified does not mean unavailable in this region.';
 }
 
 function writeBrowseFilters(filters) {
