@@ -2,7 +2,7 @@
 const BROWSE_FIELDS = [
     { key: 'vCPUs', label: 'Active vCPUs', type: 'range', common: 'gridVcpu' },
     { key: 'memoryGB', label: 'Memory (GiB)', type: 'range', common: 'gridRam' },
-    { key: 'architecture', label: 'CPU architecture', group: 'Compute', type: 'multi' },
+    { key: 'architecture', label: 'CPU architecture', group: 'Compute', type: 'multi', options: ['x64', 'arm64'], labels: { arm64: 'Arm64' } },
     { key: 'cpuGeneration', label: 'Processor generation', group: 'Compute', type: 'multi' },
     { key: 'cpuModels', label: 'Processor model (series may use several)', group: 'Compute', type: 'multi' },
     { key: 'memoryPerVcpu', label: 'Memory / active vCPU (GiB)', group: 'Compute', type: 'range' },
@@ -14,8 +14,8 @@ const BROWSE_FIELDS = [
     { key: 'uncachedDiskMBps', label: 'Uncached throughput (MB/s, VM limit)', group: 'Storage', type: 'range' },
     { key: 'premiumIO', label: 'Premium Storage', group: 'Storage', type: 'bool' },
     { key: 'ephemeralOSDisk', label: 'Ephemeral OS disk', group: 'Storage', type: 'bool' },
-    { key: 'hyperVGenerations', label: 'Hyper-V boot generation', group: 'Storage', type: 'multi' },
-    { key: 'diskControllerTypes', label: 'Remote disk controller', group: 'Storage', type: 'multi' },
+    { key: 'hyperVGenerations', label: 'Hyper-V boot generation', group: 'Storage', type: 'multi', options: ['V1', 'V2'], labels: { V1: 'Gen 1', V2: 'Gen 2' } },
+    { key: 'diskControllerTypes', label: 'Remote disk controller', group: 'Storage', type: 'multi', options: ['SCSI', 'NVMe'] },
     { key: 'maxNics', label: 'Maximum NICs', group: 'Networking', type: 'range' },
     { key: 'networkBandwidthMbps', label: 'Aggregate network bandwidth (Mbps)', group: 'Networking', type: 'range' },
     { key: 'acceleratedNetworking', label: 'Accelerated Networking', group: 'Networking', type: 'bool' },
@@ -35,6 +35,7 @@ const BROWSE_FIELDS = [
     { key: 'price', label: 'Displayed compute price', group: 'Price', type: 'price' }
 ];
 const BROWSE_STORAGE_KEY = 'vmsku_browse_v1';
+const browseMultiChoices = new Map();
 let browseReady = false;
 let browseRestoring = false;
 let browseStorageWarned = false;
@@ -42,6 +43,42 @@ let browseValidationErrors = [];
 
 function browseId(field) {
     return field.common || `browse-${field.key}`;
+}
+
+function browseOptionLabel(field, value) {
+    return Object.hasOwn(field.labels || {}, value) ? field.labels[value] : String(value);
+}
+
+function browseMultiOptions(field, selected) {
+    const available = new Set(gridRows.flatMap(row => browseCapability(row, field.key) ?? []));
+    return [...new Set([...(field.options || []), ...available, ...selected])]
+        .sort((a, b) => browseOptionLabel(field, a).localeCompare(browseOptionLabel(field, b)))
+        .map(value => ({
+            value, selected: selected.includes(value),
+            label: browseOptionLabel(field, value) + (available.has(value) ? '' : ' (no verified data in this region)')
+        }));
+}
+
+function setBrowseMultiValues(field, selected) {
+    const id = browseId(field);
+    const choices = browseMultiChoices.get(field.key);
+    const options = browseMultiOptions(field, selected);
+    if (choices) {
+        choices.clearStore();
+        choices.setChoices(options, 'value', 'label', true);
+    } else {
+        document.getElementById(id).innerHTML = options.map(option =>
+            `<option value="${escapeHtml(String(option.value))}"${option.selected ? ' selected' : ''}>${escapeHtml(option.label)}</option>`).join('');
+    }
+    syncBrowseMultiControl(field);
+}
+
+function syncBrowseMultiControl(field) {
+    const id = browseId(field);
+    const empty = document.getElementById(id).selectedOptions.length === 0;
+    document.getElementById(`${id}Clear`).disabled = empty;
+    const choices = browseMultiChoices.get(field.key);
+    if (choices) choices.input.element.placeholder = empty ? 'Any' : 'Add another...';
 }
 
 function browseCapability(row, key) {
@@ -155,6 +192,8 @@ function browseMatch(row, filters) {
 }
 
 function buildBrowseControls() {
+    browseMultiChoices.forEach(choices => choices.destroy());
+    browseMultiChoices.clear();
     const groups = [...new Set(BROWSE_FIELDS.map(field => field.group).filter(Boolean))];
     document.getElementById('browseFilterGroups').innerHTML = groups.map(group => `<fieldset>
         <legend>${escapeHtml(group)}</legend>${BROWSE_FIELDS.filter(field => field.group === group).map(field => {
@@ -171,10 +210,34 @@ function buildBrowseControls() {
                 <label for="browsePriceUnit">Price period</label><select id="browsePriceUnit"><option value="monthly">Monthly (730 hours)</option><option value="hourly">Hourly</option></select>
                 <label><input type="checkbox" id="browseRequirePrice"> Require available price</label>
                 <small>Matches the displayed OS, purchase option, currency and applicable discount. Compute only; no storage/networking. Changing currency reinterprets the ceiling, not FX-converts it.</small></div>`;
-            return `<div class="browse-field"><label for="${id}">${label}</label><select id="${id}"${field.type === 'multi' ? ' multiple size="3"' : ''}>
+            return `<div class="browse-field"><label id="${id}Label" for="${id}">${label}</label><select id="${id}"${field.type === 'multi' ? ' multiple' : ''} aria-describedby="${id}Coverage">
                 ${field.type === 'bool' ? '<option value="">Any</option><option value="true">Supported / Yes</option><option value="false">Not supported / No</option>' : ''}
-                </select><small id="${id}Coverage"></small></div>`;
+                </select>${field.type === 'multi' ? `<button type="button" id="${id}Clear" class="browse-multi-clear" disabled aria-label="Clear ${label} selections">Clear selections</button>` : ''}
+                <small id="${id}Coverage"></small></div>`;
         }).join('')}</fieldset>`).join('');
+    for (const field of BROWSE_FIELDS.filter(f => f.type === 'multi')) {
+        const id = browseId(field);
+        const select = document.getElementById(id);
+        const choices = new Choices(select, {
+            allowHTML: false, removeItemButton: true, shouldSort: false,
+            searchEnabled: true, searchResultLimit: 100, itemSelectText: 'Select',
+            placeholder: true, placeholderValue: 'Any', searchPlaceholderValue: 'Search options...',
+            noChoicesText: 'No additional options',
+            fuseOptions: { threshold: 0.3, ignoreLocation: true }
+        });
+        choices.input.element.setAttribute('aria-label', field.label);
+        choices.input.element.setAttribute('aria-describedby', `${id}Coverage`);
+        browseMultiChoices.set(field.key, choices);
+        select.addEventListener('change', () => syncBrowseMultiControl(field));
+        document.getElementById(`${id}Clear`).addEventListener('click', () => {
+            choices.removeActiveItems();
+            syncBrowseMultiControl(field);
+            gridPage = 1;
+            renderGrid();
+            choices.input.element.focus();
+        });
+        setBrowseMultiValues(field, []);
+    }
 }
 
 function updateBrowseFacets() {
@@ -186,9 +249,7 @@ function updateBrowseFacets() {
         if (field.type !== 'multi') continue;
         const select = document.getElementById(id);
         const selected = [...select.selectedOptions].map(option => option.value);
-        const available = new Set(known.flat());
-        const options = [...new Set([...available, ...selected])].sort((a, b) => String(a).localeCompare(String(b)));
-        select.innerHTML = options.map(value => `<option value="${escapeHtml(String(value))}"${selected.includes(value) ? ' selected' : ''}>${escapeHtml(String(value))}${available.has(value) ? '' : ' (not in this region)'}</option>`).join('');
+        setBrowseMultiValues(field, selected);
     }
     document.getElementById('browseApiNotice').textContent = gridRows.some(row => row.browseCapabilities?.schemaVersion === 1)
         ? 'Unknown fields may need a successful capability-cache refresh. Published limits are not guaranteed workload performance.'
@@ -212,8 +273,7 @@ function writeBrowseFilters(filters) {
         } else if (field.type === 'price') document.getElementById(id).value = value?.max ?? '';
         else if (field.type === 'bool') document.getElementById(id).value = value || '';
         else {
-            const select = document.getElementById(id);
-            select.innerHTML = (value || []).map(v => `<option value="${escapeHtml(v)}" selected>${escapeHtml(v)}</option>`).join('');
+            setBrowseMultiValues(field, value || []);
         }
     }
 }
@@ -221,7 +281,7 @@ function writeBrowseFilters(filters) {
 function browseFilterDescriptions(filters) {
     const descriptions = Object.entries(filters.values).map(([key, value]) => {
         const field = BROWSE_FIELDS.find(f => f.key === key);
-        const text = Array.isArray(value) ? value.join(', ') : typeof value === 'object'
+        const text = Array.isArray(value) ? value.map(v => browseOptionLabel(field, v)).join(', ') : typeof value === 'object'
             ? `${value.min ?? 0} to ${value.max ?? 'any'}${key === 'price' ? ` ${document.getElementById('currencyCode').value}/${filters.priceUnit}` : ''}`
             : value === 'true' ? 'Yes' : 'No';
         return { key, text: `${field.label}: ${text}` };

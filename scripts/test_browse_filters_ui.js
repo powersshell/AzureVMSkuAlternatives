@@ -11,10 +11,11 @@ const nodes = new Map();
 function node(id) {
     if (!nodes.has(id)) nodes.set(id, {
         value: '', checked: false, selectedOptions: [], options: [], innerHTML: '', textContent: '',
+        listeners: new Map(),
         validity: { badInput: false }, attributes: {}, disabled: false,
         setAttribute(key, value) { this.attributes[key] = value; },
         getAttribute(key) { return this.attributes[key] || ''; },
-        querySelectorAll: () => [], addEventListener() {}, focus() {},
+        querySelectorAll: () => [], addEventListener(event, callback) { this.listeners.set(event, callback); }, focus() {},
         classList: { add() {}, remove() {}, toggle() {} }
     });
     return nodes.get(id);
@@ -37,6 +38,23 @@ const context = vm.createContext({
     setPricingOS: os => { context.currentPricingOS = os; },
     setPricingModel: model => { context.currentPricingModel = model; }
 });
+context.Choices = class {
+    constructor(select, config) {
+        this.select = select;
+        this.config = config;
+        this.input = { element: node('choices-input-' + [...nodes].find(([, value]) => value === select)[0]) };
+    }
+    clearStore() { this.select.options = []; this.select.selectedOptions = []; }
+    setChoices(options) {
+        this.select.options = options.map(option => ({ ...option }));
+        this.select.selectedOptions = this.select.options.filter(option => option.selected);
+    }
+    removeActiveItems() {
+        this.select.options.forEach(option => { option.selected = false; });
+        this.select.selectedOptions = [];
+    }
+    destroy() {}
+};
 vm.runInContext(browse, context);
 for (const name of ['isSavingsPlan', 'getDiscountMultiplier', 'getHourlyPrice', 'getMonthlyPrice',
     'gridRowPricing', 'gridPriceValue', 'getGridFilters', 'applyGridFilters', 'sortGridRows',
@@ -164,11 +182,58 @@ assert.ok(exported.headers.includes('Verified: Maximum data disks'));
 assert.equal(exported.dataRows[0][exported.headers.indexOf('Verified: Maximum data disks')], '0');
 assert.equal(exported.dataRows[0][exported.headers.indexOf('Verified: RDMA')], 'N/A');
 assert.ok(exported.meta.some(([key, value]) => key === 'Active Browse filters' && value.includes('Active vCPUs')));
-const stored = { ...state, filters: { ...state.filters, search: 'saved search' } };
+context.buildBrowseControls();
+const multiChoices = vm.runInContext('browseMultiChoices', context);
+assert.equal(multiChoices.size, fields.filter(field => field.type === 'multi').length);
+for (const instance of multiChoices.values()) {
+    assert.equal(instance.config.removeItemButton, true, 'each categorical dropdown permits individual deselection');
+    assert.equal(instance.config.searchEnabled, true);
+    assert.equal(instance.config.allowHTML, false);
+}
+const architecture = fields.find(field => field.key === 'architecture');
+const boot = fields.find(field => field.key === 'hyperVGenerations');
+assert.deepEqual(Array.from(context.browseMultiOptions(architecture, []), option => option.value), ['arm64', 'x64']);
+assert.deepEqual(Array.from(context.browseMultiOptions(boot, []), option => option.value), ['V1', 'V2']);
+assert.equal(context.browseOptionLabel(boot, 'V1'), 'Gen 1');
+assert.equal(context.browseOptionLabel(boot, 'V2'), 'Gen 2');
+assert.equal(context.browseOptionLabel(architecture, 'toString'), 'toString');
+context.setBrowseMultiValues(architecture, ['arm64', 'x64']);
+assert.equal(context.readBrowseFilters().values.architecture.length, 2);
+assert.equal(multiChoices.get('architecture').input.element.placeholder, 'Add another...');
+assert.equal(node('browse-architectureClear').disabled, false);
+node('browse-architectureClear').listeners.get('click')();
+assert.equal(context.readBrowseFilters().values.architecture, undefined);
+assert.equal(node('browse-architectureClear').disabled, true);
+assert.equal(multiChoices.get('architecture').input.element.placeholder, 'Any');
+assert.equal(match({ values: { hyperVGenerations: ['V1', 'V2'] } }).matches, true, 'boot-generation selections are ORed');
+const gen2Only = { ...row, browseCapabilities: { ...row.browseCapabilities, hyperVGenerations: ['V2'] } };
+assert.equal(context.browseMatch(gen2Only, { ...context.browseEmptyFilters(),
+    values: { hyperVGenerations: ['V1'] } }).matches, false, 'known generation mismatches remain excluded');
+context.gridRows = [{ ...row, browseCapabilities: undefined, architecture: 'arm64' }];
+const architectureOptions = context.browseMultiOptions(architecture, []);
+assert.equal(architectureOptions.length, 2, 'legacy API still presents both architecture choices');
+assert.equal(architectureOptions.find(option => option.value === 'x64').label, 'x64 (no verified data in this region)');
+assert.equal(context.browseCapability({ ...row, browseCapabilities: undefined }, 'architecture'), null,
+    'static options do not fabricate known x64 capability data');
+context.setBrowseMultiValues(architecture, ['arm64', 'x64']);
+context.updateBrowseFacets();
+assert.equal(context.readBrowseFilters().values.architecture.join(','), 'arm64,x64');
+context.gridRows = [];
+context.updateBrowseFacets();
+assert.equal(context.readBrowseFilters().values.architecture.join(','), 'arm64,x64',
+    'changing regional coverage preserves selections in the widget and backing select');
+context.writeBrowseFilters(context.browseEmptyFilters());
+assert.equal(node('browse-architecture').selectedOptions.length, 0);
+assert.equal(node('browse-architectureClear').disabled, true);
+const stored = { ...state, filters: { ...state.filters, search: 'saved search',
+    values: { architecture: ['arm64'], hyperVGenerations: ['V1', 'V2'] } } };
 storage.set('vmsku_browse_v1', JSON.stringify(stored));
 context.window.location.href = 'https://example.test/';
 context.initializeBrowseFilters();
 assert.equal(node('gridSearch').value, 'saved search', 'device state restores without a shared URL');
+assert.equal(context.readBrowseFilters().values.architecture[0], 'arm64');
+assert.equal(context.readBrowseFilters().values.hyperVGenerations.join(','), 'V1,V2');
+assert.ok(node('browse-hyperVGenerations').options.every(option => option.label.startsWith('Gen ')));
 context.window.location.href = 'https://example.test/?browse=' + encodeURIComponent(JSON.stringify(state));
 context.initializeBrowseFilters();
 assert.equal(node('gridSearch').value, '', 'explicit empty URL wins over saved filters');
@@ -194,5 +259,5 @@ assert.ok(node('browseStateNotice').textContent.includes('unavailable'));
     context.navigator.clipboard.writeText = async () => { throw Error('permission denied'); };
     await context.copyBrowseLink();
     assert.ok(node('browseStateNotice').textContent.includes('clipboard permissions'));
-    console.log('PASS: Browse matching, nullable capabilities, inclusive bounds, fractional GPUs, pricing, validation, state safety, reset, persistence, clipboard feedback and export parity.');
+    console.log('PASS: Browse matching, clearable categorical dropdowns, fixed architecture/Gen options, nullable capabilities, pricing, validation, persistence, clipboard feedback and export parity.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -10,6 +10,7 @@
 ## 📋 Recent Changes
 
 ### 2026-10-19
+- **improvement:** Replaced Browse categorical list boxes with searchable multi-select dropdowns, individually removable selections and clear buttons. Architecture always offers x64 and Arm64; boot generation offers Gen 1 and Gen 2 without treating missing capability data as verified support.
 - **feature:** Added grouped advanced Browse filters for compute, storage, networking, security, GPUs, zones, lifecycle and displayed compute budgets, with removable filter chips, inspectable specs, shareable links, device-local restoration and matching CSV/XLSX exports.
 - **improvement:** Added nullable Browse capability snapshots and cache-validity markers so missing data is not treated as false/zero. Unknown requirements are excluded by default, optionally admitted as unverified matches; older API previews explicitly explain coverage limits until the API is released and refreshed.
 - **fix:** Strengthened same-family recommendation affinity in balanced and cost modes and reduced the local temporary-disk loss penalty from 12 to 8 points. Disk-loss warnings, boot-generation and lifecycle safeguards, and the cost savings bonus remain in place. PowerShell uses matching weights and disk-loss scoring.
