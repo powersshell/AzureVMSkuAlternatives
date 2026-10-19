@@ -185,4 +185,14 @@ context.readBrowseFilters();
 context.persistBrowseState(context.readBrowseFilters());
 assert.ok(warning.includes('save Browse'));
 assert.ok(node('browseStateNotice').textContent.includes('unavailable'));
-console.log('PASS: Browse matching, nullable capabilities, inclusive bounds, fractional GPUs, pricing, validation, state safety, reset, persistence and export parity.');
+(async () => {
+    let copied;
+    context.navigator = { clipboard: { writeText: async text => { copied = text; } } };
+    await context.copyBrowseLink();
+    assert.equal(node('browseStateNotice').textContent, 'Browse link copied.');
+    assert.equal(JSON.parse(new URL(copied).searchParams.get('browse')).region, 'eastus');
+    context.navigator.clipboard.writeText = async () => { throw Error('permission denied'); };
+    await context.copyBrowseLink();
+    assert.ok(node('browseStateNotice').textContent.includes('clipboard permissions'));
+    console.log('PASS: Browse matching, nullable capabilities, inclusive bounds, fractional GPUs, pricing, validation, state safety, reset, persistence, clipboard feedback and export parity.');
+})().catch(error => { console.error(error); process.exitCode = 1; });
