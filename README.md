@@ -9,10 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-10-14
-- **feature:** Added a site-wide System / Light / Dark theme selector with browser-local persistence, live device-theme updates, accessible palettes, and themed dropdowns, migration guidance, tables, dialogs, and price-history charts. Switching themes preserves results and selections without changing pricing, ranking, or exports.
-- **fix:** Kept the Extra Discount % label on one line and aligned comparison-form inputs at desktop widths, while preserving mobile stacking and all discount/pricing behavior.
-- **fix:** Corrected local temporary-disk capability parsing and cache persistence across SCSI, NVMe, and diskless VM sizes, restoring disk-loss migration warnings and existing recommendation penalties. PowerShell uses matching detection; genuinely missing data remains unknown. Added refresh-to-comparison regressions and a full-region metadata verification gate.
+### 2026-10-19
+- **fix:** Strengthened same-family recommendation affinity in balanced and cost modes and reduced the local temporary-disk loss penalty from 12 to 8 points. Disk-loss warnings, boot-generation and lifecycle safeguards, and the cost savings bonus remain in place. PowerShell uses matching weights and disk-loss scoring.
 
 📄 [Full changelog →](CHANGELOG.md)
 

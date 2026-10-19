@@ -798,7 +798,7 @@ class TestBootGenerationRecommendations:
         result = calculate_recommendation_score(
             100, identity, identity, {}, candidate_generations=[1, 2],
             target_generation_preference=1, source_has_temp_disk=True, candidate_has_temp_disk=False)
-        assert result['components']['tempDiskPenalty'] == 12
+        assert result['components']['tempDiskPenalty'] == 8
         assert result['components']['generationMismatchPenalty'] == 0
 
     def test_cross_generation_badge(self):
@@ -868,6 +868,83 @@ class TestBootGenerationRecommendations:
         without_assessment = app.compare_vms(req)
         assert [(alt['name'], alt['recommendationScore'], alt['scoreBreakdown'])
                 for alt in without_assessment.body['alternatives']] == scores
+
+
+@pytest.mark.unit
+class TestRecommendationScoring:
+    @pytest.mark.parametrize('mode', ['balanced', 'cost'])
+    @pytest.mark.parametrize('similarity,penalty,preferred,supported,expected_family', [
+        (92.31, 0, None, [1, 2], 'B'),
+        (60, 0, None, [1, 2], 'F'),
+        (92.31, 25, None, [1, 2], 'F'),
+        (92.31, 0, 1, [2], 'F'),
+        (92.31, 0, 1, [], 'F'),
+    ])
+    def test_family_preference_with_independent_risks(
+            self, mode, similarity, penalty, preferred, supported, expected_family):
+        from function_app import _parse_sku_identity, calculate_recommendation_score
+        source = _parse_sku_identity('Standard_B2s')
+        families = {'B': 2, 'F': 7}
+        same = calculate_recommendation_score(
+            similarity, source, _parse_sku_identity('Standard_B2als_v2'), families,
+            mode=mode, source_has_temp_disk=True, candidate_has_temp_disk=False,
+            lifecycle_penalty=penalty, target_generation_preference=preferred,
+            candidate_generations=supported)
+        other = calculate_recommendation_score(
+            100, source, _parse_sku_identity('Standard_F2alds_v7'), families,
+            mode=mode, source_has_temp_disk=True, candidate_has_temp_disk=True,
+            target_generation_preference=preferred, candidate_generations=[1, 2])
+        assert ('B' if same['score'] > other['score'] else 'F') == expected_family
+        assert same['components']['tempDiskPenalty'] == 8
+        assert same['components']['lifecyclePenalty'] == penalty
+        assert other['components']['tempDiskPenalty'] == 0
+        if similarity == 92.31 and not penalty and preferred is None:
+            expected_same, expected_other = ((87.7705, 85) if mode == 'balanced' else (78.155, 75))
+            assert same['score'] == pytest.approx(expected_same)
+            assert other['score'] == pytest.approx(expected_other)
+
+    @pytest.mark.parametrize('mode', ['balanced', 'cost'])
+    def test_compare_route_prefers_family_without_hiding_disk_loss(self, monkeypatch, mode):
+        import json
+        import function_app as app
+
+        class Response:
+            def __init__(self, body, status_code=200, **kwargs):
+                self.body = json.loads(body)
+                self.status_code = status_code
+
+        def sku(name, disk, price):
+            return {'name': name, 'pricing': {'monthlyPrice': price, 'ri1YearMonthly': price},
+                    'capabilities': [
+                        {'name': 'vCPUs', 'value': '2'},
+                        {'name': 'MemoryGB', 'value': '4'},
+                        {'name': 'MaxResourceVolumeMB', 'value': str(disk)},
+                        {'name': 'HyperVGenerations', 'value': 'V1,V2'},
+                    ]}
+
+        catalog = [sku('Standard_B2s', 8192, 30.37),
+                   sku('Standard_B2als_v2', 0, 27),
+                   sku('Standard_F2alds_v7', 32768, 50)]
+        monkeypatch.setenv('AZURE_SUBSCRIPTION_ID', 'test')
+        monkeypatch.setattr(app.func, 'HttpResponse', Response)
+        monkeypatch.setattr(app, 'get_access_token', lambda: 'test')
+        monkeypatch.setattr(app, 'get_vm_skus_with_cache', lambda *args: (catalog, 'cache'))
+        monkeypatch.setattr(app, 'calculate_similarity',
+                            lambda target, candidate, weights: 92.31 if candidate['hasTempDisk'] is False else 100)
+        result = app.compare_vms(types.SimpleNamespace(method='POST', get_json=lambda: {
+            'skuName': 'Standard_B2s', 'location': 'eastus', 'priorityMode': mode,
+            'sourceGen': 'gen1', 'targetGen': 'same', 'minSimilarityScore': 60}))
+        assert result.status_code == 200
+        first, second = result.body['alternatives']
+        assert first['name'] == 'Standard_B2als_v2'
+        assert first['recommendationScore'] > second['recommendationScore']
+        assert first['scoreBreakdown']['tempDiskPenalty'] == 8
+        assert first['migrationReadiness']['tempDiskMismatch'] is True
+        if mode == 'cost':
+            assert first['scoreBreakdown']['costBonus'] > 0
+        else:
+            assert first['scoreBreakdown']['costBonus'] == 0
+        assert first['pricing']['monthlyPrice'] == 27
 
 
 @pytest.mark.unit
@@ -1019,7 +1096,7 @@ class TestTemporaryDisks:
             alt = alternatives[name]
             assert alt['migrationReadiness']['hasTempDisk'] is expected
             assert alt['migrationReadiness']['tempDiskMismatch'] is (expected is False)
-            assert alt['scoreBreakdown']['tempDiskPenalty'] == (12 if expected is False else 0)
+            assert alt['scoreBreakdown']['tempDiskPenalty'] == (8 if expected is False else 0)
 
     def test_live_metadata_guard(self, monkeypatch):
         monkeypatch.syspath_prepend(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../scripts')))
@@ -1040,7 +1117,7 @@ class TestTemporaryDisks:
         del rows[0]['hasTempDisk']
         assert guard.check_region('eastus', 'subscription', 'token') == 2
 
-    @pytest.mark.parametrize('candidate,penalty', [(False, 12.0), (True, 0.0), (None, 0.0)])
+    @pytest.mark.parametrize('candidate,penalty', [(False, 8.0), (True, 0.0), (None, 0.0)])
     def test_loss_penalty_and_badge_agree(self, candidate, penalty):
         from function_app import _parse_sku_identity, _migration_readiness, calculate_recommendation_score
         source = _parse_sku_identity('Standard_F1')
