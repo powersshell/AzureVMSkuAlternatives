@@ -1247,6 +1247,135 @@ def _grid_family(name: str) -> str:
     return ''
 
 
+def _browse_source_capabilities(capabilities: Dict) -> Dict:
+    """Keep source absence distinct from explicit false/zero for Browse filters."""
+    def number(key, positive=False, integer=False):
+        raw = capabilities.get(key)
+        if raw is None or raw == '' or isinstance(raw, bool):
+            return None
+        try:
+            value = float(raw)
+        except (ValueError, TypeError):
+            logging.warning('Invalid Browse capability %s: %r', key, raw)
+            return None
+        if not math.isfinite(value) or value < 0 or (positive and value == 0) or (
+                integer and not value.is_integer()):
+            logging.warning('Invalid Browse capability %s: %r', key, raw)
+            return None
+        return int(value) if integer else value
+
+    def flag(key):
+        value = str(capabilities.get(key, '')).lower()
+        if value in ('true', 'false'):
+            return value == 'true'
+        if value:
+            logging.warning('Invalid Browse capability %s: %r', key, capabilities[key])
+        return None
+
+    def tokens(key, allowed):
+        raw = capabilities.get(key)
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        values = [part.strip() for part in raw.split(',')]
+        return values if all(part in allowed for part in values) else None
+
+    vcpus = number('vCPUsAvailable', positive=True, integer=True)
+    if 'vCPUsAvailable' not in capabilities:
+        vcpus = number('vCPUs', positive=True, integer=True)
+    memory = number('MemoryGB', positive=True)
+    nvme = _temp_disk_size(capabilities, ('NvmeDiskSizeInMiB',))
+    generations = tokens('HyperVGenerations', ('V1', 'V2'))
+    disabled = flag('TrustedLaunchDisabled')
+    architecture = capabilities.get('CpuArchitectureType')
+    uncached_bytes = number('UncachedDiskBytesPerSecond')
+    return {
+        'schemaVersion': 1,
+        'vCPUs': vcpus,
+        'memoryGB': memory,
+        'memoryPerVcpu': memory / vcpus if memory is not None and vcpus else None,
+        'architecture': architecture if architecture in ('x64', 'Arm64', 'arm64') else None,
+        'vCPUsPerCore': number('vCPUsPerCore', positive=True, integer=True),
+        'hasTempDisk': _has_temp_disk(capabilities),
+        'nvme': nvme > 0 if nvme is not None else None,
+        'maxDataDisks': number('MaxDataDiskCount', integer=True),
+        'maxNics': number('MaxNetworkInterfaces', integer=True),
+        'uncachedDiskIOPS': number('UncachedDiskIOPS'),
+        'uncachedDiskMBps': uncached_bytes / 1000000 if uncached_bytes is not None else None,
+        'premiumIO': flag('PremiumIO'),
+        'acceleratedNetworking': flag('AcceleratedNetworkingEnabled'),
+        'ephemeralOSDisk': flag('EphemeralOSDiskSupported'),
+        'encryptionAtHost': flag('EncryptionAtHostSupported'),
+        'rdmaEnabled': flag('RdmaEnabled'),
+        'hyperVGenerations': generations,
+        'diskControllerTypes': tokens('DiskControllerTypes', ('SCSI', 'NVMe')),
+        'trustedLaunch': (
+            False if generations is not None and 'V2' not in generations else
+            not disabled if generations is not None and disabled is not None else None),
+        'confidentialComputingType': (
+            capabilities.get('ConfidentialComputingType') or 'None'
+            if 'ConfidentialComputingType' in capabilities else None),
+        'gpuCount': number('GPUs', integer=True),
+    }
+
+
+def _grid_browse_capabilities(entity: Dict, row: Dict) -> Dict:
+    source = {}
+    raw = entity.get('browseCapabilitiesJson')
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict) and parsed.get('schemaVersion') == 1:
+                source = parsed
+            else:
+                logging.warning('Unsupported Browse snapshot for %s', row['name'])
+        except (ValueError, TypeError):
+            logging.warning('Invalid Browse snapshot for %s', row['name'])
+    # A snapshot is replaced as one string even when the surrounding Table entity
+    # is merge-upserted, so previously known values cannot survive a missing source.
+    result = {key: source.get(key) for key in _browse_source_capabilities({})}
+    result['schemaVersion'] = 1
+    if not source:
+        result['hasTempDisk'] = _cached_temp_disk_presence(entity)
+        for key in ('vCPUs', 'memoryGB', 'maxDataDisks', 'maxNics', 'uncachedDiskIOPS',
+                    'vCPUsPerCore', 'gpuCount'):
+            value = entity.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and (
+                    math.isfinite(value) and value > 0):
+                result[key] = value
+        if result['vCPUs'] and result['memoryGB']:
+            result['memoryPerVcpu'] = result['memoryGB'] / result['vCPUs']
+        for key in ('nvme', 'premiumIO', 'acceleratedNetworking', 'ephemeralOSDisk',
+                    'encryptionAtHost', 'rdmaEnabled'):
+            if entity.get(key) is True:
+                result[key] = True
+        if str(entity.get('architecture', '')).lower() == 'arm64':
+            result['architecture'] = 'arm64'
+    cpu = get_cpu_performance(row['name'])
+    result['cpuGeneration'] = cpu['generation'] if cpu else None
+    result['cpuModels'] = cpu['cpuModels'] if cpu else None
+    result['cpuVendor'] = _vendor_from_generation(cpu['generation']) if cpu else None
+    if str(result.get('architecture') or '').lower() == 'arm64':
+        result['architecture'] = 'arm64'
+        result['cpuVendor'] = 'ARM'
+    bandwidth = (
+        entity.get('networkBandwidthMbps')
+        if entity.get('browseNetworkBandwidthKnown') is not False else None)
+    if not isinstance(bandwidth, (int, float)) or isinstance(bandwidth, bool) or (
+            not math.isfinite(bandwidth) or bandwidth <= 0):
+        bandwidth = PREVIOUS_GEN_BANDWIDTH.get(row['name'])
+    result['networkBandwidthMbps'] = bandwidth
+    for key in ('gpuType', 'gpuVendor', 'gpuArchitecture', 'gpuAllocation', 'gpuMemoryGB'):
+        result[key] = row.get(key) if row.get('gpuReferenceId') else None
+    if result['gpuType'] is None:
+        result['gpuType'] = entity.get('gpuType') or None
+    result['availabilityZones'] = (
+        row['availabilityZones'] if entity.get('browseZonesKnown') is True
+        or row['availabilityZones'] else None)
+    result['retirementStatus'] = bool(row.get('retirementStatus'))
+    result['growthRestricted'] = bool(row.get('growthRestricted'))
+    return result
+
+
 def build_grid_row(entity: Dict, pricing_override: Optional[Dict] = None) -> Dict:
     """
     Build a rich VM grid row from a cached Table entity.
@@ -1315,6 +1444,7 @@ def build_grid_row(entity: Dict, pricing_override: Optional[Dict] = None) -> Dic
     growth_info = _get_growth_restriction_info(name)
     if growth_info:
         row.update(growth_info)
+    row['browseCapabilities'] = _grid_browse_capabilities(entity, row)
     return row
 
 
@@ -4065,6 +4195,8 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                 'rdmaEnabled': capabilities['rdmaEnabled'],
                 'confidentialComputingType': capabilities['confidentialComputingType'],
                 'trustedLaunch': capabilities['trustedLaunch'],
+                'browseCapabilitiesJson': capabilities['browseCapabilitiesJson'],
+                'browseZonesKnown': isinstance(sku.get('locationInfo'), list),
                 'hourlyPriceUSD': pricing['hourlyPrice'] if pricing else None,
                 'monthlyPriceUSD': pricing['monthlyPrice'] if pricing else None,
                 'hourlyPriceUSDWindows': pricing.get('hourlyPriceWindows') if pricing else None,
@@ -4095,6 +4227,7 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
                     bw = network_bw.get(base_name)
             if bw is not None:
                 entity['networkBandwidthMbps'] = bw
+            entity['browseNetworkBandwidthKnown'] = bw is not None
             # Add CPU performance data
             cpu_perf = get_cpu_performance(sku['name'])
             if cpu_perf:
@@ -4745,6 +4878,8 @@ def extract_capabilities_for_cache(sku: Dict) -> Dict:
     capabilities = {cap['name']: cap['value'] for cap in sku.get('capabilities', [])}
     
     return {
+        'browseCapabilitiesJson': json.dumps(
+            _browse_source_capabilities(capabilities), allow_nan=False),
         'vCPUs': _effective_vcpus(capabilities),
         'memoryGB': float(capabilities.get('MemoryGB', 0)),
         'maxDataDisks': int(capabilities.get('MaxDataDiskCount', 0)),

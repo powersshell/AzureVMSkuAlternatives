@@ -10,6 +10,10 @@
 ## 📋 Recent Changes
 
 ### 2026-10-19
+- **fix:** Clarified that unverified Browse options are pending data verification, not unavailable in the region. Older API previews explain why defaulted x64 values require the reviewed API release and capability-cache refresh.
+- **improvement:** Replaced Browse categorical list boxes with searchable multi-select dropdowns, individually removable selections and clear buttons. Architecture always offers x64 and Arm64; boot generation offers Gen 1 and Gen 2 without treating missing capability data as verified support.
+- **feature:** Added grouped advanced Browse filters for compute, storage, networking, security, GPUs, zones, lifecycle and displayed compute budgets, with removable filter chips, inspectable specs, shareable links, device-local restoration and matching CSV/XLSX exports.
+- **improvement:** Added nullable Browse capability snapshots and cache-validity markers so missing data is not treated as false/zero. Unknown requirements are excluded by default, optionally admitted as unverified matches; older API previews explicitly explain coverage limits until the API is released and refreshed.
 - **fix:** Strengthened same-family recommendation affinity in balanced and cost modes and reduced the local temporary-disk loss penalty from 12 to 8 points. Disk-loss warnings, boot-generation and lifecycle safeguards, and the cost savings bonus remain in place. PowerShell uses matching weights and disk-loss scoring.
 
 📄 [Full changelog →](CHANGELOG.md)
@@ -17,6 +21,8 @@
 ---
 
 ## 🎯 What is This?
+
+**Browse all VMs** includes an expandable Advanced filters panel for hardware capabilities, security, zones, lifecycle and compute budgets. Requirements are combined across fields; selected options within a field are alternatives. Unknown values fail active requirements unless explicitly included, in which case matches are marked unverified. Copy Browse link shares region, pricing and filters; the last Browse view is also restored on this device. Exports include all matching pages. See [Browse filtering and data coverage](web-app/README.md#advanced-browse-filtering) for cache, pricing and preview limitations.
 
 In **Find Alternatives**, the visible Source Gen selector refers to the existing VM's Hyper-V boot generation, not the size's `_vN` hardware version. Automatic detection works only for sizes supporting one boot generation. For a dual-generation size, select the actual Gen1 or Gen2 of your existing VM; it cannot be inferred from the SKU. The website Target Gen dropdown offers Any Generation (default), Prefer Gen1, and Prefer Gen2. Any removes generation preference penalties, not migration warnings, so the initial recommendation order may differ from same-generation preference. Alternatives stay in one list, with unsupported preferences distinguished from alternate compatible paths.
 
