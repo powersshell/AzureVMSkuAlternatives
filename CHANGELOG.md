@@ -1,6 +1,8 @@
 # Changelog
 
 ## 2026-10-19
+- **feature:** Added grouped advanced Browse filters for compute, storage, networking, security, GPUs, zones, lifecycle and displayed compute budgets, with removable filter chips, inspectable specs, shareable links, device-local restoration and matching CSV/XLSX exports.
+- **improvement:** Added nullable Browse capability snapshots and cache-validity markers so missing data is not treated as false/zero. Unknown requirements are excluded by default, optionally admitted as unverified matches; older API previews explicitly explain coverage limits until the API is released and refreshed.
 - **fix:** Strengthened same-family recommendation affinity in balanced and cost modes and reduced the local temporary-disk loss penalty from 12 to 8 points. Disk-loss warnings, boot-generation and lifecycle safeguards, and the cost savings bonus remain in place. PowerShell uses matching weights and disk-loss scoring.
 
 ## 2026-10-14

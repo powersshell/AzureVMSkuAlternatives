@@ -369,6 +369,7 @@ document.addEventListener('DOMContentLoaded', () => {
             skuChoices.disable();
             document.getElementById('skuCount').textContent = '';
             updateOnboardingState();
+            if (currentMode === 'browse') loadGrid();
             return;
         }
 
@@ -688,7 +689,7 @@ function setPricingOS(os) {
         displayTargetSku(currentResults.targetSku);
     }
     syncGridPricingButtons();
-    if (currentMode === 'browse' && gridRows.length) renderGrid();
+    if (currentMode === 'browse') renderGrid();
     refreshOpenRegionPricing();
 }
 
@@ -713,7 +714,7 @@ function setPricingModel(model) {
         displayTargetSku(currentResults.targetSku);
     }
     syncGridPricingButtons();
-    if (currentMode === 'browse' && gridRows.length) renderGrid();
+    if (currentMode === 'browse') renderGrid();
     refreshOpenRegionPricing();
 }
 
@@ -3170,6 +3171,7 @@ let gridRows = [];
 let gridRegionLoaded = null;
 let gridCurrencyLoaded = null;
 let gridPricesAsOf = null;
+let gridRequestVersion = 0;
 let gridSort = { col: 'vCPUs', dir: 'asc' };
 let gridPage = 1;
 const GRID_PAGE_SIZE = 50;
@@ -3211,13 +3213,23 @@ function switchMode(mode) {
         } else if (gridRegionLoaded !== region || gridCurrencyLoaded !== currency) {
             loadGrid();
         }
+        renderGrid();
     }
 }
 
 async function loadGrid() {
+    const requestVersion = ++gridRequestVersion;
     const region = document.getElementById('location').value;
     const currency = document.getElementById('currencyCode').value || 'USD';
-    if (!region) { showGridEmpty('👆 Pick a region above to browse its VM sizes.'); updateBrowseCount(null); return; }
+    if (!region) {
+        gridRows = [];
+        gridRegionLoaded = null;
+        document.getElementById('gridLoading').classList.add('hidden');
+        renderGrid();
+        showGridEmpty('👆 Pick a region above to browse its VM sizes.');
+        updateBrowseCount(null);
+        return;
+    }
 
     const loading = document.getElementById('gridLoading');
     const empty = document.getElementById('gridEmpty');
@@ -3234,29 +3246,32 @@ async function loadGrid() {
         const resp = await fetch(`${API_BASE_URL}/grid?location=${encodeURIComponent(region)}&currency=${encodeURIComponent(currency)}`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
+        if (requestVersion !== gridRequestVersion) return;
         gridRows = Array.isArray(data.skus) ? data.skus : [];
         gridRegionLoaded = region;
         gridCurrencyLoaded = data.currency || currency;
         gridPricesAsOf = data.pricesAsOf || null;
         gridPage = 1;
-        gridSelectedFamilies.clear();
         renderGridFacets();
         updateBrowseCount(gridRows.length);
         trackEvent('grid_loaded', { region, currency: gridCurrencyLoaded }, { skuCount: gridRows.length });
         loading.classList.add('hidden');
         if (gridRows.length === 0) {
             showGridEmpty('No VM sizes found for this region.');
+            renderGrid();
             return;
         }
         wrap.classList.remove('hidden');
         pagination.classList.remove('hidden');
         renderGrid();
     } catch (err) {
+        if (requestVersion !== gridRequestVersion) return;
         gridRows = [];
         gridRegionLoaded = null;
         updateBrowseCount(null);
         loading.classList.add('hidden');
         showGridEmpty(`⚠️ Couldn't load VM sizes: ${escapeHtml(err.message)}`);
+        renderGrid();
     }
 }
 
@@ -3320,12 +3335,13 @@ function gridPriceValue(row, kind) {
 function renderGridFacets() {
     const list = document.getElementById('gridFamilyList');
     if (!list) return;
-    const families = [...new Set(gridRows.map(r => r.family).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const families = [...new Set([...gridRows.map(r => r.family).filter(Boolean), ...gridSelectedFamilies])].sort((a, b) => a.localeCompare(b));
     list.innerHTML = families.length
-        ? families.map(f => `<label><input type="checkbox" class="grid-family-cb" value="${escapeHtml(f)}"> ${escapeHtml(f)}</label>`).join('')
+        ? families.map(f => `<label><input type="checkbox" class="grid-family-cb" value="${escapeHtml(f)}"${gridSelectedFamilies.has(f) ? ' checked' : ''}> ${escapeHtml(f)}</label>`).join('')
         : '<span class="grid-muted">No families</span>';
     list.querySelectorAll('.grid-family-cb').forEach(cb => cb.addEventListener('change', onGridFamilyChange));
     updateGridFamilySummary();
+    updateBrowseFacets();
 }
 
 function onGridFamilyChange(e) {
@@ -3344,34 +3360,12 @@ function updateGridFamilySummary() {
 }
 
 function getGridFilters() {
-    const num = id => { const v = parseFloat(document.getElementById(id).value); return Number.isFinite(v) ? v : null; };
-    return {
-        search: (document.getElementById('gridSearch').value || '').trim().toLowerCase(),
-        vcpuMin: num('gridVcpuMin'), vcpuMax: num('gridVcpuMax'),
-        ramMin: num('gridRamMin'), ramMax: num('gridRamMax'),
-        gpuOnly: document.getElementById('gridGpuOnly').checked,
-        intel: document.getElementById('gridVendorIntel').checked,
-        amd: document.getElementById('gridVendorAMD').checked,
-        arm: document.getElementById('gridVendorARM').checked
-    };
+    return readBrowseFilters();
 }
 
 function applyGridFilters(rows) {
     const f = getGridFilters();
-    return rows.filter(r => {
-        if (f.search && !`${r.name} ${r.family}`.toLowerCase().includes(f.search)) return false;
-        if (gridSelectedFamilies.size && !gridSelectedFamilies.has(r.family)) return false;
-        if (f.vcpuMin != null && (r.vCPUs || 0) < f.vcpuMin) return false;
-        if (f.vcpuMax != null && (r.vCPUs || 0) > f.vcpuMax) return false;
-        if (f.ramMin != null && (r.memoryGB || 0) < f.ramMin) return false;
-        if (f.ramMax != null && (r.memoryGB || 0) > f.ramMax) return false;
-        if (f.gpuOnly && !(r.gpuCount > 0)) return false;
-        // Vendor (cpuVendor is exactly 'Intel' | 'AMD' | 'ARM')
-        if (r.cpuVendor === 'Intel') return f.intel;
-        if (r.cpuVendor === 'AMD') return f.amd;
-        if (r.cpuVendor === 'ARM') return f.arm;
-        return true; // unknown vendor always shown
-    });
+    return browseValidationErrors.length ? [] : rows.filter(row => browseMatch(row, f).matches);
 }
 
 function sortGridRows(rows) {
@@ -3416,8 +3410,12 @@ function formatFreshness(value) {
 }
 
 function renderGrid() {
-    if (!gridRows.length) return;
+    if (!browseReady) return;
     const filtered = sortGridRows(applyGridFilters(gridRows));
+    const filters = getGridFilters();
+    refreshBrowseSummary(filters, filtered);
+    persistBrowseState(filters);
+    if (!gridRows.length) return;
     const total = gridRows.length;
     const matched = filtered.length;
 
@@ -3430,13 +3428,15 @@ function renderGrid() {
     const tbody = document.getElementById('gridTableBody');
 
     if (matched === 0) {
-        tbody.innerHTML = `<tr class="grid-no-match"><td colspan="10">No VM sizes match your filters. <button type="button" class="grid-action-btn" onclick="resetGridFilters()">Reset filters</button></td></tr>`;
+        tbody.innerHTML = `<tr class="grid-no-match"><td colspan="10">${browseValidationErrors.length ? 'Correct the filter errors above to see matching sizes.' : 'No VM sizes match your filters.'} <button type="button" class="grid-action-btn" onclick="resetGridFilters()">Reset filters</button></td></tr>`;
     } else {
-        tbody.innerHTML = pageRows.map(r => renderGridRow(r, discount)).join('');
+        tbody.innerHTML = pageRows.map(r => renderGridRow(r, discount, filters)).join('');
     }
 
     const status = document.getElementById('gridStatus');
-    if (matched === 0) {
+    if (browseValidationErrors.length) {
+        status.textContent = 'Filters need correction';
+    } else if (matched === 0) {
         status.textContent = `0 of ${total} VM sizes`;
     } else {
         status.textContent = `Showing ${start + 1}–${start + pageRows.length} of ${matched}${matched !== total ? ` (filtered from ${total})` : ''}`;
@@ -3453,11 +3453,11 @@ function renderGrid() {
     updateGridSortIndicators();
 }
 
-function renderGridRow(r, discount) {
+function renderGridRow(r, discount, filters) {
     const p = gridRowPricing(r);
     const hourly = formatHourlyPriceSafe(p);
     const monthly = formatMonthlyPriceSafe(p);
-    const nvme = r.nvme ? '<span class="grid-badge nvme" title="Supports the NVMe disk interface">NVMe</span>' : '';
+    const nvme = r.nvme ? '<span class="grid-badge nvme" title="Local temporary NVMe storage">Local NVMe</span>' : '';
     const retiring = r.retirementStatus ? '<span class="grid-badge retiring" title="This size is being retired">⚠ Retiring</span>' : '';
     const restricted = r.growthRestricted ? '<span class="grid-badge restricted" title="Capacity limited: new subscriptions can\'t deploy this size and additional quota won\'t be approved">🔒 Limited</span>' : '';
     const gpu = r.gpuCount > 0 ? `${r.gpuAllocation ?? r.gpuCount}${r.gpuType ? ' ' + escapeHtml(r.gpuType) : ''}` : '<span class="grid-muted">—</span>';
@@ -3468,7 +3468,7 @@ function renderGridRow(r, discount) {
     const nameEsc = escapeHtml(r.name);
     const safeName = String(r.name).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     return `<tr>
-        <td class="grid-name-cell">${nameEsc}${nvme}${retiring}${restricted}</td>
+        <td class="grid-name-cell">${nameEsc}${nvme}${retiring}${restricted}${browseRowDetails(r, filters)}</td>
         <td class="grid-family-cell">${escapeHtml(r.family || '—')}</td>
         <td class="num">${r.vCPUs || '—'}</td>
         <td class="num">${r.memoryGB != null ? r.memoryGB : '—'}</td>
@@ -3546,15 +3546,8 @@ function gridFindAlternatives(skuName) {
 }
 
 function resetGridFilters() {
-    document.getElementById('gridSearch').value = '';
-    ['gridVcpuMin', 'gridVcpuMax', 'gridRamMin', 'gridRamMax'].forEach(id => { document.getElementById(id).value = ''; });
-    document.getElementById('gridGpuOnly').checked = false;
-    document.getElementById('gridVendorIntel').checked = true;
-    document.getElementById('gridVendorAMD').checked = true;
-    document.getElementById('gridVendorARM').checked = true;
-    gridSelectedFamilies.clear();
-    document.querySelectorAll('.grid-family-cb').forEach(cb => { cb.checked = false; });
-    updateGridFamilySummary();
+    writeBrowseFilters(browseEmptyFilters());
+    renderGridFacets();
     gridPage = 1;
     renderGrid();
 }
@@ -3562,6 +3555,7 @@ function resetGridFilters() {
 // Build an export model from the current filtered+sorted grid (all matches, not just the page)
 function buildGridExportModel() {
     const discount = getDiscountMultiplier();
+    const filters = readBrowseFilters();
     const rows = sortGridRows(applyGridFilters(gridRows));
     const discountNote = discount < 1.0 ? ` (${((1 - discount) * 100).toFixed(1)}% discount applied)` : '';
     const fx4 = v => (v == null ? 'N/A' : (v * discount).toFixed(4));
@@ -3569,7 +3563,7 @@ function buildGridExportModel() {
     const currency = gridCurrencyLoaded || 'USD';
 
     const headers = [
-        'Name', 'Family', 'vCPUs', 'Memory (GB)', 'GPU Count', 'GPU Type',
+        'Name', 'Family', 'vCPUs', 'Memory (GiB)', 'GPU Count', 'GPU Type',
         'GPU Allocation', 'GPU Memory (GB)', 'GPU Memory Bandwidth (GB/s)',
         'GPU Dense FP32 (TFLOPS)', 'GPU Dense FP16/BF16 Tensor (TFLOPS)',
         'GPU Performance Profile', 'GPU Performance Score (A100 80GB = 100)', 'ACU',
@@ -3583,7 +3577,9 @@ function buildGridExportModel() {
         `3yr RI Hourly (Windows)${discountNote}`, `3yr RI Monthly (Windows)${discountNote}`,
         ...SAVINGS_PLAN_EXPORT_COLUMNS.map(([, label]) => label),
         'Savings Plan assumptions (no Extra Discount)',
-        'Currency'
+        'Currency',
+        ...BROWSE_FIELDS.filter(field => field.type !== 'price').map(field => `Verified: ${field.label}`),
+        'Unverified filter requirements'
     ];
 
     const dataRows = rows.map(r => [
@@ -3601,7 +3597,12 @@ function buildGridExportModel() {
         fx4(r.ri1YearHourlyWindows), fx2(r.ri1YearMonthlyWindows), fx4(r.ri3YearHourlyWindows), fx2(r.ri3YearMonthlyWindows),
         ...savingsPlanExportValues(gridRowPricing(r)),
         SAVINGS_PLAN_ASSUMPTIONS,
-        currency
+        currency,
+        ...BROWSE_FIELDS.filter(field => field.type !== 'price').map(field => {
+            const value = browseCapability(r, field.key);
+            return value == null ? 'N/A' : browseFormatValue(value);
+        }),
+        browseMatch(r, filters).unverified ? 'Yes' : 'No'
     ]);
 
     const meta = [
@@ -3614,13 +3615,17 @@ function buildGridExportModel() {
         ['Savings Plan assumptions', SAVINGS_PLAN_ASSUMPTIONS],
         ['Discount applied', discount < 1.0 ? `${((1 - discount) * 100).toFixed(1)}%` : 'None'],
         ['Rows exported', String(rows.length)],
-        ['Total in region', String(gridRows.length)]
+        ['Total in region', String(gridRows.length)],
+        ['Active Browse filters', browseFilterDescriptions(filters).map(d => d.text).join('; ') || 'None'],
+        ['Unknown requirements', filters.includeUnknown ? 'Included and marked unverified' : 'Excluded']
     ];
 
     return { headers, dataRows, meta, rowCount: rows.length };
 }
 
 function exportGridCsv() {
+    readBrowseFilters();
+    if (browseValidationErrors.length) { showError('Correct filter errors before exporting.'); return; }
     if (!gridRows.length) { showError('No VM sizes to export'); return; }
     const model = buildGridExportModel();
     const csv = [
@@ -3639,6 +3644,8 @@ function exportGridCsv() {
 }
 
 function exportGridXlsx() {
+    readBrowseFilters();
+    if (browseValidationErrors.length) { showError('Correct filter errors before exporting.'); return; }
     if (!gridRows.length) { showError('No VM sizes to export'); return; }
     if (typeof XLSX === 'undefined') {
         showError('Excel export is unavailable right now. Please try CSV, or reload the page and retry.');
@@ -3688,6 +3695,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     // Discount is a client-side multiplier — re-render the grid live
     document.getElementById('discountPct')?.addEventListener('input', () => {
-        if (currentMode === 'browse' && gridRows.length) renderGrid();
+        if (currentMode === 'browse') renderGrid();
     });
+    initializeBrowseFilters();
 });
