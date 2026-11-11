@@ -1216,6 +1216,8 @@ function renderRegionPriceComparison(data, osLabel, currentRegion) {
     const currency = data.currency || 'USD';
     const cheapest = data.cheapest;
     const savings = data.maxMonthlySavings;
+    const discount = getDiscountMultiplier();
+    const discountNote = discount < 1 ? ` ${((1 - discount) * 100).toFixed(1)}% discount applied.` : '';
 
     const summary = `
         <div class="region-price-summary">
@@ -1225,14 +1227,14 @@ function renderRegionPriceComparison(data, osLabel, currentRegion) {
             </div>
             <div class="region-price-summary-item">
                 <span class="rp-label">From</span>
-                <span class="rp-value">${cheapest ? `${formatHourlyCurrency(cheapest.hourlyPrice, currency)}/hr · ${formatCurrency(cheapest.monthlyPrice, currency)}/mo` : 'N/A'}</span>
+                <span class="rp-value">${cheapest ? `${formatHourlyCurrency(cheapest.hourlyPrice == null ? null : cheapest.hourlyPrice * discount, currency)}/hr · ${formatCurrency(cheapest.monthlyPrice == null ? null : cheapest.monthlyPrice * discount, currency)}/mo` : 'N/A'}</span>
             </div>
             <div class="region-price-summary-item">
                 <span class="rp-label">Max monthly savings</span>
-                <span class="rp-value rp-savings">${savings == null ? 'N/A' : `${formatCurrency(savings, currency)}/mo`}</span>
+                <span class="rp-value rp-savings">${savings == null ? 'N/A' : `${formatCurrency(savings * discount, currency)}/mo`}</span>
             </div>
         </div>
-        <p class="region-price-note">${isSavingsPlan() ? savingsPlanLabel() : `${osLabel} pay-as-you-go`} pricing across ${data.regionCount} region${data.regionCount === 1 ? '' : 's'}. Prices are guidance — validate before production decisions.${isSavingsPlan() ? ` ${SAVINGS_PLAN_ASSUMPTIONS}` : ''}</p>
+        <p class="region-price-note">${isSavingsPlan() ? savingsPlanLabel() : `${osLabel} pay-as-you-go`} pricing across ${data.regionCount} region${data.regionCount === 1 ? '' : 's'}.${discountNote} Prices are guidance — validate before production decisions.${isSavingsPlan() ? ` ${SAVINGS_PLAN_ASSUMPTIONS}` : ''}</p>
     `;
 
     const rows = data.regions.map(r => {
@@ -1249,12 +1251,12 @@ function renderRegionPriceComparison(data, osLabel, currentRegion) {
         const deltaText = isCheapest
             ? '—'
             : r.monthlyVsCheapest == null ? 'N/A'
-            : `${r.pctAboveCheapest == null ? '' : `+${r.pctAboveCheapest}% · `}+${formatCurrency(r.monthlyVsCheapest, currency)}/mo`;
+            : `${discount === 0 || r.pctAboveCheapest == null ? '' : `+${r.pctAboveCheapest}% · `}+${formatCurrency(r.monthlyVsCheapest * discount, currency)}/mo`;
         return `
             <tr class="${rowClass}">
                 <td class="rp-region">${escapeHtml(r.location)} <small>${escapeHtml(r.region)}</small> ${badges}</td>
-                <td class="rp-hourly">${r.hourlyPrice == null ? 'N/A' : formatHourlyCurrency(r.hourlyPrice, currency)}</td>
-                <td class="rp-monthly">${r.monthlyPrice == null ? 'N/A' : formatCurrency(r.monthlyPrice, currency)}</td>
+                <td class="rp-hourly">${r.hourlyPrice == null ? 'N/A' : formatHourlyCurrency(r.hourlyPrice * discount, currency)}</td>
+                <td class="rp-monthly">${r.monthlyPrice == null ? 'N/A' : formatCurrency(r.monthlyPrice * discount, currency)}</td>
                 <td class="rp-delta">${deltaText}</td>
             </tr>
         `;

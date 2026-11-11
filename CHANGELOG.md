@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-11-11
+- **fix:** Applied the main search's Extra Discount % to "Where is this cheapest?" regional hourly/monthly prices and savings, with a visible discount note. Savings Plan rates remain exempt.
+
 ## 2026-10-19
 - **fix:** Clarified that unverified Browse options are pending data verification, not unavailable in the region. Older API previews explain why defaulted x64 values require the reviewed API release and capability-cache refresh.
 - **improvement:** Replaced Browse categorical list boxes with searchable multi-select dropdowns, individually removable selections and clear buttons. Architecture always offers x64 and Arm64; boot generation offers Gen 1 and Gen 2 without treating missing capability data as verified support.
