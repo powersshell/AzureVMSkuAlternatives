@@ -44,6 +44,9 @@ const context = vm.createContext({
     displayAlternatives() {}, displayTargetSku() {},
     filterResultsByVendor: rows => rows, filterResultsByGeneration: rows => rows,
     applyGridFilters: rows => rows, renderEfficiency: () => 'PAYG efficiency',
+    BROWSE_FIELDS: [], browseValidationErrors: [],
+    readBrowseFilters: () => ({ includeUnknown: false }),
+    browseFilterDescriptions: () => [], browseMatch: () => ({ matches: true, unverified: false }),
     Blob: class { constructor(parts) { this.parts = parts; blobs.push(this); } },
     URL: { createObjectURL: () => 'blob:fixture' },
     XLSX: {

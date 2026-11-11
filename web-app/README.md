@@ -22,6 +22,52 @@ A serverless web application for comparing Azure Virtual Machine SKUs based on c
 - 🎯 **Special Filters**: NVMe and GPU matching requirements
 - 📱 **Responsive Design**: Modern, mobile-friendly UI
 
+## Advanced Browse filtering
+
+Browse keeps name/family, active-vCPU, memory, vendor and GPU-presence filters visible. Expand **Advanced filters** for architecture, processor generation/model, memory per active vCPU, threads per core, temporary storage/NVMe presence, data-disk/NIC limits, uncached IOPS/throughput, network bandwidth, Premium Storage, ephemeral OS disks, boot generations/controllers, accelerated networking, RDMA, security capabilities, mapped GPU specifications, zones, retirement/growth restrictions and a compute-price ceiling.
+
+Different requirements are ANDed; options within one multi-select are ORed. Empty fields mean Any and numeric boundaries are inclusive. All new requirements and lifecycle exclusions are inactive initially. Field-level errors block matching, export and sharing rather than silently applying invalid ranges.
+
+Categorical fields use searchable multi-select dropdowns: select several options without modifier keys, remove individual selections with their remove buttons, or use **Clear selections** to return to Any. This applies to architecture, processor generation/model, boot generation, remote disk controller, confidential computing type, GPU model/vendor/architecture and availability zones. Architecture always offers **x64** and **Arm64**; boot generation offers **Gen 1** and **Gen 2** (stored as `V1`/`V2` for existing links). Options absent from verified data are labeled **verification pending**, not unavailable in the region. Older API previews explain that legacy x64 values may be defaults; verification requires the reviewed API release and capability-cache refresh. Offering an option does not assert support.
+
+Missing/invalid data is **Unknown**, not zero or No. Active requirements exclude unknown values unless **Include unknown values** is checked. Such matches are counted and marked unverified in their Specs disclosure and exports; known mismatches never pass. **Require available price** always rejects missing prices. Specs displays the capability values behind matching without adding permanent table columns.
+
+The budget uses the numeric price behind the displayed OS, currency and purchase option, including Extra Discount where applicable (never for Savings Plan rates). Select hourly or monthly; monthly assumes 730 hours. Changing currency reinterprets the numeric ceiling in that currency, not an FX-converted budget. Compute prices exclude storage/networking; existing Windows pricing estimates and Spot's Linux-only behavior are unchanged.
+
+Filters survive region/currency/tab changes. Data-dependent options absent from the current region remain selectable/removable rather than being silently discarded. Reset clears filters/unknown inclusion while retaining region and pricing. **Copy Browse link** includes versioned `browse` URL state for region, pricing, discount, sorting and filters. An explicit link, even empty/reset filters, takes priority over device-local `vmsku_browse_v1` state. Pagination is not saved. Invalid links or blocked storage produce an explanation; browsing still works. Filter state is public in shared URLs: do not enter sensitive information into search. CSV/XLSX export the same filtered/sorted matches across all pages, with nullable capability columns; the Excel info sheet records requirements and unknown policy.
+
+### Data contract and rollout
+
+`/api/grid` adds `browseCapabilities` with `schemaVersion: 1`. Numbers/booleans can be null; lists distinguish unknown (`null`) from known empty (`[]`). Existing top-level fields and comparison behavior are retained. Authoritative parsing uses raw Compute SKU capabilities, the existing processor/GPU mappings, bandwidth enrichment and lifecycle catalogs:
+
+| Browse fields | Source / units |
+| --- | --- |
+| `vCPUs`, `memoryGB`, `memoryPerVcpu`, `vCPUsPerCore` | `vCPUsAvailable` (or `vCPUs` when absent), `MemoryGB` (GiB), derived GiB/active vCPU, `vCPUsPerCore` |
+| `architecture`, `hyperVGenerations`, `diskControllerTypes` | `CpuArchitectureType`, `HyperVGenerations`, `DiskControllerTypes`; boot generation is not processor generation or `_vN` hardware version |
+| `hasTempDisk`, `nvme` | Existing resource-volume/local-NVMe capacity parsing; local temporary NVMe is not the remote NVMe controller |
+| `maxDataDisks`, `maxNics`, `uncachedDiskIOPS`, `uncachedDiskMBps` | `MaxDataDiskCount`, `MaxNetworkInterfaces`, `UncachedDiskIOPS`, `UncachedDiskBytesPerSecond / 1,000,000`; VM-wide published limits |
+| `premiumIO`, `ephemeralOSDisk`, `acceleratedNetworking`, `encryptionAtHost`, `rdmaEnabled` | Corresponding raw SKU support flags; absent flags remain null |
+| `trustedLaunch`, `confidentialComputingType` | Known boot generations plus `TrustedLaunchDisabled` (Gen1-only is ineligible), raw confidential-computing type; size eligibility is not actual VM/OS/image eligibility |
+| `cpuGeneration`, `cpuModels`, `cpuVendor` | Existing curated series-to-processor mapping, with definitive Arm architecture; multiple models are possibilities, not a guaranteed assigned host |
+| `gpuCount`, `gpuAllocation`, `gpuMemoryGB`, GPU model/vendor/architecture | Raw reported count separately from existing verified full/fractional allocation and mapped VM-total memory (GB) |
+| `networkBandwidthMbps` | Existing cached/static aggregate bandwidth enrichment, Mbps; not per NIC or guaranteed workload throughput |
+| `availabilityZones`, lifecycle flags | Regional SKU metadata and current curated lifecycle annotations; not current capacity, quota, or subscription eligibility |
+
+Cache refresh replaces the complete `browseCapabilitiesJson` snapshot even under Table Storage merge upserts, preventing old numeric/boolean properties from reviving missing values. `browseNetworkBandwidthKnown` masks stale network enrichment; `browseZonesKnown` identifies known empty zone lists. Legacy rows expose only defensible facts (for example positive numeric values or known temporary-disk presence); ambiguous old false/zero defaults remain unknown until a successful refresh.
+
+**PR previews use the shared production API.** The UI explicitly reports unsupported contract/coverage and never fabricates missing support. Release the reviewed API and complete a successful cache refresh before expecting full filter coverage. Do not dispatch the Functions workflow on a feature branch: it targets production. A successful frontend preview is not proof the backend feature is live. CORS configuration remains platform-managed and unchanged.
+
+Detailed local-disk count/capacity/IOPS, cached/burst remote storage, disk-type-specific limits, MANA/NetVSC, maintenance guarantees, nested virtualization, FPGA and RDMA topology/performance require separate authoritative enrichment and are deferred.
+
+Offline checks (run at repository root):
+```powershell
+python -m pytest web-app\api\tests\test_browse_filters.py -m unit -q
+node scripts\test_browse_filters_ui.js
+node scripts\test_savings_plan_ui.js
+node --check web-app\src\browse-filters.js
+node --check web-app\src\app.js
+```
+
 ## Generation migration planning
 
 Source Gen and Target Gen are visible in the main comparison form, outside Advanced Options. They describe Hyper-V boot generations, not hardware `_vN` versions. Auto resolves only single-generation source sizes. Comparisons remain available for ambiguous sources, but their generation path and effort are unassessed until Source Gen is selected.
@@ -98,10 +144,11 @@ web-app/
 ├── src/                      # Frontend application
 │   ├── index.html           # Main HTML file
 │   ├── styles.css           # Styling
+│   ├── browse-filters.js    # Browse contract, filtering, controls and shared state
 │   └── app.js               # Frontend logic
 ├── api/                      # Azure Functions API
-│   ├── compare-vms.js       # VM comparison function
-│   ├── package.json         # Node.js dependencies
+│   ├── function_app.py      # Python v2 routes and cache/enrichment pipeline
+│   ├── requirements.txt     # Python dependencies
 │   ├── host.json            # Functions host configuration
 │   └── local.settings.json  # Local development settings
 ├── infra/                    # Infrastructure as Code

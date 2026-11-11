@@ -426,8 +426,8 @@
     <section id="gridView" class="grid-view hidden" aria-label="Browse all VMs">
         <div class="grid-controls">
             <div class="grid-search-row">
-                <input type="search" id="gridSearch" class="grid-search" placeholder="Search by name or family…" autocomplete="off" aria-label="Search VM sizes">
-                <span id="gridStatus" class="grid-status"></span>
+                <input type="search" id="gridSearch" class="grid-search" placeholder="Search by name or family…" autocomplete="off" maxlength="120" aria-label="Search VM sizes">
+                <span id="gridStatus" class="grid-status" role="status"></span>
             </div>
             <div class="grid-filter-row">
                 <div class="grid-filter">
@@ -438,15 +438,17 @@
                 </div>
                 <div class="grid-filter grid-range">
                     <label>vCPUs</label>
-                    <input type="number" id="gridVcpuMin" min="0" step="1" placeholder="min" aria-label="Minimum vCPUs">
+                    <input type="number" id="gridVcpuMin" min="0" step="1" placeholder="min" aria-label="Active vCPUs minimum" aria-describedby="gridVcpuError">
                     <span class="grid-range-sep">–</span>
-                    <input type="number" id="gridVcpuMax" min="0" step="1" placeholder="max" aria-label="Maximum vCPUs">
+                    <input type="number" id="gridVcpuMax" min="0" step="1" placeholder="max" aria-label="Active vCPUs maximum" aria-describedby="gridVcpuError">
+                    <span id="gridVcpuError" class="browse-field-error"></span>
                 </div>
                 <div class="grid-filter grid-range">
-                    <label>RAM (GB)</label>
-                    <input type="number" id="gridRamMin" min="0" step="1" placeholder="min" aria-label="Minimum RAM">
+                    <label>RAM (GiB)</label>
+                    <input type="number" id="gridRamMin" min="0" step="any" placeholder="min" aria-label="Memory (GiB) minimum" aria-describedby="gridRamError">
                     <span class="grid-range-sep">–</span>
-                    <input type="number" id="gridRamMax" min="0" step="1" placeholder="max" aria-label="Maximum RAM">
+                    <input type="number" id="gridRamMax" min="0" step="any" placeholder="max" aria-label="Memory (GiB) maximum" aria-describedby="gridRamError">
+                    <span id="gridRamError" class="browse-field-error"></span>
                 </div>
                 <label class="grid-check"><input type="checkbox" id="gridGpuOnly"> GPU only</label>
                 <div class="grid-vendor">
@@ -455,7 +457,20 @@
                     <label class="grid-check"><input type="checkbox" id="gridVendorARM" checked> ARM</label>
                 </div>
                 <button type="button" id="gridResetFilters" class="grid-reset-btn">Reset filters</button>
+                <button type="button" id="browseCopyLink" class="grid-reset-btn">Copy Browse link</button>
             </div>
+            <div id="browseFilterChips" class="browse-chips" aria-label="Active filters"></div>
+            <details id="browseAdvanced" class="browse-advanced">
+                <summary>Advanced filters<span id="browseActiveCount"></span></summary>
+                <p>Requirements across fields are combined; any selected option within one field matches. Open a dropdown to search and select multiple options. Remove a selected option or use Clear selections to return to Any.</p>
+                <label class="grid-check"><input type="checkbox" id="browseIncludeUnknown"> Include unknown values for active requirements</label>
+                <p>Unknown matches are unverified, not confirmed compatible. Known mismatches never pass. “Require available price” always excludes missing prices.</p>
+                <p id="browseApiNotice"></p>
+                <div id="browseFilterGroups" class="browse-filter-groups"></div>
+            </details>
+            <p id="browseFilterErrors" class="browse-field-error" role="alert"></p>
+            <p id="browseUnverifiedCount" class="grid-status" role="status"></p>
+            <p id="browseStateNotice" class="grid-status" role="status"></p>
             <div class="grid-price-row">
                 <div class="pricing-model-toggle">
                     <button id="btn-grid-payg" class="btn-pricing active" type="button" onclick="setPricingModel('payg')">PAYG</button>
@@ -496,7 +511,7 @@
                         <th class="sortable" data-sort="name">Name</th>
                         <th class="sortable" data-sort="family">Family</th>
                         <th class="sortable num" data-sort="vCPUs">vCPUs</th>
-                        <th class="sortable num" data-sort="memoryGB">RAM (GB)</th>
+                        <th class="sortable num" data-sort="memoryGB">RAM (GiB)</th>
                         <th class="sortable num" data-sort="gpuCount">GPU</th>
                         <th class="sortable num" data-sort="gpuPerfScore">GPU Perf</th>
                         <th class="sortable num" data-sort="acu">ACU</th>
@@ -656,6 +671,7 @@
             integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw"
             crossorigin="anonymous"></script>
     <script src="https://js.monitor.azure.com/scripts/b/ai.2.min.js" crossorigin="anonymous"></script>
+    <script src="browse-filters.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

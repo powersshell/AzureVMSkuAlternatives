@@ -50,6 +50,31 @@ class TestSavingsPlanContracts:
 # ============================================================================
 
 @pytest.mark.api
+class TestBrowseCapabilityContracts:
+    def test_grid_capabilities_are_nullable_and_typed(self, api_base_url):
+        response = requests.get(
+            f'{api_base_url}/grid', params={'location': 'eastus'}, timeout=60)
+        response.raise_for_status()
+        rows = response.json()['skus']
+        assert rows
+        for row in rows:
+            caps = row['browseCapabilities']
+            assert caps['schemaVersion'] == 1
+            for key in ('hasTempDisk', 'nvme', 'premiumIO', 'acceleratedNetworking',
+                        'ephemeralOSDisk', 'encryptionAtHost', 'rdmaEnabled',
+                        'trustedLaunch'):
+                assert caps[key] is None or isinstance(caps[key], bool)
+            for key in ('maxDataDisks', 'maxNics', 'uncachedDiskIOPS',
+                        'uncachedDiskMBps', 'networkBandwidthMbps', 'gpuAllocation'):
+                value = caps[key]
+                assert value is None or (
+                    isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and value >= 0)
+            assert caps['availabilityZones'] is None or isinstance(
+                caps['availabilityZones'], list)
+
+
+@pytest.mark.api
 class TestHealthEndpoint:
 
     def test_health_returns_200(self, api_base_url):
