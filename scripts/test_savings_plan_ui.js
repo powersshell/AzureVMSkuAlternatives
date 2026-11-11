@@ -285,6 +285,40 @@ assert.ok(compareStart >= 0 && compareEnd > compareStart);
 assert.doesNotMatch(source.slice(compareStart, compareEnd), /pricingModel|sp1year|sp3year/);
 
 async function regionalTests() {
+    const regionalPricing = {
+        currency: 'USD', regionCount: 3, maxMonthlySavings: 730,
+        cheapest: { region: 'eastus', location: 'East US', hourlyPrice: 1, monthlyPrice: 730 },
+        regions: [
+            { region: 'eastus', location: 'East US', hourlyPrice: 1, monthlyPrice: 730, monthlyVsCheapest: 0, pctAboveCheapest: 0 },
+            { region: 'westus', location: 'West US', hourlyPrice: 2, monthlyPrice: 1460, monthlyVsCheapest: 730, pctAboveCheapest: 100 },
+            { region: 'missing', location: 'Missing', hourlyPrice: null, monthlyPrice: null, monthlyVsCheapest: null }
+        ]
+    };
+    const originalPricing = JSON.stringify(regionalPricing);
+    for (const os of ['Linux', 'Windows']) {
+        context.currentPricingModel = 'payg';
+        for (const [input, hourly, monthly, delta] of [
+            ['25', '$0.7500', '$547.50', '+100% · +$547.50/mo'],
+            ['0', '$1.0000', '$730.00', '+100% · +$730.00/mo'],
+            ['100', '$0.0000', '$0.00', '+$0.00/mo'],
+            ['', '$1.0000', '$730.00', '+100% · +$730.00/mo']
+        ]) {
+            node('discountPct').value = input;
+            context.renderRegionPriceComparison(regionalPricing, os, 'eastus');
+            const rendered = node('regionPriceBody').innerHTML;
+            assert.ok(rendered.includes(`${hourly}/hr · ${monthly}/mo`), `${os}/${input}: discounted summary`);
+            assert.ok(rendered.includes(`rp-hourly">${hourly}`), `${os}/${input}: discounted hourly row`);
+            assert.ok(rendered.includes(`rp-monthly">${monthly}`), `${os}/${input}: discounted monthly row`);
+            assert.ok(rendered.includes(`rp-savings">${monthly}/mo`), `${os}/${input}: discounted maximum savings`);
+            assert.ok(rendered.includes(`rp-delta">${delta}`), `${os}/${input}: discounted regional delta`);
+            assert.match(rendered, /rp-monthly">N\/A/);
+            assert.doesNotMatch(rendered, /NaN|Infinity/);
+            if (input === '100') assert.doesNotMatch(rendered, /\+100%/);
+            if (input === '25') assert.match(rendered, /25\.0% discount applied/);
+            assert.equal(JSON.stringify(regionalPricing), originalPricing, 'Rendering must not mutate list prices or compound discounts');
+        }
+    }
+    node('discountPct').value = '25';
     context.currentResults = null;
     context.currentPricingOS = 'windows';
     context.currentPricingModel = 'sp1year';

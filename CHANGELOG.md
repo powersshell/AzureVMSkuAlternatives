@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-11-11
+- **fix:** Applied the main search's Extra Discount % to "Where is this cheapest?" regional hourly/monthly prices and savings, with a visible discount note. Savings Plan rates remain exempt.
+
 ## 2026-10-19
 - **fix:** Strengthened same-family recommendation affinity in balanced and cost modes and reduced the local temporary-disk loss penalty from 12 to 8 points. Disk-loss warnings, boot-generation and lifecycle safeguards, and the cost savings bonus remain in place. PowerShell uses matching weights and disk-loss scoring.
 
