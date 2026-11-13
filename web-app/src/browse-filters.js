@@ -448,6 +448,9 @@ function initializeBrowseFilters() {
     document.getElementById('browseAdvanced').addEventListener('input', () => { gridPage = 1; renderGrid(); });
     document.getElementById('browseAdvanced').addEventListener('change', () => { gridPage = 1; renderGrid(); });
     document.getElementById('browseCopyLink').addEventListener('click', copyBrowseLink);
+}
+
+function restoreBrowseFilters() {
     let raw;
     try {
         const url = new URL(window.location.href);
@@ -464,6 +467,7 @@ function initializeBrowseFilters() {
         setPricingModel(state.model);
         if (state.region) {
             locationChoices.setChoiceByValue(state.region);
+            updateRegionHint();
             updateOnboardingState();
             loadSkusForRegion(state.region);
         }

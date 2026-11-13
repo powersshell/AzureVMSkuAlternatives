@@ -38,9 +38,13 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 import urllib.error
 import urllib.parse
 import urllib.request
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'web-app' / 'api'))
+from region_catalog import arm_collection, discover_public_regions
 
 API_BASE = "https://vmsku-api-func-cus.azurewebsites.net/api"
 ARM_BASE = "https://management.azure.com"
@@ -101,21 +105,13 @@ def fetch_enumerated_skus(location, subscription_id, token):
         "{}/subscriptions/{}/providers/Microsoft.Compute/skus"
         "?api-version={}&$filter={}".format(ARM_BASE, subscription_id, SKUS_API_VERSION, location_filter)
     )
-    headers = {"Authorization": "Bearer {}".format(token)}
     names = set()
-    pages = 0
-    # A single-location query has so far always returned one page, but following
-    # nextLink costs nothing and prevents a silent truncation of the truth source.
-    while url and pages < 100:
-        data = fetch_json(url, headers=headers)
-        for sku in data.get("value", []):
-            if sku.get("resourceType") != "virtualMachines":
-                continue
-            name = sku.get("name")
-            if name and not name.endswith(EXCLUDED_SUFFIXES):
-                names.add(name)
-        url = data.get("nextLink")
-        pages += 1
+    for sku in arm_collection(url, token):
+        if sku.get("resourceType") != "virtualMachines":
+            continue
+        name = sku.get("name")
+        if name and not name.endswith(EXCLUDED_SUFFIXES):
+            names.add(name)
     return names
 
 
@@ -124,6 +120,8 @@ def main():
         description="Verify the served catalog covers every VM size Azure offers in a region."
     )
     parser.add_argument("--location", default="eastus", help="Azure region slug (default: eastus)")
+    parser.add_argument("--all-regions", action="store_true",
+                        help="Check every independently discovered active public region")
     parser.add_argument(
         "--max-missing",
         type=int,
@@ -141,6 +139,32 @@ def main():
         print("ERROR: no Azure credentials available.")
         print("       Set ARM_ACCESS_TOKEN and AZURE_SUBSCRIPTION_ID, or run 'az login'.")
         return 2
+
+    if args.all_regions:
+        failures = 0
+        try:
+            regions = discover_public_regions(subscription_id, token)
+            for region in regions:
+                if region['lifecycle'] != 'active':
+                    continue
+                location = region['name']
+                try:
+                    served = fetch_served_skus(location)
+                    enumerated = fetch_enumerated_skus(location, subscription_id, token)
+                    missing = enumerated - served
+                    if not enumerated or not served or len(missing) > args.max_missing:
+                        failures += 1
+                        print(f'FAIL {location}: enumerated={len(enumerated)}, served={len(served)}, '
+                              f'missing={len(missing)}; {sorted(missing)[:10]}', flush=True)
+                    else:
+                        print(f'PASS {location}: {len(enumerated)} enumerated sizes served', flush=True)
+                except Exception as exc:
+                    failures += 1
+                    print(f'ERROR {location}: {exc}', flush=True)
+        except Exception as exc:
+            print(f'ERROR: independent discovery failed: {exc}')
+            return 2
+        return 1 if failures else 0
 
     try:
         served = fetch_served_skus(location)

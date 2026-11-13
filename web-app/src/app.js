@@ -258,10 +258,70 @@ let expandAllAbortController = null; // Stops scheduling new expand-all fetches
 const detailsInFlight = new Map(); // cacheKey -> Promise (de-dups fetches across expand-all/prefetch)
 const expandAllBtn = document.getElementById('expandAllBtn');
 
-// Capture region options before Choices.js takes over the <select>
-const ALL_REGIONS = Array.from(document.getElementById('location').options)
-    .filter(opt => opt.value)
-    .map(opt => ({ value: opt.value, label: opt.textContent }));
+let ALL_REGIONS = [];
+let regionCatalogNotice = '';
+let regionCatalogReady;
+
+function updateRegionHint() {
+    const region = ALL_REGIONS.find(item => item.value === document.getElementById('location').value);
+    const notices = {
+        pending: 'Initial VM data refresh is pending.',
+        failed: 'The latest VM data refresh failed; any shown data may be stale.',
+        empty: 'Compute returned no VM sizes for our subscription. This does not prove that the region has no VMs.',
+        announced: 'This region is announced but is not yet available.'
+    };
+    const details = [regionCatalogNotice];
+    if (region) {
+        if (region.restricted) details.push('Access to this region is restricted.');
+        if (notices[region.dataStatus]) details.push(notices[region.dataStatus]);
+        if (region.dataStatus === 'ready' && !region.pricedSkuCount) details.push('VM pricing is unavailable.');
+        else if (region.dataStatus === 'ready' && region.pricedSkuCount < region.skuCount) {
+            details.push(`PAYG pricing is available for ${region.pricedSkuCount} of ${region.skuCount} VM sizes.`);
+        }
+        if (region.dataStale) details.push('VM data is more than 27 hours old.');
+        if (region.notSeen) details.push('Region presence needs reconciliation with upstream sources.');
+    } else {
+        details.push('Pick a public Azure region to load its VM SKUs.');
+    }
+    document.getElementById('regionHint').textContent = details.filter(Boolean).join(' ');
+}
+
+async function loadRegionCatalog() {
+    const retry = document.getElementById('retryRegions');
+    retry.classList.add('hidden');
+    locationChoices.disable();
+    try {
+        const response = await fetch(`${API_BASE_URL}/regions`, { cache: 'no-store' });
+        if (!response.ok) throw Error(`Region catalog request failed (${response.status}).`);
+        const data = await response.json();
+        if (data.cloud !== 'AzureCloud' || !Array.isArray(data.regions) || !data.regions.length ||
+            data.regions.some(region => !/^[a-z][a-z0-9]+$/.test(region.name) ||
+                typeof region.displayName !== 'string')) {
+            throw Error('The public region catalog is invalid.');
+        }
+        ALL_REGIONS = data.regions.map(region => ({
+            ...region, value: region.name,
+            label: region.displayName + (region.lifecycle === 'announced' ? ' (coming soon)' : '')
+        }));
+        locationChoices.clearStore();
+        locationChoices.setChoices([
+            { value: '', label: 'Select a region...', selected: true },
+            ...ALL_REGIONS.map(region => ({
+                value: region.value, label: region.label, disabled: region.lifecycle === 'announced'
+            }))
+        ], 'value', 'label', true);
+        regionCatalogNotice = data.stale || data.discoveryError
+            ? 'Region discovery is delayed; showing the last successful catalog.' : '';
+        locationChoices.enable();
+        updateRegionHint();
+        return true;
+    } catch (error) {
+        console.error('Unable to load public regions.', error);
+        document.getElementById('regionHint').textContent = 'Could not load regions. Retry to get the complete catalog.';
+        retry.classList.remove('hidden');
+        return false;
+    }
+}
 
 // Event Listeners
 compareBtn.addEventListener('click', handleCompare);
@@ -290,6 +350,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize Choices.js for location dropdown
     locationChoices = new Choices(locationSelect, {
+        allowHTML: false,
         searchEnabled: true,
         searchPlaceholderValue: 'Search regions...',
         itemSelectText: '',
@@ -346,21 +407,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Disable SKU dropdown initially
     skuChoices.disable();
+    document.getElementById('retryRegions').addEventListener('click', async () => {
+        regionCatalogReady = loadRegionCatalog();
+        if (await regionCatalogReady) restoreBrowseFilters();
+    });
+    regionCatalogReady = loadRegionCatalog();
 
     // Initialize region-first onboarding cues (emphasis, dimming, Compare disabled)
     updateOnboardingState();
 
     // E. Draw attention to the starting point: open the Region dropdown on first load
     // (only when nothing is selected yet).
-    if (!locationSelect.value) {
-        setTimeout(() => {
-            try { locationChoices.showDropdown(); } catch (e) { /* non-fatal */ }
-        }, 250);
-    }
+    regionCatalogReady.then(ready => {
+        if (ready && !locationSelect.value) locationChoices.showDropdown();
+    });
     
     // Listen for region changes - using Choices.js passedElement
     locationChoices.passedElement.element.addEventListener('change', async (e) => {
         const location = e.target.value;
+        updateRegionHint();
 
         if (!location) {
             // No region selected - disable SKU dropdown
@@ -487,8 +552,8 @@ async function loadSkusForRegion(location) {
         
         if (!skus || skus.length === 0) {
             allSkusForRegion = [];
-            skuChoices.setChoices([{ value: '', label: 'No SKUs available for this region', disabled: true }], 'value', 'label', true);
-            skuCount.textContent = 'No SKUs found';
+            skuChoices.setChoices([{ value: '', label: 'No cached SKUs - see region status', disabled: true }], 'value', 'label', true);
+            skuCount.textContent = 'No cached SKUs';
             skuCount.style.color = 'var(--danger)';
             return;
         }
@@ -3005,7 +3070,7 @@ function initRegionCheckBar() {
     const options = ALL_REGIONS.filter(r => r.value !== currentRegion);
 
     select.innerHTML = '<option value="">— Select a region —</option>' +
-        options.map(opt => `<option value="${opt.value}">${opt.label}</option>`).join('');
+        options.map(opt => `<option value="${opt.value}"${opt.lifecycle === 'announced' ? ' disabled' : ''}>${escapeHtml(opt.label)}</option>`).join('');
 
     // Show the bar
     bar.classList.remove('hidden');
@@ -3259,7 +3324,7 @@ async function loadGrid() {
         trackEvent('grid_loaded', { region, currency: gridCurrencyLoaded }, { skuCount: gridRows.length });
         loading.classList.add('hidden');
         if (gridRows.length === 0) {
-            showGridEmpty('No VM sizes found for this region.');
+            showGridEmpty('No cached VM sizes. Check the region status above.');
             renderGrid();
             return;
         }
@@ -3672,7 +3737,7 @@ function exportGridXlsx() {
 }
 
 // Wire up grid controls once the DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     document.body.dataset.mode = 'compare';
 
     document.getElementById('gridSearch')?.addEventListener('input', () => { gridPage = 1; renderGrid(); });
@@ -3700,4 +3765,5 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentMode === 'browse') renderGrid();
     });
     initializeBrowseFilters();
+    if (await regionCatalogReady) restoreBrowseFilters();
 });

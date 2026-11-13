@@ -25,6 +25,20 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Wait for the public region catalog
+        if: github.event_name != 'pull_request'
+        run: |
+          for attempt in {1..90}; do
+            if curl --fail --silent --show-error --max-time 15 \
+              "https://vmsku-api-func-cus.azurewebsites.net/api/regions" \
+              | jq -e '.cloud == "AzureCloud" and .count > 0' >/dev/null; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "The API region catalog must be deployed before this frontend."
+          exit 1
+
       - name: Debug - Check Secret
         run: |
           if [ -z "${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}" ]; then

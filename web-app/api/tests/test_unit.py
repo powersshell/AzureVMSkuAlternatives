@@ -71,6 +71,110 @@ from function_app import (
 # ============================================================================
 
 @pytest.mark.unit
+class TestPublicRegions:
+    @pytest.mark.parametrize('bootstrap_only,expected', [
+        (True, ['belgiumcentral']),
+        (False, ['eastus', 'belgiumcentral']),
+    ])
+    def test_scheduled_refresh_uses_discovery_and_bootstraps_new_regions(
+            self, monkeypatch, bootstrap_only, expected):
+        import function_app as app
+        from .test_regions import Table
+        table = Table()
+        regions = [
+            {'name': 'eastus', 'lifecycle': 'active', 'dataStatus': 'ready'},
+            {'name': 'belgiumcentral', 'lifecycle': 'active', 'dataStatus': 'pending'},
+            {'name': 'futureeast', 'lifecycle': 'announced', 'dataStatus': 'announced'},
+        ]
+        monkeypatch.setenv('SKU_CACHE_STORAGE_ACCOUNT', 'fixture')
+        monkeypatch.setenv('AZURE_SUBSCRIPTION_ID', 'subscription')
+        monkeypatch.setattr(app, 'TableServiceClient', lambda **kw: types.SimpleNamespace(
+            create_table_if_not_exists=lambda *a: None, get_table_client=lambda *a: table))
+        monkeypatch.setattr(app, 'get_access_token', lambda: 'token')
+        monkeypatch.setattr(app, 'sync_catalog', lambda *args: {
+            'count': 3, 'regions': regions, 'discoveredAt': '2026-11-13T00:00:00+00:00',
+            'discoveryError': None,
+        })
+        monkeypatch.setattr(app, 'fetch_network_bandwidth', lambda: {})
+        monkeypatch.setattr(app, 'seed_cpu_performance_table', lambda *args: None)
+        monkeypatch.setattr(app, 'seed_gpu_performance_table', lambda *args: None)
+        monkeypatch.setattr(app, 'prune_price_history', lambda *args: None)
+        called = []
+
+        def refresh(region, *args):
+            called.append(region)
+            return 2, {'region': region, 'totalSkus': 2, 'paygLinux': 2}
+
+        monkeypatch.setattr(app, 'refresh_region', refresh)
+        monkeypatch.setattr(app, '_emit_coverage_telemetry', lambda *args: None)
+        app._run_sku_refresh(bootstrap_only)
+        assert sorted(called) == sorted(expected)
+        assert table.rows['status', 'belgiumcentral']['dataStatus'] == 'ready'
+
+    def test_paginated_skus_are_persisted_and_used_live(self, monkeypatch):
+        import function_app as app
+        from .test_regions import Table
+
+        pages = 0
+
+        def get(url, **kwargs):
+            nonlocal pages
+            pages += 1
+            return types.SimpleNamespace(ok=True, json=lambda: {
+                'value': [{
+                    'name': f'Standard_D{pages}s_v5', 'resourceType': 'virtualMachines',
+                    'capabilities': [{'name': 'vCPUs', 'value': '2'},
+                                     {'name': 'MemoryGB', 'value': '8'}],
+                }],
+                **({'nextLink': 'https://management.azure.com/second'} if pages % 2 else {}),
+            })
+
+        class SkuTable(Table):
+            def submit_transaction(self, operations):
+                for _, entity in operations:
+                    self.upsert_entity(entity)
+
+            def query_entities(self, **kwargs):
+                return super().query_entities(kwargs['query_filter'])
+
+        table = SkuTable()
+        monkeypatch.setattr(app.requests, 'get', get)
+        monkeypatch.setattr(app, 'fetch_bulk_region_pricing', lambda *a, **k: {})
+        count, _ = app.refresh_region('belgiumcentral', 'subscription', 'token', table)
+        assert count == 2
+        assert len(app.get_vm_skus_for_location('subscription', 'belgiumcentral', 'token')) == 2
+        assert pages == 4
+
+    def test_empty_compute_response_preserves_previous_cache(self, monkeypatch):
+        import function_app as app
+        monkeypatch.setattr(app, 'arm_collection', lambda *args: [])
+        monkeypatch.setattr(app, 'fetch_bulk_region_pricing',
+                            lambda *args, **kwargs: pytest.fail('Empty Compute must not fetch pricing'))
+        count, coverage = app.refresh_region('belgiumcentral', 'subscription', 'token', object())
+        assert count == coverage['totalSkus'] == 0
+
+    def test_region_endpoint_and_bootstrap_use_persisted_catalog(self, monkeypatch):
+        import function_app as app
+        from .test_regions import Table
+        table = Table()
+        table.upsert_entity({
+            'PartitionKey': 'public', 'RowKey': 'catalog', 'discoveredAt': '2026-11-13T00:00:00+00:00',
+            'regionsJson': '[{"name":"belgiumcentral","displayName":"Belgium Central","lifecycle":"active"}]',
+        })
+        monkeypatch.setenv('SKU_CACHE_STORAGE_ACCOUNT', 'fixture')
+        monkeypatch.setattr(app, 'TableServiceClient', lambda **kw:
+                            types.SimpleNamespace(get_table_client=lambda *a: table))
+        monkeypatch.setattr(app.func, 'HttpResponse', lambda body, **kw:
+                            types.SimpleNamespace(body=body, **kw))
+        result = app.list_regions(object())
+        import json
+        data = json.loads(result.body)
+        assert data['regions'][0]['dataStatus'] == 'pending'
+        assert data['regions'][0]['name'] == 'belgiumcentral'
+        table.rows.clear()
+        assert app.list_regions(object()).status_code == 503
+
+@pytest.mark.unit
 class TestSavingsPlanPricing:
     @staticmethod
     def meter(windows=False, **overrides):
@@ -1111,6 +1215,7 @@ class TestTemporaryDisks:
                 {'name': raw[1]['name'], 'hasTempDisk': False}]
         monkeypatch.setattr(guard, 'fetch_json', lambda url, **kwargs:
                             {'skus': rows} if '/grid?' in url else {'value': raw})
+        monkeypatch.setattr(guard, 'arm_collection', lambda *args: raw)
         assert guard.check_region('eastus', 'subscription', 'token') == 0
         rows[1]['hasTempDisk'] = None
         assert guard.check_region('eastus', 'subscription', 'token') == 1

@@ -34,7 +34,7 @@ const context = vm.createContext({
     currentMode: 'browse', currentPricingOS: 'linux', currentPricingModel: 'payg',
     renderGridFacets() {}, renderGrid() {}, showError: message => { throw Error(message); },
     locationChoices: { setChoiceByValue: value => { node('location').value = value; } },
-    updateOnboardingState() {}, loadSkusForRegion() {}, switchMode: mode => { context.currentMode = mode; },
+    updateOnboardingState() {}, updateRegionHint() {}, loadSkusForRegion() {}, switchMode: mode => { context.currentMode = mode; },
     setPricingOS: os => { context.currentPricingOS = os; },
     setPricingModel: model => { context.currentPricingModel = model; }
 });
@@ -242,20 +242,24 @@ const stored = { ...state, filters: { ...state.filters, search: 'saved search',
 storage.set('vmsku_browse_v1', JSON.stringify(stored));
 context.window.location.href = 'https://example.test/';
 context.initializeBrowseFilters();
+context.restoreBrowseFilters();
 assert.equal(node('gridSearch').value, 'saved search', 'device state restores without a shared URL');
 assert.equal(context.readBrowseFilters().values.architecture[0], 'arm64');
 assert.equal(context.readBrowseFilters().values.hyperVGenerations.join(','), 'V1,V2');
 assert.ok(node('browse-hyperVGenerations').options.every(option => option.label.startsWith('Gen ')));
 context.window.location.href = 'https://example.test/?browse=' + encodeURIComponent(JSON.stringify(state));
 context.initializeBrowseFilters();
+context.restoreBrowseFilters();
 assert.equal(node('gridSearch').value, '', 'explicit empty URL wins over saved filters');
 context.window.location.href = 'https://example.test/?browse=bad';
 context.initializeBrowseFilters();
+context.restoreBrowseFilters();
 assert.equal(node('gridSearch').value, '', 'invalid URL never falls back to saved filters');
 assert.ok(node('browseStateNotice').textContent.includes('could not be restored'));
 context.window.location.href = 'https://example.test/';
 context.localStorage.getItem = () => { throw Error('blocked'); };
 context.initializeBrowseFilters();
+context.restoreBrowseFilters();
 assert.ok(node('browseStateNotice').textContent.includes('could not be restored'));
 context.localStorage.setItem = () => { throw Error('blocked'); };
 context.readBrowseFilters();

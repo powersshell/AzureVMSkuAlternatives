@@ -16,11 +16,37 @@ A serverless web application for comparing Azure Virtual Machine SKUs based on c
 - ⚖️ **Customizable Weighting**: Adjust importance of different hardware aspects
 - 💰 **Real-time Pricing**: Integration with Azure Retail Prices API
 - 📊 **Similarity Scoring**: Intelligent weighted scoring algorithm
-- 🌍 **Multi-region Support**: Search across all Azure regions
+- 🌍 **Public-region Support**: Dynamically discovered public Azure regions, including restricted regions; Government and China remain outside this first implementation
 - 💱 **Multi-currency**: Pricing in multiple currencies (USD, EUR, GBP, etc.)
 - 📈 **Export Capability**: Export results to CSV
 - 🎯 **Special Filters**: NVMe and GPU matching requirements
 - 📱 **Responsive Design**: Modern, mobile-friendly UI
+
+## Public region discovery and coverage
+
+`GET /api/regions` is the shared public-cloud inventory for the main picker, Browse restoration, and availability-check picker. It unions physical ARM locations with Microsoft's published [public region inventory](https://learn.microsoft.com/en-us/azure/reliability/regions-list). It does not filter to the "recommended" category or require a region to have pricing. Internal ARM staging/EUAP locations and logical geographies are not public production regions. Published announced regions remain visible but disabled until they become active in ARM or the published inventory.
+
+The `vmskuregions` table stores a last-known-good inventory snapshot and separate per-region data status. Discovery runs at 03:00, 09:00, 15:00 and 21:00 UTC and bootstraps pending, failed, and empty regional caches. The daily 02:00 UTC refresh rediscovers the inventory and refreshes every active region. API deployments also request discovery/bootstrap. No region-specific code change or redeployment is needed when new regions appear in upstream sources.
+
+Inventory completeness is distinct from data availability. `/regions` includes `discoveredAt`, `stale` (over eight hours), `discoveryError`, lifecycle/restricted flags, `dataStatus` (`pending`, `ready`, `failed`, `empty`, `announced`), SKU/priced counts, refresh timestamps and `dataStale` (over 27 hours). Empty Compute responses are subscription observations, not proof that Azure offers no VMs in a region. Restrictions and missing prices do not hide regions. Discovery failures retain the previous snapshot, mark the error and fail the invocation; known regions can still refresh. Unexpected removals remain visible as `notSeen` and fail reconciliation rather than being silently deleted.
+
+All Compute SKU pages must complete before any regional rows are written or pruned. Failed or empty Compute fetches preserve existing cache rows. Incomplete SKU transformation/persistence prevents a successful regional status. Successful regions can publish even when another region fails; a partial run is not reported as full coverage.
+
+For rollout, deploy the API first. Its deployment starts discovery/bootstrap; production frontend deployments wait for `/regions` before publishing. PR previews do not wait for production API deployment: they still use the deployed API, so the region picker will show an explicit loading error until the new endpoint is available. PR workflows do not deploy the API or modify production data. Until regional backfill completes, newly listed regions explicitly show pending or failed data. The existing managed identity needs subscription Reader and Table Data Contributor permissions (including table creation); no new storage account is required.
+
+Read-only proof and verification:
+
+```powershell
+python scripts\check_region_coverage.py --discover-only
+python scripts\check_region_coverage.py
+python scripts\check_catalog_coverage.py --all-regions
+python scripts\check_temp_disk_metadata.py --all-regions
+python -m pytest web-app\api\tests\test_regions.py -m unit -q
+python -m pytest web-app\api\tests\test_unit.py -m unit -k "PublicRegions or TemporaryDisks" -q
+node scripts\test_region_ui.js
+```
+
+The live guards need Azure public-cloud read credentials through the existing CLI/OIDC identity. Region reconciliation runs every six hours, independently of the application's stored inventory. The daily/post-API-deployment catalog guard checks every discovered active region against Compute, not a two-region sample. Missing, empty, failed, stale, and uninitialized data fail the guards instead of receiving a green completeness result. Review Actions failures alongside the existing Azure Monitor refresh alerts. Source publication delays still bound how quickly a new region can be discovered.
 
 ## Advanced Browse filtering
 

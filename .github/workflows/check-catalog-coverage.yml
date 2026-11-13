@@ -14,17 +14,10 @@ name: Check Catalog Coverage
 # been refreshed (rows are written at refresh time, not per request).
 
 on:
-  push:
+  workflow_run:
+    workflows: ['Deploy Flex Consumption Functions']
+    types: [completed]
     branches: [main]
-    paths:
-      - 'web-app/api/function_app.py'
-      - 'scripts/check_catalog_coverage.py'
-      - '.github/workflows/check-catalog-coverage.yml'
-  pull_request:
-    paths:
-      - 'web-app/api/function_app.py'
-      - 'scripts/check_catalog_coverage.py'
-      - '.github/workflows/check-catalog-coverage.yml'
   schedule:
     # Daily, after the other data-quality checks.
     - cron: '55 15 * * *'
@@ -36,19 +29,16 @@ permissions:
 
 jobs:
   check:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # Two regions with different catalogs, so a region-specific cache that was
-        # missed during a refresh still gets caught.
-        location: [eastus, westeurope]
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - run: python -m pip install requests
 
       # The truth source is the Microsoft.Compute SKUs API, which requires a token.
       - name: Azure login
@@ -58,7 +48,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Check catalog coverage (${{ matrix.location }})
+      - name: Check catalog coverage in all public regions
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: python scripts/check_catalog_coverage.py --location ${{ matrix.location }}
+        run: python scripts/check_catalog_coverage.py --all-regions
