@@ -26,6 +26,7 @@ jobs:
           node-version: '20'
 
       - name: Wait for the public region catalog
+        if: github.event_name != 'pull_request'
         run: |
           for attempt in {1..90}; do
             if curl --fail --silent --show-error --max-time 15 \

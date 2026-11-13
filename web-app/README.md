@@ -32,7 +32,7 @@ Inventory completeness is distinct from data availability. `/regions` includes `
 
 All Compute SKU pages must complete before any regional rows are written or pruned. Failed or empty Compute fetches preserve existing cache rows. Incomplete SKU transformation/persistence prevents a successful regional status. Successful regions can publish even when another region fails; a partial run is not reported as full coverage.
 
-For rollout, deploy the API first. Its deployment starts discovery/bootstrap; the frontend deployment waits for `/regions` before publishing. Until regional backfill completes, newly listed regions explicitly show pending or failed data. The existing managed identity needs subscription Reader and Table Data Contributor permissions (including table creation); no new storage account is required.
+For rollout, deploy the API first. Its deployment starts discovery/bootstrap; production frontend deployments wait for `/regions` before publishing. PR previews do not wait for production API deployment: they still use the deployed API, so the region picker will show an explicit loading error until the new endpoint is available. PR workflows do not deploy the API or modify production data. Until regional backfill completes, newly listed regions explicitly show pending or failed data. The existing managed identity needs subscription Reader and Table Data Contributor permissions (including table creation); no new storage account is required.
 
 Read-only proof and verification:
 

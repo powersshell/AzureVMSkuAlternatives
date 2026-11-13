@@ -3,6 +3,7 @@
 ## 2026-11-13
 - **fix:** Replaced the site's 34-region allowlist with a shared, dynamically discovered public Azure region catalog, including Belgium Central and restricted regions. New regions are discovered every six hours and automatically bootstrapped; announced regions and missing, failed or stale data are labeled explicitly.
 - **improvement:** Followed all Compute SKU pages before updating regional caches, retained last-known-good inventory on discovery failures, and added live reconciliation and all-region coverage checks instead of copied region lists.
+- **improvement:** Kept PR preview publishing independent of production API readiness while retaining the API-first gate for production frontend deployments.
 
 ## 2026-11-11
 - **fix:** Applied the main search's Extra Discount % to "Where is this cheapest?" regional hourly/monthly prices and savings, with a visible discount note. Savings Plan rates remain exempt.
