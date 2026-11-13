@@ -6,7 +6,7 @@ import re
 import time
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import requests
 
@@ -147,6 +147,21 @@ def discover_public_regions(subscription_id, token):
         entry['lifecycle'] = 'active'
     if not physical:
         raise RuntimeError('ARM returned no physical public regions')
+    for slug, entry in regions.items():
+        if entry['lifecycle'] != 'announced':
+            continue
+        location_filter = quote(f"location eq '{slug}'")
+        skus = arm_collection(
+            f'{ARM_BASE}/subscriptions/{subscription_id}/providers/Microsoft.Compute/skus'
+            f'?api-version=2021-07-01&$filter={location_filter}',
+            token,
+        )
+        # Location visibility varies by identity; verify newly offered VM catalogs directly.
+        if any(sku.get('resourceType') == 'virtualMachines' and sku.get('name')
+               and slug in (location.lower() for location in sku.get('locations', []))
+               for sku in skus):
+            entry['lifecycle'] = 'active'
+            entry['computeVisible'] = True
     return sorted(regions.values(), key=lambda entry: entry['displayName'])
 
 
