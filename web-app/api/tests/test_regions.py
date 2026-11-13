@@ -109,6 +109,57 @@ def test_arm_pagination_complete_or_error_and_credentials_stay_on_origin(monkeyp
         catalog.arm_collection(start, 'token')
 
 
+@pytest.mark.parametrize('skus, active', [
+    ([], False),
+    ([{'resourceType': 'disks', 'name': 'disk', 'locations': ['futureeast']}], False),
+    ([{'resourceType': 'virtualMachines', 'name': 'Standard_D2s_v5',
+       'locations': ['belgiumcentral']}], False),
+    ([{'resourceType': 'virtualMachines', 'name': 'Standard_D2s_v5',
+       'locations': ['futureeast']}], True),
+    ([{'resourceType': 'virtualMachines', 'name': 'Standard_D2s_v5',
+       'locations': ['FutureEast']}], True),
+])
+def test_announced_region_uses_compute_when_arm_location_is_not_visible(monkeypatch, skus, active):
+    def get(url, **kwargs):
+        if url == catalog.REGIONS_URL:
+            return response(text=HTML)
+        if '/providers/Microsoft.Compute/skus?' in url:
+            assert 'futureeast' in url
+            return response({'value': skus})
+        return response({'value': [
+            {'name': 'belgiumcentral', 'displayName': 'Belgium Central',
+             'metadata': {'regionType': 'Physical'}},
+        ]})
+
+    monkeypatch.setattr(catalog.requests, 'get', get)
+    rows = {r['name']: r for r in catalog.discover_public_regions('subscription', 'token')}
+    future = rows['futureeast']
+    assert future['lifecycle'] == ('active' if active else 'announced')
+    assert future['armVisible'] is False
+    assert bool(future.get('computeVisible')) is active
+
+
+def test_announced_region_compute_probe_requires_complete_pagination(monkeypatch):
+    def get(url, **kwargs):
+        if url == catalog.REGIONS_URL:
+            return response(text=HTML)
+        if '/providers/Microsoft.Compute/skus?' in url:
+            return response({'value': [
+                {'resourceType': 'virtualMachines', 'name': 'Standard_D2s_v5',
+                 'locations': ['futureeast']},
+            ], 'nextLink': 'https://management.azure.com/next-skus'})
+        if url.endswith('/next-skus'):
+            return response(status=403)
+        return response({'value': [
+            {'name': 'belgiumcentral', 'displayName': 'Belgium Central',
+             'metadata': {'regionType': 'Physical'}},
+        ]})
+
+    monkeypatch.setattr(catalog.requests, 'get', get)
+    with pytest.raises(RuntimeError, match='HTTP 403'):
+        catalog.discover_public_regions('subscription', 'token')
+
+
 def test_new_regions_bootstrap_and_discovery_failure_preserves_catalog(monkeypatch):
     table = Table()
     discovered = list(catalog.published_regions(HTML).values())
