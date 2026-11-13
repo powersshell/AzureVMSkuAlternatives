@@ -85,44 +85,11 @@
         <div class="config-row" id="configRow">
             <div class="config-field region-field" id="regionField">
                 <label for="location"><span class="step-badge">1</span> Region</label>
-                <select id="location" required>
-                    <option value="">Select a region...</option>
-                    <option value="eastus">East US</option>
-                    <option value="eastus2">East US 2</option>
-                    <option value="westus">West US</option>
-                    <option value="westus2">West US 2</option>
-                    <option value="westus3">West US 3</option>
-                    <option value="centralus">Central US</option>
-                    <option value="northcentralus">North Central US</option>
-                    <option value="southcentralus">South Central US</option>
-                    <option value="westcentralus">West Central US</option>
-                    <option value="canadacentral">Canada Central</option>
-                    <option value="canadaeast">Canada East</option>
-                    <option value="brazilsouth">Brazil South</option>
-                    <option value="northeurope">North Europe</option>
-                    <option value="westeurope">West Europe</option>
-                    <option value="uksouth">UK South</option>
-                    <option value="ukwest">UK West</option>
-                    <option value="francecentral">France Central</option>
-                    <option value="germanywestcentral">Germany West Central</option>
-                    <option value="norwayeast">Norway East</option>
-                    <option value="switzerlandnorth">Switzerland North</option>
-                    <option value="swedencentral">Sweden Central</option>
-                    <option value="southeastasia">Southeast Asia</option>
-                    <option value="eastasia">East Asia</option>
-                    <option value="australiaeast">Australia East</option>
-                    <option value="australiasoutheast">Australia Southeast</option>
-                    <option value="japaneast">Japan East</option>
-                    <option value="japanwest">Japan West</option>
-                    <option value="koreacentral">Korea Central</option>
-                    <option value="koreasouth">Korea South</option>
-                    <option value="southindia">South India</option>
-                    <option value="centralindia">Central India</option>
-                    <option value="westindia">West India</option>
-                    <option value="southafricanorth">South Africa North</option>
-                    <option value="uaenorth">UAE North</option>
+                <select id="location" required disabled>
+                    <option value="">Loading public regions...</option>
                 </select>
-                <small id="regionHint" class="region-hint">👇 Start here — pick a region to load its VM SKUs</small>
+                <small id="regionHint" class="region-hint" aria-live="polite">Loading the public Azure region catalog...</small>
+                <button id="retryRegions" type="button" class="hidden">Retry loading regions</button>
             </div>
             <div class="config-field config-field-grow downstream-field compare-only">
                 <label for="skuName"><span class="step-badge">2</span> Source SKU</label>

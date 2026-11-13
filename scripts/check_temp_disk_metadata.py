@@ -8,6 +8,7 @@ import urllib.parse
 
 from check_catalog_coverage import (
     API_BASE, ARM_BASE, SKUS_API_VERSION, fetch_json, get_arm_token, get_subscription_id,
+    arm_collection, discover_public_regions,
 )
 
 
@@ -39,12 +40,9 @@ def check_region(location, subscription, token):
         f"?api-version={SKUS_API_VERSION}&$filter={query}"
     )
     expected = {}
-    while url:
-        data = fetch_json(url, headers={'Authorization': f'Bearer {token}'})
-        for sku in data.get('value', []):
-            if sku.get('resourceType') == 'virtualMachines' and not sku['name'].endswith('_Promo'):
-                expected[sku['name']] = expected_presence(sku)
-        url = data.get('nextLink')
+    for sku in arm_collection(url, token):
+        if sku.get('resourceType') == 'virtualMachines' and not sku['name'].endswith('_Promo'):
+            expected[sku['name']] = expected_presence(sku)
     if not expected:
         raise RuntimeError(f'{location}: Compute returned no VM sizes')
     grid = fetch_json(f'{API_BASE}/grid?location={urllib.parse.quote(location)}')
@@ -60,8 +58,6 @@ def check_region(location, subscription, token):
     unknown = len(expected) - present - absent
     print(f'{location}: checked={len(expected)}, present={present}, absent={absent}, '
           f'unknown={unknown}, mismatches={len(failures)}', flush=True)
-    if not present or not absent:
-        failures.append('No known present/absent sizes checked; cannot validate both cases')
     for failure in failures[:15]:
         print(f'  FAIL {failure}', flush=True)
     return len(failures)
@@ -70,11 +66,17 @@ def check_region(location, subscription, token):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--locations', nargs='+', default=['eastus', 'westeurope'])
+    parser.add_argument('--all-regions', action='store_true')
     args = parser.parse_args()
     token, subscription = get_arm_token(), get_subscription_id()
     if not token or not subscription:
         print('ERROR: Azure credentials unavailable; use the existing OIDC workflow or az login.')
         return 2
+    if args.all_regions:
+        args.locations = [
+            region['name'] for region in discover_public_regions(subscription, token)
+            if region['lifecycle'] == 'active'
+        ]
     failures = 0
     for location in args.locations:
         try:

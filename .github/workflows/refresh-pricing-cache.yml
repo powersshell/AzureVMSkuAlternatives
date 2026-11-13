@@ -15,7 +15,7 @@ jobs:
   refresh:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 90
     env:
       RESOURCE_GROUP: rg-vmsku-alternatives
       FUNCTION_APP: vmsku-api-func-cus
@@ -25,6 +25,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - run: python -m pip install requests
       - name: Azure Login via OIDC
         uses: azure/login@v1
         with:
@@ -66,10 +67,11 @@ jobs:
               f"| where AppRoleName == '{os.environ['FUNCTION_APP']}' "
               "| extend payload = parse_json(Message) "
               "| where payload.event_type == 'sku_refresh_run' "
+              "| where payload.bootstrapOnly == false "
               "| top 1 by TimeGenerated desc "
               "| project Payload = tostring(payload)"
           )
-          for attempt in range(40):
+          for attempt in range(120):
               rows = json.loads(subprocess.check_output([
                   "az", "monitor", "log-analytics", "query",
                   "--workspace", os.environ["WORKSPACE_ID"],
@@ -85,6 +87,8 @@ jobs:
                           or result["regionsFailed"]
                           or result["regionsUnpriced"]
                           or result["regionsMissing"]
+                          or result["regionsEmpty"]
+                          or result["discoveryError"]
                           or result["totalUpdated"] <= 0):
                       raise SystemExit("The regional refresh did not complete successfully.")
                   with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
@@ -92,18 +96,14 @@ jobs:
                           f"Refreshed {requested} regions and {result['totalUpdated']} SKU rows.\n"
                       )
                   break
-              print(f"Waiting for refresh completion telemetry ({attempt + 1}/40)...", flush=True)
+              print(f"Waiting for refresh completion telemetry ({attempt + 1}/120)...", flush=True)
               time.sleep(30)
           else:
-              raise SystemExit("No completed refresh was observed within 20 minutes.")
+              raise SystemExit("No completed refresh was observed within 60 minutes.")
           PY
       - name: Verify temporary-disk metadata in every refreshed region
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
-          python scripts/check_temp_disk_metadata.py --locations \
-            eastus eastus2 westus westus2 westus3 centralus northcentralus southcentralus westcentralus \
-            canadacentral canadaeast brazilsouth northeurope westeurope uksouth ukwest \
-            francecentral germanywestcentral norwayeast switzerlandnorth swedencentral \
-            eastasia southeastasia japaneast japanwest australiaeast australiasoutheast \
-            centralindia southindia westindia koreacentral koreasouth uaenorth southafricanorth
+          python scripts/check_region_coverage.py
+          python scripts/check_temp_disk_metadata.py --all-regions

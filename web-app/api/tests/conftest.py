@@ -52,24 +52,13 @@ def major_regions():
 
 
 @pytest.fixture
-def all_cached_regions():
-    """All regions included in the daily cache refresh."""
-    return [
-        'eastus', 'eastus2', 'westus', 'westus2', 'westus3',
-        'centralus', 'northcentralus', 'southcentralus', 'westcentralus',
-        'canadacentral', 'canadaeast',
-        'brazilsouth',
-        'northeurope', 'westeurope', 'uksouth', 'ukwest',
-        'francecentral', 'germanywestcentral', 'norwayeast', 'switzerlandnorth',
-        'swedencentral',
-        'eastasia', 'southeastasia',
-        'japaneast', 'japanwest',
-        'australiaeast', 'australiasoutheast',
-        'centralindia', 'southindia', 'westindia',
-        'koreacentral', 'koreasouth',
-        'uaenorth',
-        'southafricanorth'
-    ]
+def all_cached_regions(api_base_url):
+    """Active public regions from the shared catalog, not a copied allowlist."""
+    import requests
+    response = requests.get(f'{api_base_url}/regions', timeout=60)
+    response.raise_for_status()
+    return [region['name'] for region in response.json()['regions']
+            if region['lifecycle'] == 'active']
 
 
 # Sample mock data for unit tests (no network needed)

@@ -33,7 +33,7 @@ $functionUrl = "https://$FunctionAppName.azurewebsites.net/admin/functions/refre
 
 Write-Host "2. Triggering cache refresh function..." -ForegroundColor Cyan
 Write-Host "   URL: $functionUrl" -ForegroundColor Gray
-Write-Host "   This will take 10-30 minutes to complete (querying 30+ regions)..." -ForegroundColor Yellow
+Write-Host "   This discovers and refreshes every active public Azure region..." -ForegroundColor Yellow
 Write-Host "   You can monitor progress in Application Insights or function logs.`n" -ForegroundColor Yellow
 
 # Trigger the function
@@ -85,8 +85,8 @@ Write-Host "   Table: vmskus" -ForegroundColor Gray
 # - Creating a query endpoint in the Function App
 
 Write-Host "`n⏳ Cache population is running..." -ForegroundColor Yellow
-Write-Host "   Expected duration: 10-30 minutes" -ForegroundColor Yellow
-Write-Host "   Processing ~30 regions with 500-700 SKUs each" -ForegroundColor Yellow
+Write-Host "   Duration depends on the discovered region count and upstream throttling." -ForegroundColor Yellow
+Write-Host "   Check /api/regions for inventory, readiness, and discovery errors." -ForegroundColor Yellow
 
 Write-Host "`nMonitor progress:" -ForegroundColor White
 Write-Host "  Azure Portal → Function App → Monitor → Logs" -ForegroundColor Gray

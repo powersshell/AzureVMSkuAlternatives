@@ -16,6 +16,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import azure.functions as func
 from azure.data.tables import TableServiceClient, EntityProperty, EdmType
 from azure.identity import DefaultAzureCredential
+from region_catalog import (
+    REGION_TABLE, arm_collection, read_catalog, sync_catalog, record_refresh, refresh_targets,
+)
 
 # Create the Function App instance
 app = func.FunctionApp()
@@ -1131,6 +1134,30 @@ def get_sku_from_cache(sku_name: str, location: str) -> dict:
 
 
 # ============================================================================
+# HTTP Route: /regions - Complete public region inventory and data readiness
+# ============================================================================
+@app.route(route="regions", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def list_regions(req: func.HttpRequest) -> func.HttpResponse:
+    storage_account_name = os.environ.get('SKU_CACHE_STORAGE_ACCOUNT')
+    if not storage_account_name:
+        return func.HttpResponse(
+            json.dumps({'error': 'Region catalog storage is not configured'}),
+            mimetype='application/json', status_code=503)
+    try:
+        service = TableServiceClient(
+            endpoint=f"https://{storage_account_name}.table.core.windows.net",
+            credential=DefaultAzureCredential())
+        catalog = read_catalog(service.get_table_client(REGION_TABLE))
+        return func.HttpResponse(json.dumps(catalog), mimetype='application/json',
+                                 headers={'Cache-Control': 'no-store'})
+    except Exception:
+        logging.exception('Unable to read public region catalog')
+        return func.HttpResponse(
+            json.dumps({'error': 'Region catalog unavailable; retry after discovery completes'}),
+            mimetype='application/json', status_code=503)
+
+
+# ============================================================================
 # HTTP Route: /skus - List available VM SKUs from cache
 # ============================================================================
 @app.route(route="skus", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
@@ -1803,11 +1830,18 @@ def growth_restrictions(req: func.HttpRequest) -> func.HttpResponse:
 # ============================================================================
 @app.timer_trigger(schedule="0 0 2 * * *", arg_name="timer", run_on_startup=False, use_monitor=True)
 def refresh_sku_cache(timer: func.TimerRequest) -> None:
-    """
-    Timer-triggered Azure Function to refresh VM SKU cache
-    Runs daily at 2:00 AM UTC to populate Storage Table with latest SKU data
-    Schedule: 0 0 2 * * * (Daily at 2:00 AM UTC)
-    """
+    _run_sku_refresh()
+
+
+@app.timer_trigger(schedule="0 0 3,9,15,21 * * *", arg_name="timer",
+                   run_on_startup=False, use_monitor=True)
+def discover_regions(timer: func.TimerRequest) -> None:
+    """Discover new regions every six hours and bootstrap missing regional data."""
+    _run_sku_refresh(bootstrap_only=True)
+
+
+def _run_sku_refresh(bootstrap_only=False) -> None:
+    """Discover public regions and refresh all active or only uninitialized caches."""
     logging.info('Starting SKU cache refresh...')
     
     # Get configuration
@@ -1815,8 +1849,7 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
     subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID')
     
     if not storage_account_name or not subscription_id:
-        logging.error('Missing required environment variables: SKU_CACHE_STORAGE_ACCOUNT or AZURE_SUBSCRIPTION_ID')
-        return
+        raise RuntimeError('Missing SKU_CACHE_STORAGE_ACCOUNT or AZURE_SUBSCRIPTION_ID')
     
     # Initialize Table Service with managed identity
     credential = DefaultAzureCredential()
@@ -1832,7 +1865,7 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
         logging.info(f"Table '{table_name}' is ready")
     except Exception as e:
         logging.error(f"Failed to create table: {e}")
-        return
+        raise
     
     table_client = table_service.get_table_client(table_name)
 
@@ -1850,26 +1883,29 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
         token = get_access_token()
     except Exception as e:
         logging.error(f"Failed to get access token: {e}")
+        raise
+
+    table_service.create_table_if_not_exists(REGION_TABLE)
+    region_table = table_service.get_table_client(REGION_TABLE)
+    discovery_error = None
+    try:
+        catalog = sync_catalog(region_table, subscription_id, token)
+    except Exception as exc:
+        discovery_error = exc
+        catalog = read_catalog(region_table)
+        logging.error('Refreshing known regions despite failed discovery: %s', exc)
+    regions = refresh_targets(catalog, bootstrap_only)
+    logging.info(json.dumps({
+        'event_type': 'region_discovery', 'count': catalog['count'],
+        'discoveredAt': catalog['discoveredAt'],
+        'refreshTargets': len(regions), 'bootstrapOnly': bootstrap_only,
+        'discoveryError': catalog['discoveryError'],
+        'notSeen': [r['name'] for r in catalog['regions'] if r.get('notSeen')],
+    }))
+    if not regions:
+        if discovery_error:
+            raise RuntimeError('Public region discovery failed') from discovery_error
         return
-    
-    # List of key Azure regions to cache
-    # Full list can be expanded, starting with most common regions
-    regions = [
-        'eastus', 'eastus2', 'westus', 'westus2', 'westus3',
-        'centralus', 'northcentralus', 'southcentralus', 'westcentralus',
-        'canadacentral', 'canadaeast',
-        'brazilsouth',
-        'northeurope', 'westeurope', 'uksouth', 'ukwest',
-        'francecentral', 'germanywestcentral', 'norwayeast', 'switzerlandnorth',
-        'swedencentral',
-        'eastasia', 'southeastasia',
-        'japaneast', 'japanwest',
-        'australiaeast', 'australiasoutheast',
-        'centralindia', 'southindia', 'westindia',
-        'koreacentral', 'koreasouth',
-        'uaenorth',
-        'southafricanorth'
-    ]
     
     total_updated = 0
     total_errors = 0
@@ -1893,7 +1929,11 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
         started = time.time()
         try:
             count, coverage = refresh_region(region, subscription_id, token, table_client, network_bw, history_client)
-        except Exception:
+            if coverage.get('skusFailedToPersist', 0) or coverage.get('skusFailedToProcess', 0):
+                raise RuntimeError(f'Incomplete SKU persistence for {region}')
+            record_refresh(region_table, region, coverage=coverage)
+        except Exception as exc:
+            record_refresh(region_table, region, error=exc)
             _record_region_outcome(region_outcomes, region, 'failed', time.time() - started, 0, None)
             raise
         elapsed = time.time() - started
@@ -1950,7 +1990,7 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
                     if region in region_outcomes:
                         region_outcomes[region]['error'] = str(e)[:300]
 
-    logging.info(f"SKU cache refresh completed. Updated: {total_updated}, Errors: {total_errors}")
+    logging.info(f"SKU cache refresh processing finished. Updated: {total_updated}, Errors: {total_errors}")
 
     # Prune price-history rows beyond the retention window (I-G)
     if history_client is not None:
@@ -1967,22 +2007,27 @@ def refresh_sku_cache(timer: func.TimerRequest) -> None:
     # silently produced no pricing left stale data behind with a green checkmark
     # (issue #21). Now the run fails loudly when any region did not land.
     run_elapsed = time.time() - run_started
-    _emit_refresh_run_telemetry(region_outcomes, regions, run_elapsed, total_updated, total_errors)
+    _emit_refresh_run_telemetry(region_outcomes, regions, run_elapsed, total_updated, total_errors,
+                                bootstrap_only=bootstrap_only, discovery_error=discovery_error)
 
     degraded = sorted(
         r for r, o in region_outcomes.items()
         if o.get('status') != 'ok'
+        or o.get('totalSkus', 0) == 0
         or (o.get('pricedSkus', 0) == 0 and o.get('totalSkus', 0) > 0)
     )
     missing = sorted(set(regions) - set(region_outcomes))
     problem_regions = sorted(set(degraded) | set(missing))
 
-    if problem_regions:
+    if problem_regions or discovery_error:
         raise RuntimeError(
             f"SKU cache refresh completed with {len(problem_regions)} of {len(regions)} "
             f"region(s) not refreshed: {', '.join(problem_regions)}. "
-            f"Updated {total_updated} SKUs in {run_elapsed:.0f}s."
+            f"Updated {total_updated} SKUs in {run_elapsed:.0f}s. "
+            f"Discovery error: {discovery_error or 'none'}."
         )
+    if not bootstrap_only:
+        logging.info(f"SKU cache refresh completed. Updated: {total_updated}, Errors: {total_errors}")
 
 
 # ============================================================================
@@ -2039,6 +2084,10 @@ def admin_refresh_region(req: func.HttpRequest) -> func.HttpResponse:
 
         token = get_access_token()
         count, coverage = refresh_region(region, subscription_id, token, table_client, history_client=history_client)
+        if coverage.get('skusFailedToPersist', 0):
+            raise RuntimeError(f'Incomplete SKU persistence for {region}')
+        table_service.create_table_if_not_exists(REGION_TABLE)
+        record_refresh(table_service.get_table_client(REGION_TABLE), region, coverage=coverage)
         
         return func.HttpResponse(
             json.dumps({'region': region, 'skusUpdated': count, 'status': 'success', 'coverage': coverage}),
@@ -2965,22 +3014,8 @@ def get_vm_skus_for_location(subscription_id: str, location: str, access_token: 
     api_version = '2021-07-01'
     url = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Compute/skus?api-version={api_version}&$filter=location eq '{location}'"
 
-    response = requests.get(
-        url,
-        headers={
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json'
-        },
-        timeout=30
-    )
-
-    if not response.ok:
-        error_text = response.text
-        logging.error(f'Failed to fetch SKUs: {response.status_code} {error_text}')
-        raise Exception(f'Failed to fetch VM SKUs: {response.status_code}')
-
-    data = response.json()
-    vm_skus = [sku for sku in data.get('value', []) if sku.get('resourceType') == 'virtualMachines']
+    vm_skus = [sku for sku in arm_collection(url, access_token)
+               if sku.get('resourceType') == 'virtualMachines']
 
     logging.info(f'Found {len(vm_skus)} VM SKUs')
     return vm_skus
@@ -4133,21 +4168,13 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
     api_version = '2021-07-01'
     url = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Compute/skus?api-version={api_version}&$filter=location eq '{region}'"
     
-    headers = {
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/json'
-    }
-    
-    response = requests.get(url, headers=headers, timeout=30)
-    
-    if not response.ok:
-        raise Exception(f'Failed to fetch SKUs: {response.status_code}')
-    
-    data = response.json()
-    skus = [s for s in data.get('value', []) if s.get('resourceType') == 'virtualMachines']
+    skus = [s for s in arm_collection(url, token) if s.get('resourceType') == 'virtualMachines']
     
     # Filter out Promo SKUs — identical hardware to base SKU, adds noise without value
     skus = [s for s in skus if not s.get('name', '').endswith('_Promo')]
+    if not skus:
+        logging.warning('Compute returned no VM sizes for %s; preserving any cached rows', region)
+        return 0, _compute_region_coverage(region, [])
     
     logging.info(f"Fetching pricing for {len(skus)} SKUs in {region} via bulk API call...")
 
@@ -4157,6 +4184,7 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
     pricing_data = fetch_bulk_region_pricing(region, require_complete=True)
 
     entities = []
+    failed_processing = []
     timestamp = datetime.now(timezone.utc).isoformat()
 
     for sku in skus:
@@ -4242,7 +4270,11 @@ def refresh_region(region: str, subscription_id: str, token: str, table_client, 
             entities.append(entity)
 
         except Exception as e:
-            logging.warning(f"Failed to process SKU {sku.get('name', 'unknown')}: {e}")
+            failed_processing.append(sku.get('name', 'unknown'))
+            logging.error(f"Failed to process SKU {sku.get('name', 'unknown')}: {e}")
+
+    if failed_processing:
+        raise RuntimeError(f'Failed to process {len(failed_processing)} SKUs for {region}')
 
     # Capture the currently-cached prices BEFORE upserting today's values so we can
     # detect price changes for the on-change price-history snapshot (I-G).
@@ -4742,7 +4774,8 @@ def _record_region_outcome(outcomes: Dict[str, Dict], region: str, status: str,
 
 
 def _emit_refresh_run_telemetry(outcomes: Dict[str, Dict], regions: List[str], run_elapsed: float,
-                                total_updated: int, total_errors: int) -> None:
+                                total_updated: int, total_errors: int, bootstrap_only=False,
+                                discovery_error=None) -> None:
     """
     Emit one event per region plus a run summary.
 
@@ -4767,6 +4800,8 @@ def _emit_refresh_run_telemetry(outcomes: Dict[str, Dict], regions: List[str], r
 
     logging.info(json.dumps({
         'event_type': 'sku_refresh_run',
+        'bootstrapOnly': bootstrap_only,
+        'discoveryError': str(discovery_error)[:500] if discovery_error else '',
         'runDurationSec': round(run_elapsed, 1),
         'slowestRegionSec': slowest,
         'regionsRequested': len(regions),
@@ -4779,6 +4814,7 @@ def _emit_refresh_run_telemetry(outcomes: Dict[str, Dict], regions: List[str], r
         'regionsFailed': failed,
         'regionsUnpriced': unpriced,
         'regionsMissing': missing,
+        'regionsEmpty': sorted(r for r, o in outcomes.items() if not o.get('totalSkus')),
         'totalUpdated': total_updated,
         'totalErrors': total_errors,
     }))
