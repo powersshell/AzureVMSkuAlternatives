@@ -9,11 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-11-13
-- **fix:** Replaced the site's 34-region allowlist with a shared, dynamically discovered public Azure region catalog, including Belgium Central and restricted regions. New regions are discovered every six hours and automatically bootstrapped; announced regions and missing, failed or stale data are labeled explicitly.
-- **improvement:** Followed all Compute SKU pages before updating regional caches, retained last-known-good inventory on discovery failures, and added live reconciliation and all-region coverage checks instead of copied region lists.
-- **improvement:** Kept PR preview publishing independent of production API readiness while retaining the API-first gate for production frontend deployments.
-- **fix:** Verify announced regions against live Compute SKU catalogs when ARM location visibility differs between identities, preventing false coverage failures without hiding available VM regions.
+### 2026-11-17
+- **improvement:** Added a GitHub-hosted Copilot agent to review Actions failures twice daily, report causes and recommended action in a dedicated tracking issue, and confirm recoveries without changing code or production resources.
 
 📄 [Full changelog →](CHANGELOG.md)
 
@@ -364,6 +361,40 @@ azure-vm-sku-alternatives/
 ├── GITHUB-ACTIONS-SETUP.md     # Deployment guide
 └── TROUBLESHOOTING.md          # Common issues
 ```
+
+---
+
+## Actions failure reviews
+
+[Review Actions Failures](https://github.com/powersshell/AzureVMSkuAlternatives/actions/workflows/review-actions-failures.lock.yml)
+runs on GitHub-hosted runners at **8 AM and 4 PM America/Denver**, including
+daylight-saving changes, and supports manual dispatch. GitHub may delay scheduled
+runs. It reviews the last 24 hours plus previously reported unresolved failures.
+New findings, meaningful changes and confirmed recoveries are posted in
+[the tracking issue](https://github.com/powersshell/AzureVMSkuAlternatives/issues/35);
+unchanged findings do not produce duplicate comments. Run summaries and agent
+artifacts are available in Actions. The agent cannot repair code, rerun workflows,
+deploy or change Azure resources; its only configured publication is a comment
+on the tracking issue.
+
+**Authentication:** This personal repository requires an Actions secret named
+`COPILOT_GITHUB_TOKEN`: a fine-grained PAT belonging to an account with an active
+Copilot license, with the **Copilot Requests: Read** account permission. Create
+it in [personal token settings](https://github.com/settings/personal-access-tokens/new)
+and add it in
+[repository Actions secrets](https://github.com/powersshell/AzureVMSkuAlternatives/settings/secrets/actions).
+Do not paste tokens into issues, source or agent prompts. GitHub API reads and the
+separate comment-publishing job use the short-lived `GITHUB_TOKEN`, not this PAT.
+Agent inference consumes the token owner's Copilot allowance.
+
+The source is `.github/workflows/review-actions-failures.md`; the committed
+`.lock.yml` is generated with GitHub Agentic Workflows **v1.2.2**. After editing
+the source, install that compiler with
+`gh extension install github/gh-aw --pin v1.2.2` and run
+`gh aw compile review-actions-failures --validate`, then commit both files.
+The compiled workflow must be on the default branch for scheduling or manual
+dispatch. The earlier local-app monitor is disabled; this workflow does not
+depend on a developer's computer or the Copilot desktop app.
 
 ---
 
