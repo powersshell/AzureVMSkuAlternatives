@@ -2224,3 +2224,9 @@ body[data-mode="browse"] .compare-only { display: none !important; }
 @media (max-width: 600px) {
     .region-price-summary { grid-template-columns: 1fr; }
 }
+/* Capacity groups retain the existing card layout and theme. */
+.capacity-minimums { padding: 1rem; border-left: 3px solid var(--accent); }
+.capacity-tradeoffs { margin-top: 1.5rem; padding: 1rem; border: 1px solid var(--border); border-radius: 8px; }
+.capacity-tradeoffs > summary { cursor: pointer; font-weight: 600; }
+.capacity-shortfall { color: var(--warning-text); font-size: .85rem; }
+.capacity-fit { font-size: .85rem; }

@@ -282,10 +282,13 @@
                 <!-- Results Header -->
                 <div class="results-header">
                     <div class="results-header-top">
-                        <h2>Alternatives <span id="resultsCount" class="results-badge"></span></h2>
+                        <h2>Meets CPU/RAM minimums <span id="resultsCount" class="results-badge"></span></h2>
                         <span id="cacheTimestamp" class="cache-timestamp"></span>
                     </div>
                     <p id="resultsCaption" class="results-caption"></p>
+                    <p id="capacityMinimums" class="capacity-minimums"></p>
+                    <p class="pricing-assumptions">Meeting CPU/RAM minimums does not prove migration compatibility or affordability. Validate architecture, boot generation, GPU, local disk, availability and cost. Exports include qualified recommendations only, excluding downsizing options.</p>
+                    <p id="capacityUnknowns" class="pricing-assumptions"></p>
                     <div id="weakMatchNote" class="weak-match-note hidden"></div>
                     <div class="results-controls">
                         <div class="pricing-model-toggle">
@@ -374,9 +377,15 @@
                 </div>
 
                 <div id="noResults" class="no-results hidden">
-                    <h3>No alternatives found</h3>
+                    <h3>No qualified recommendations visible</h3>
                     <p id="noResultsHint">Try adjusting your filters.</p>
                 </div>
+                <details id="downsizingSection" class="capacity-tradeoffs hidden">
+                    <summary>Requires downsizing — optional trade-offs</summary>
+                    <p>These candidates do not meet source CPU/RAM minimums. Consider them only if workload measurements justify reducing capacity. Scores cannot override a shortfall.</p>
+                    <p id="downsizingCaption" class="results-caption"></p>
+                    <div id="downsizingTableBody" class="results-cards"></div>
+                </details>
             </section>
 
             <section id="errorSection" class="error-section hidden">

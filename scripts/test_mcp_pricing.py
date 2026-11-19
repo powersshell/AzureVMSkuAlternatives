@@ -9,8 +9,40 @@ import mcp_server
 
 
 class SavingsPlanForwardingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_old_api_is_not_presented_as_protected(self):
+        response = Mock()
+        response.json.return_value = {"alternatives": [{"name": "LegacyUndersized"}]}
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.post.return_value = response
+        with patch.object(mcp_server.httpx, "AsyncClient", return_value=client):
+            with self.assertRaisesRegex(RuntimeError, "CPU/RAM protection is unavailable"):
+                await mcp_server.find_alternative_skus("Standard_D14_v2", "eastus2")
+
+    async def test_capacity_options_and_no_match_state_are_preserved(self):
+        data = {
+            "alternatives": [], "totalMatches": 0,
+            "capacityRequirements": {"schemaVersion": 1, "state": "assessed", "vCPUs": 16, "memoryGB": 112},
+            "capacitySummary": {"below_minimums": {"assessedCandidates": 3, "passingSimilarity": 2, "returned": 2}},
+            "downsizingAlternatives": [{"name": "Smaller", "capacityAssessment": {"state": "below_minimums"}}],
+            "totalDownsizingMatches": 2,
+        }
+        response = Mock()
+        response.json.return_value = data
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.post.return_value = response
+        with patch.object(mcp_server.httpx, "AsyncClient", return_value=client):
+            result = await mcp_server.find_alternative_skus(
+                "Standard_D14_v2", "eastus2", include_downsizing_options=True)
+            self.assertEqual(result, data)
+            self.assertIs(client.post.call_args.kwargs["json"]["includeDownsizingOptions"], True)
+            await mcp_server.find_alternative_skus("Standard_D14_v2", "eastus2")
+            self.assertIs(client.post.call_args.kwargs["json"]["includeDownsizingOptions"], False)
+
     async def test_generation_preferences_and_assessment_are_forwarded(self):
         data = {
+            "capacityRequirements": {"schemaVersion": 1, "state": "assessed", "vCPUs": 4, "memoryGB": 16},
             "generationContext": {"sourceGeneration": 1, "targetGeneration": 2},
             "migrationEffort": {"level": "Candidate-dependent"},
             "alternatives": [{"migrationAssessment": {

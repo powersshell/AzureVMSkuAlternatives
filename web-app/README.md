@@ -362,7 +362,7 @@ az staticwebapp appsettings set \
 
 ## API Reference
 
-### POST /api/compare-vms
+### POST /api/compare_vms
 
 Compare a VM SKU with alternatives in a region.
 
@@ -371,9 +371,9 @@ Compare a VM SKU with alternatives in a region.
 {
   "skuName": "Standard_D4s_v3",
   "location": "eastus",
-  "tolerance": 20,
   "minSimilarityScore": 0,
   "maxResults": 50,
+  "includeDownsizingOptions": true,
   "currencyCode": "USD",
   "weightCPU": 2.0,
   "weightMemory": 2.0,
@@ -387,9 +387,54 @@ Compare a VM SKU with alternatives in a region.
 ```
 
 > **Note:** `minSimilarityScore` is an optional floor (default `60`) and `maxResults`
-> optionally caps the response to the closest N matches (omit for no cap). The web UI
-> sends `minSimilarityScore: 0` + `maxResults: 50` so it always shows the closest 50
-> alternatives, sorted by score, instead of asking the user to pick a threshold.
+> optionally caps **each group independently** (positive integer; omit for no cap).
+> The web UI sends `minSimilarityScore: 0`, `maxResults: 50` and
+> `includeDownsizingOptions: true`. It shows up to 50 per group, never filling
+> qualified recommendations with undersized options. Ranking and tie-breakers
+> are unchanged within each group.
+
+**Intentional default behavior change:** `alternatives` now contains only candidates
+with known, finite, positive effective vCPUs and RAM meeting both source minimums.
+No custom minimums or legacy bypass are provided. Constraints (architecture/GPU/NVMe)
+apply before full-pool capacity assessment, the existing similarity floor applies
+before result caps, and lifecycle score penalties retain their existing semantics.
+
+`capacityRequirements` has `schemaVersion: 1`, `state` (`assessed` or `unassessed`),
+`vCPUs`, `memoryGB`, and `reasons`. Invalid source facts yield explicit unassessed
+state, null invalid minimums, retained source details and no recommendations.
+Raw ARM numeric capability strings are normalized; cached numeric strings,
+booleans, zero, negative and nonfinite normalized facts cannot qualify.
+
+Each result's `capacityAssessment` has `state` and `reasons`. `meets_minimums`
+has no reasons. `below_minimums` includes each `below_minimum` reason's `resource`
+(`vCPUs` or `memoryGB`), `required`, `actual`, `deficit` and `deficitPercent`
+(unrounded). Other missing dimensions carry `unknown` reasons. Unknown-only
+candidates are `unassessed`, counted but not returned as proven downsizing.
+
+`capacitySummary` contains `meets_minimums`, `below_minimums`, and `unassessed`
+groups, each with `assessedCandidates` (after request constraints, before floor),
+`passingSimilarity` (before cap), and `returned`. Unassessed candidates do not
+undergo ranking and have zero passing/returned counts. `totalMatches` equals
+qualified `passingSimilarity`, not all similar sizes.
+
+`includeDownsizingOptions` is a boolean, default **false**; invalid types return 400.
+Only true adds `downsizingAlternatives` and `totalDownsizingMatches` (pre-cap,
+above the floor). Both exposed collections receive bulk RI supplementation.
+Clients must deliberately read the separate group; no matches, invalid facts or
+local display filters never cause fallback to smaller recommendations.
+
+The site retains source details when no recommendations exist and distinguishes
+capacity exclusions, similarity exclusions, request constraints and local display
+filters. Shared vendor/generation/lifecycle controls and price ordering apply to
+each group separately. Comparison CSV/XLSX schema is unchanged and **excludes
+downsizing options**, including when none of the recommendations are visible under
+local filters. No qualified recommendations means exports are disabled.
+
+Capacity qualification is not migration eligibility or a budget guard. CPU/cost
+outliers, architecture/boot changes, GPU suitability and local-disk loss still
+require assessment. Deploy this API contract **before** the frontend; a frontend
+reaching an older API refuses legacy results with a feature-unavailable message.
+Production deployment and live/CORS checks require separate release approval.
 
 **Response:**
 ```json
@@ -409,15 +454,118 @@ Compare a VM SKU with alternatives in a region.
     {
       "name": "Standard_D4as_v4",
       "similarityScore": 95.5,
+      "capacityAssessment": {"state": "meets_minimums", "reasons": []},
       "vCPUs": 4,
       "memoryGB": 16,
       "pricing": {...},
       "zones": "1, 2, 3"
     }
   ],
-  "totalMatches": 142
+  "totalMatches": 1,
+  "capacityRequirements": {
+    "schemaVersion": 1,
+    "state": "assessed",
+    "vCPUs": 4,
+    "memoryGB": 16,
+    "reasons": []
+  },
+  "capacitySummary": {
+    "meets_minimums": {"assessedCandidates": 1, "passingSimilarity": 1, "returned": 1},
+    "below_minimums": {"assessedCandidates": 1, "passingSimilarity": 1, "returned": 1},
+    "unassessed": {"assessedCandidates": 0, "passingSimilarity": 0, "returned": 0}
+  },
+  "downsizingAlternatives": [
+    {
+      "name": "Standard_D2as_v5",
+      "vCPUs": 2,
+      "memoryGB": 8,
+      "capacityAssessment": {
+        "state": "below_minimums",
+        "reasons": [
+          {"code": "below_minimum", "resource": "vCPUs", "required": 4, "actual": 2, "deficit": 2, "deficitPercent": 50},
+          {"code": "below_minimum", "resource": "memoryGB", "required": 16, "actual": 8, "deficit": 8, "deficitPercent": 50}
+        ]
+      }
+    }
+  ],
+  "totalDownsizingMatches": 1
 }
 ```
+
+### Capacity regression checks
+
+Run from the repository root with the existing Python/Node tooling (no npm test
+script or additional UI framework):
+
+```powershell
+python -m pytest web-app\api\tests\test_unit.py -m unit -k Capacity -q
+node scripts\test_capacity_ui.js
+node scripts\test_generation_ui.js
+node scripts\test_savings_plan_ui.js
+python scripts\test_mcp_pricing.py
+```
+
+`tests/test_api_contract.py::TestCapacityContracts` provides post-deployment checks;
+the unit suite also executes these same assertions against mocked real route
+responses, without network access.
+
+The controlled benchmark accepts the retained November 18 evidence folder
+(`benchmark.py` plus the four `catalog-<region>.json` snapshots) as read-only input:
+
+```powershell
+python scripts\benchmark_capacity.py --evidence-dir <frozen-evidence-folder> --output <session-output.json>
+python scripts\benchmark_capacity.py --routes-only --evidence-dir <frozen-evidence-folder> --output <session-route-output.json>
+```
+
+It uses the production capacity assessment and partition helpers, an independent
+Decimal oracle, frozen score replay and real mocked comparison routes. The
+snapshots are session evidence, not a live Azure inventory or committed dataset.
+`scripts\check_recommendation_quality.py` checks the deployed capacity contract,
+D14_v2 and constrained-vCPU cases in addition to existing ranking properties.
+
+#### November 18 frozen-catalog result
+
+The implemented assessment/partition path was evaluated across 5,331 region/SKU
+entries (1,516 names), 7,115,640 source/candidate pairs and 31,986 ranking
+configurations in East US 2, West Europe, Southeast Asia and Australia East.
+All 117 representative mocked real-route responses passed default protection,
+optional group, independent cap, ordering, count and no-match assertions.
+These correlated configurations are not independent users or tested migrations.
+
+- Undersized first choices: **3,591 before, zero after** among returned
+  recommendations; all **28,395** already-fitting first choices were preserved.
+- All **159,600** returned top-five recommendation slots met both minimums.
+  In the **31,878** cases with at least five qualifying candidates, all five
+  qualified in **31,878 after**, versus **16,862 before** (52.90%).
+- **Six resource no-match configurations** remain: Australia East
+  `Standard_M416ms_v2`, balanced/cost with Any/Gen1/Gen2 preferences. They return
+  no recommendations, not undersized fallbacks. There are 31,980 protected
+  first choices versus 31,986 baseline first choices.
+- Qualified pool size: median **548**, p90 **1,194**, range **0–1,407**.
+  Downsizing pool: median **778**, p90 **1,242**, range **0–1,406**, before caps.
+
+Capacity-only qualification is not a general safety improvement in every dimension:
+
+| First-choice characteristic | Baseline (31,986 choices) | Protected (31,980 choices) |
+|---|---:|---:|
+| Architecture change | 6,109 | 5,956 |
+| Unsupported boot preference | 428 | 1,290 |
+| Temporary-disk loss | 1,937 | 2,363 |
+| Lifecycle warning | 8 | 8 |
+| Non-burstable source to burstable | 16 | 16 |
+| Source GPU missing | 21 | 75 |
+| GPU profile-score shortfall | 344 | 213 |
+| GPU VRAM shortfall | 370 | 233 |
+| GPU metadata unassessed | 244 | 295 |
+| More effective vCPUs than source | 722 | 1,909 |
+
+Known-price first-choice median monthly USD rose from **$1,331.52** (31,922
+priced choices) to **$1,401.60** (31,890). Across 31,890 paired priced choices,
+the largest increase versus the baseline recommendation was **4,093.995%**;
+the largest decrease was 87.107%, and the median change was zero. Maximum
+first-choice CPU/source ratio rose from **20× to 24×**. No budget, CPU ceiling,
+GPU/boot/architecture/local-disk guard or scoring reweighting is claimed here.
+Live preview/API/CORS validation remains a separate approved deployment step.
 
 ## Monitoring
 

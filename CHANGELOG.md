@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-19
+- **fix:** Protect website and API recommendations with source effective CPU/RAM minimums by default. Keep undersized candidates in a separate optional downsizing group with exact shortfalls; missing facts never qualify.
+- **feature:** Add capacity assessments, full-pool counts and independent group caps, collapsed downsizing cards, group-isolated display filtering/sorting, and qualified-only exports. CPU/RAM checks do not prove compatibility or affordability.
+
 ## 2026-11-13
 - **fix:** Replaced the site's 34-region allowlist with a shared, dynamically discovered public Azure region catalog, including Belgium Central and restricted regions. New regions are discovered every six hours and automatically bootstrapped; announced regions and missing, failed or stale data are labeled explicitly.
 - **improvement:** Followed all Compute SKU pages before updating regional caches, retained last-known-good inventory on discovery failures, and added live reconciliation and all-region coverage checks instead of copied region lists.

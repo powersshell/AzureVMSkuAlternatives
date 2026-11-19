@@ -252,11 +252,17 @@ async def find_alternative_skus(
     architecture_filter: str = "any",
     source_gen: Literal["auto", "gen1", "gen2"] = "auto",
     target_gen: Literal["same", "any", "gen1", "gen2"] = "same",
+    include_downsizing_options: bool = False,
 ) -> dict:
     """
     Find Azure VM SKUs similar to a target SKU, ranked by recommendationScore (0-100).
 
     Returns the target SKU details and a list of alternatives sorted best-first.
+    Alternatives always meet source effective CPU/RAM minimums, not full migration
+    eligibility. capacityRequirements and capacitySummary explain missing facts and
+    no matches; never fall back to undersized results. include_downsizing_options
+    returns a separate downsizingAlternatives collection with exact shortfalls.
+    totalMatches counts qualified matches above the similarity floor before caps.
     Each alternative includes its vCPUs, memory, CPU vendor, CPU generation, CPU
     performance score (normalized to Ice Lake = 100, comparable across
     Intel/AMD/ARM), pricing (hourly/monthly USD), and availability zones. GPU-enabled
@@ -372,10 +378,17 @@ async def find_alternative_skus(
                 "architectureFilter": architecture_filter,
                 "sourceGen": source_gen,
                 "targetGen": target_gen,
+                "includeDownsizingOptions": include_downsizing_options,
             },
         )
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        requirements = data.get("capacityRequirements") if isinstance(data, dict) else None
+        if not isinstance(requirements, dict) or requirements.get("schemaVersion") != 1:
+            message = "CPU/RAM protection is unavailable on this API version. Update the API and retry; legacy recommendations are not returned."
+            logging.error(message)
+            raise RuntimeError(message)
+        return data
 
 
 @mcp.tool

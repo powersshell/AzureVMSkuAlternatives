@@ -31,6 +31,7 @@ Exit codes:
 
 import argparse
 import json
+import math
 import re
 import sys
 import urllib.error
@@ -62,6 +63,7 @@ FAMILY_CASES = [
     ("Standard_L8s_v2", "L"),
     ("Standard_B2s", "B"),
 ]
+CAPACITY_CASES = ['Standard_D14_v2', 'Standard_E16-4ds_v5']
 
 # Families whose performance model differs enough that they must never lead the
 # list for a source outside that family.
@@ -126,6 +128,33 @@ def _fetch(base, location, sku_name, priority_mode="balanced"):
     )
 
 
+def capacity_problems(body):
+    requirements = body.get('capacityRequirements') or {}
+    summary = body.get('capacitySummary') or {}
+    if requirements.get('schemaVersion') != 1:
+        return ['missing CPU/RAM protection contract']
+    if requirements.get('state') != 'assessed':
+        return [] if not body.get('alternatives') and requirements.get('reasons') else ['unassessed source returned recommendations or no reasons']
+    problems = []
+    for row in body.get('alternatives', []):
+        for key in ('vCPUs', 'memoryGB'):
+            value, minimum = row.get(key), requirements.get(key)
+            if (type(value) not in (int, float) or type(minimum) not in (int, float)
+                    or not math.isfinite(value) or not math.isfinite(minimum)
+                    or minimum <= 0 or value < minimum):
+                problems.append('{} fails {}'.format(row.get('name'), key))
+        if (row.get('capacityAssessment') or {}).get('state') != 'meets_minimums':
+            problems.append('missing qualified assessment')
+    qualified = summary.get('meets_minimums') or {}
+    if body.get('totalMatches') != qualified.get('passingSimilarity'):
+        problems.append('qualified pre-cap count mismatch')
+    if len(body.get('alternatives', [])) != qualified.get('returned'):
+        problems.append('qualified returned count mismatch')
+    if not body.get('alternatives') and qualified.get('returned') != 0:
+        problems.append('no-match state is not explicit')
+    return problems
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--location", default="eastus")
@@ -139,6 +168,13 @@ def main():
 
     failures = []
     checked = 0
+    for source in CAPACITY_CASES:
+        status, body = _fetch(base, loc, source)
+        checked += 1
+        problems = capacity_problems(body) if status == 200 and isinstance(body, dict) else ['request failed']
+        if problems:
+            failures.append((source, '; '.join(problems)))
+        print('  {} capacity {}'.format('FAIL' if problems else 'ok', source))
 
     # Boot-generation preference must not confuse _v3/_v5 with Hyper-V V1/V2.
     for source_gen, target_gen in (("gen1", "same"), ("gen2", "same"), ("gen1", "any")):
@@ -154,7 +190,7 @@ def main():
         context = body.get("generationContext") or {}
         expected = None if target_gen == "any" else int(source_gen[-1])
         alts = body["alternatives"]
-        problems = []
+        problems = capacity_problems(body)
         if context.get("sourceGeneration") != int(source_gen[-1]) or context.get("targetGeneration") != expected:
             problems.append("incorrect boot generation context")
         if expected is not None and "V{}".format(expected) not in (
@@ -202,7 +238,7 @@ def main():
         first_family, first_version = _identity(first_name)
         source_family, source_version = _identity(sku_name)
 
-        problems = []
+        problems = capacity_problems(body)
 
         # 1. The response must actually carry the new ranking field. Without it
         #    the frontend silently falls back to similarity and the list looks
@@ -219,7 +255,8 @@ def main():
         # 3. A source's own family must lead. This is the family-relative
         #    modernization guard -- L and B have no near-v7 generation, so an
         #    absolute scale sends them to E/F instead.
-        if first_family != expected_family:
+        if (any(_identity(a.get('name'))[0] == expected_family for a in alternatives)
+                and first_family != expected_family):
             problems.append(
                 "#1 is {} (family {}), expected family {}".format(
                     first_name, first_family, expected_family

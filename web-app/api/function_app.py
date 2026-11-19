@@ -182,6 +182,11 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         location = normalize_location(req_body.get('location'))
         min_similarity_score = req_body.get('minSimilarityScore', 60)
         max_results = req_body.get('maxResults')
+        include_downsizing = req_body.get('includeDownsizingOptions', False)
+        if not isinstance(include_downsizing, bool):
+            return func.HttpResponse(
+                json.dumps({'error': 'includeDownsizingOptions must be a boolean'}),
+                mimetype='application/json', status_code=400)
         currency_code = req_body.get('currencyCode', 'USD')
         weight_cpu = req_body.get('weightCPU', 2.0)
         weight_memory = req_body.get('weightMemory', 2.0)
@@ -258,6 +263,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
 
         # Extract target capabilities
         target_capabilities = extract_capabilities(target_sku)
+        capacity_requirements = capacity_requirements_for(target_capabilities)
         try:
             generation_context = _boot_generation_context(
                 target_capabilities, source_gen_pref, target_gen_pref)
@@ -291,6 +297,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
 
         # Compare with all other SKUs
         alternatives = []
+        capacity_counts = dict(meets_minimums=0, below_minimums=0, unassessed=0)
         for sku in all_skus:
             if sku['name'] == sku_name:
                 continue  # Skip the target itself
@@ -304,6 +311,11 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
             if require_gpu_match and target_capabilities['gpuCount'] > 0 and sku_capabilities['gpuCount'] == 0:
                 continue
             if architecture_filter in ('x64', 'arm64') and sku_architecture.lower() != architecture_filter:
+                continue
+
+            capacity = assess_capacity(capacity_requirements, sku_capabilities)
+            capacity_counts[capacity['state']] += 1
+            if capacity['state'] == 'unassessed':
                 continue
 
             # Calculate similarity score
@@ -330,6 +342,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 zones = get_availability_zones(sku, location)
 
                 alt = {
+                    'capacityAssessment': capacity,
                     'name': sku['name'],
                     'similarityScore': round(similarity_score, 2),
                     'cpuVendor': sku.get('cpuVendor', 'Intel'),
@@ -418,12 +431,9 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
             x['name'],
         ))
 
-        # Total number of candidates above the floor, before any top-N capping
-        total_matches = len(alternatives)
-
-        # Cap to the closest N matches when requested (None = no cap, for back-compat)
-        if isinstance(max_results, int) and max_results > 0:
-            alternatives = alternatives[:max_results]
+        alternatives, downsizing, capacity_summary = partition_capacity_results(
+            alternatives, capacity_counts, max_results, include_downsizing)
+        total_matches = capacity_summary['meets_minimums']['passingSimilarity']
 
         logging.info(f'Found {total_matches} alternatives, returning {len(alternatives)}')
 
@@ -432,7 +442,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
         all_need_ri = []
         if not _pricing_has_ri(target_pricing):
             all_need_ri.append(('target', target_pricing, sku_name))
-        for alt in alternatives:
+        for alt in alternatives + downsizing:
             if alt.get('pricing') and not _pricing_has_ri(alt['pricing']):
                 all_need_ri.append(('alt', alt['pricing'], alt['name']))
 
@@ -526,6 +536,8 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
             'targetSku': target_sku_data,
             'alternatives': alternatives,
             'totalMatches': total_matches,
+            'capacityRequirements': capacity_requirements,
+            'capacitySummary': capacity_summary,
             'dataLastUpdated': data_last_updated,
             'pricesAsOf': prices_as_of,
             'dataSource': data_source,
@@ -535,6 +547,7 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
                 'location': location,
                 'minSimilarityScore': min_similarity_score,
                 'maxResults': max_results,
+                'includeDownsizingOptions': include_downsizing,
                 'priorityMode': priority_mode,
                 'architectureFilter': architecture_filter,
                 'sourceGen': source_gen_pref,
@@ -550,6 +563,9 @@ def compare_vms(req: func.HttpRequest) -> func.HttpResponse:
             }
         }
 
+        if include_downsizing:
+            response_data['downsizingAlternatives'] = downsizing
+            response_data['totalDownsizingMatches'] = capacity_summary['below_minimums']['passingSimilarity']
         return func.HttpResponse(
             json.dumps(response_data),
             mimetype='application/json',
@@ -2116,6 +2132,75 @@ def _derive_trusted_launch(capabilities: Dict) -> bool:
     return ('V2' in hyperv) and not disabled
 
 
+def _positive_capacity(value) -> bool:
+    return type(value) in (int, float) and math.isfinite(value) and value > 0
+
+
+def capacity_requirements_for(capabilities: Dict) -> Dict:
+    reasons = [
+        {'code': 'source_unknown', 'resource': key,
+         'message': f'Source {key} is missing or invalid; retry after catalog refresh or choose another source.'}
+        for key in ('vCPUs', 'memoryGB') if not _positive_capacity(capabilities.get(key))
+    ]
+    return {
+        'schemaVersion': 1,
+        'state': 'unassessed' if reasons else 'assessed',
+        'vCPUs': capabilities.get('vCPUs') if _positive_capacity(capabilities.get('vCPUs')) else None,
+        'memoryGB': capabilities.get('memoryGB') if _positive_capacity(capabilities.get('memoryGB')) else None,
+        'reasons': reasons,
+    }
+
+
+def assess_capacity(requirements: Dict, candidate: Dict) -> Dict:
+    """Assess normalized facts only; neither scores nor missing values imply fit."""
+    if requirements['state'] != 'assessed':
+        return {'state': 'unassessed', 'reasons': requirements['reasons']}
+    reasons = []
+    for key in ('vCPUs', 'memoryGB'):
+        value, minimum = candidate.get(key), requirements[key]
+        if not _positive_capacity(value):
+            reasons.append({'code': 'unknown', 'resource': key})
+        elif value < minimum:
+            deficit = minimum - value
+            reasons.append({'code': 'below_minimum', 'resource': key,
+                            'required': minimum, 'actual': value,
+                            'deficit': deficit, 'deficitPercent': deficit / minimum * 100})
+    state = ('below_minimums' if any(r['code'] == 'below_minimum' for r in reasons)
+             else 'unassessed' if reasons else 'meets_minimums')
+    return {'state': state, 'reasons': reasons}
+
+
+def partition_capacity_results(ranked: List[Dict], counts: Dict,
+                               max_results=None, include_downsizing=False) -> tuple:
+    """Partition an already ranked full pool without changing ordering or tie-breaks."""
+    groups = {state: [] for state in counts}
+    for row in ranked:
+        groups[row['capacityAssessment']['state']].append(row)
+    summary = {}
+    for state, rows in groups.items():
+        passing = len(rows)
+        if type(max_results) is int and max_results > 0:
+            groups[state] = rows[:max_results]
+        if state == 'unassessed' or (state == 'below_minimums' and not include_downsizing):
+            groups[state] = []
+        summary[state] = {'assessedCandidates': counts[state],
+                          'passingSimilarity': passing, 'returned': len(groups[state])}
+    return groups['meets_minimums'], groups['below_minimums'], summary
+
+
+def _normalize_capacity(value, name: str, *, wire=False):
+    # ARM capabilities are strings; cached normalized facts must already be numeric.
+    if wire and isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError:
+            pass
+    if not _positive_capacity(value):
+        logging.warning('Invalid or missing capacity fact %s: %r', name, value)
+        return 0
+    return value
+
+
 def _effective_vcpus(capabilities: Dict) -> int:
     """Return the number of vCPUs a size actually exposes to the guest OS.
 
@@ -2129,17 +2214,8 @@ def _effective_vcpus(capabilities: Dict) -> int:
     ``vCPUsAvailable`` is published for every size and equals ``vCPUs`` for
     non-constrained sizes, so it is the correct value to use unconditionally.
     """
-    for key in ('vCPUsAvailable', 'vCPUs'):
-        raw = capabilities.get(key)
-        if raw in (None, ''):
-            continue
-        try:
-            value = int(float(raw))
-        except (TypeError, ValueError):
-            continue
-        if value > 0:
-            return value
-    return 0
+    key = 'vCPUsAvailable' if 'vCPUsAvailable' in capabilities else 'vCPUs'
+    return _normalize_capacity(capabilities.get(key), key, wire=True)
 
 
 def _temp_disk_size(capabilities: Dict, names: tuple) -> Optional[float]:
@@ -2195,7 +2271,7 @@ def extract_capabilities(sku: Dict) -> Dict:
 
     result = {
         'vCPUs': _effective_vcpus(capabilities),
-        'memoryGB': float(capabilities.get('MemoryGB', 0)),
+        'memoryGB': _normalize_capacity(capabilities.get('MemoryGB'), 'memoryGB', wire=True),
         'maxDataDiskCount': int(capabilities.get('MaxDataDiskCount', 0)),
         'maxNics': int(capabilities.get('MaxNetworkInterfaces', 0)),
         'premiumIO': capabilities.get('PremiumIO') == 'True',
@@ -2219,6 +2295,9 @@ def extract_capabilities(sku: Dict) -> Dict:
         'confidentialComputingType': capabilities.get('ConfidentialComputingType', '') or '',
         'trustedLaunch': _derive_trusted_launch(capabilities)
     }
+    if 'cachedCapacity' in sku:
+        for key in ('vCPUs', 'memoryGB'):
+            result[key] = _normalize_capacity(sku['cachedCapacity'].get(key), key)
     _enrich_gpu_perf(result, sku.get('name', ''), result['gpuCount'])
     return result
 
@@ -2932,6 +3011,7 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                 # Convert cached entity to SKU format
                 sku = {
                     'name': entity['name'],
+                    'cachedCapacity': {key: entity.get(key) for key in ('vCPUs', 'memoryGB')},
                     'cpuVendor': entity.get('cpuVendor', 'Intel'),
                     'architecture': entity.get('architecture', 'x64'),
                     'cpuPerfScore': entity.get('cpuPerfScore'),
@@ -2939,8 +3019,8 @@ def get_vm_skus_with_cache(subscription_id: str, location: str, access_token: st
                     'lastUpdated': entity.get('lastUpdated'),
                     'pricingLastUpdated': entity.get('pricingLastUpdated'),
                     'capabilities': [
-                        {'name': 'vCPUs', 'value': str(entity['vCPUs'])},
-                        {'name': 'MemoryGB', 'value': str(entity['memoryGB'])},
+                        {'name': 'vCPUs', 'value': entity.get('vCPUs')},
+                        {'name': 'MemoryGB', 'value': entity.get('memoryGB')},
                         {'name': 'MaxDataDiskCount', 'value': str(entity['maxDataDisks'])},
                         {'name': 'MaxNetworkInterfaces', 'value': str(entity['maxNics'])},
                         {'name': 'UncachedDiskIOPS', 'value': str(entity['uncachedDiskIOPS'])},

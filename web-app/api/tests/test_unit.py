@@ -71,6 +71,195 @@ from function_app import (
 # ============================================================================
 
 @pytest.mark.unit
+class TestCapacityProtection:
+    @pytest.mark.parametrize('cpu,ram,state', [
+        (16, 112, 'meets_minimums'), (16, 128, 'meets_minimums'),
+        (32, 112, 'meets_minimums'), (16, 64, 'below_minimums'),
+        (16, 32, 'below_minimums'), (8, 128, 'below_minimums'),
+        (15.999999, 112, 'below_minimums'),
+        (None, 64, 'below_minimums'), (None, 128, 'unassessed'),
+    ])
+    def test_assessment(self, cpu, ram, state):
+        from function_app import assess_capacity, capacity_requirements_for
+        requirements = capacity_requirements_for({'vCPUs': 16, 'memoryGB': 112})
+        actual = assess_capacity(requirements, {'vCPUs': cpu, 'memoryGB': ram})
+        assert actual['state'] == state
+        if ram == 64:
+            reason = next(r for r in actual['reasons'] if r['resource'] == 'memoryGB')
+            assert reason == dict(code='below_minimum', resource='memoryGB',
+                                  actual=64, required=112, deficit=48,
+                                  deficitPercent=48 / 112 * 100)
+        if cpu is None:
+            assert dict(code='unknown', resource='vCPUs') in actual['reasons']
+
+    @pytest.mark.parametrize('value', [None, 0, -1, True, False, '16', float('nan'), float('inf')])
+    @pytest.mark.parametrize('key', ['vCPUs', 'memoryGB'])
+    def test_invalid_facts_never_qualify(self, value, key):
+        from function_app import assess_capacity, capacity_requirements_for
+        valid = dict(vCPUs=16, memoryGB=112)
+        requirements = capacity_requirements_for(valid)
+        bad = {**valid, key: value}
+        assert assess_capacity(requirements, bad)['state'] == 'unassessed'
+        assert assess_capacity(capacity_requirements_for(bad), valid)['state'] == 'unassessed'
+
+    def test_effective_cpu_and_bad_cache_boundary(self, caplog):
+        from function_app import _effective_vcpus
+        assert _effective_vcpus({'vCPUs': '16', 'vCPUsAvailable': '4'}) == 4
+        for invalid in [True, 'NaN', 'Infinity', '-1', 'invalid']:
+            assert _effective_vcpus({'vCPUs': '16', 'vCPUsAvailable': invalid}) == 0
+        for value in [True, '16', None, float('nan'), float('inf')]:
+            caps = extract_capabilities({
+                'name': 'Standard_E16-4ds_v5', 'cachedCapacity': dict(vCPUs=value, memoryGB=value),
+                'capabilities': [{'name': 'vCPUs', 'value': '16'}, {'name': 'MemoryGB', 'value': '112'}]})
+            assert caps['vCPUs'] == caps['memoryGB'] == 0
+        assert 'Invalid or missing capacity fact' in caplog.text
+
+    @staticmethod
+    def sku(name, cpu=16, ram=112, **extra):
+        return dict(name=name, pricing=dict(monthlyPrice=100, ri1YearMonthly=80),
+                    capabilities=[
+                        dict(name='vCPUs', value=cpu), dict(name='MemoryGB', value=ram),
+                        dict(name='HyperVGenerations', value='V1,V2'),
+                        dict(name='MaxResourceVolumeMB', value='0')], **extra)
+
+    @pytest.fixture
+    def compare(self, monkeypatch):
+        import json
+        import function_app as app
+
+        class Response:
+            def __init__(self, body, status_code=200, **kwargs):
+                self.body, self.status_code = json.loads(body), status_code
+
+        monkeypatch.setenv('AZURE_SUBSCRIPTION_ID', 'test')
+        monkeypatch.setattr(app.func, 'HttpResponse', Response)
+        monkeypatch.setattr(app, 'get_access_token', lambda: 'test')
+
+        def run(catalog, **params):
+            monkeypatch.setattr(app, 'get_vm_skus_with_cache', lambda *args: (catalog, 'fixture'))
+            return app.compare_vms(types.SimpleNamespace(method='POST', get_json=lambda: {
+                'skuName': catalog[0]['name'], 'location': 'eastus2',
+                'minSimilarityScore': 0, 'targetGen': 'any', **params}))
+        return run
+
+    def test_route_default_optional_groups_caps_and_full_pool(self, compare, monkeypatch):
+        import function_app as app
+        # Force every undersized D-family result above the eligible E-family pool.
+        monkeypatch.setattr(app, 'calculate_recommendation_score',
+                            lambda score, source, candidate, *args, **kwargs: {
+                                'score': 99 if candidate['family'] == 'D' else 10,
+                                'components': {}})
+        catalog = [self.sku('Standard_D14_v2')]
+        catalog += [self.sku(f'Standard_D16s_v{i}', ram=64) for i in range(3, 64)]
+        catalog += [self.sku('Standard_E16s_v5', ram=128), self.sku('Standard_E16s_v6', ram=128),
+                    self.sku('Unknown', cpu=0)]
+        default = compare(catalog, maxResults=1)
+        assert default.status_code == 200
+        body = default.body
+        assert body['totalMatches'] == 2
+        assert len(body['alternatives']) == 1
+        assert body['alternatives'][0]['memoryGB'] == 128
+        assert 'downsizingAlternatives' not in body
+        assert 'totalDownsizingMatches' not in body
+        assert body['capacitySummary'] == {
+            'meets_minimums': dict(assessedCandidates=2, passingSimilarity=2, returned=1),
+            'below_minimums': dict(assessedCandidates=61, passingSimilarity=61, returned=0),
+            'unassessed': dict(assessedCandidates=1, passingSimilarity=0, returned=0)}
+        optional = compare(catalog, maxResults=1, includeDownsizingOptions=True).body
+        assert len(optional['downsizingAlternatives']) == 1
+        assert optional['totalDownsizingMatches'] == 61
+        assert optional['alternatives'] == body['alternatives']
+        uncapped = compare(catalog, includeDownsizingOptions=True).body
+        assert len(uncapped['alternatives']) == 2
+        assert len(uncapped['downsizingAlternatives']) == 61
+        for invalid in ['true', 1, None, [], {}]:
+            assert compare(catalog, includeDownsizingOptions=invalid).status_code == 400
+
+    def test_no_match_unknown_source_and_constraints(self, compare):
+        source = self.sku('Standard_D14_v2')
+        below = self.sku('Standard_D16s_v5', ram=64, architecture='Arm64')
+        body = compare([source, below], includeDownsizingOptions=True).body
+        assert body['alternatives'] == [] and body['totalMatches'] == 0
+        assert len(body['downsizingAlternatives']) == 1
+        assert body['targetSku']['memoryGB'] == 112
+        partial = compare([source, self.sku('Partial', cpu='invalid', ram=64)],
+                          includeDownsizingOptions=True).body
+        reasons = partial['downsizingAlternatives'][0]['capacityAssessment']['reasons']
+        assert {reason['code'] for reason in reasons} == {'below_minimum', 'unknown'}
+        for value in ['invalid', True, float('nan'), float('inf'), -1, 0]:
+            body = compare([self.sku('Source', ram=value), below],
+                           includeDownsizingOptions=True).body
+            assert body['capacityRequirements']['state'] == 'unassessed'
+            assert body['alternatives'] == body['downsizingAlternatives'] == []
+            assert body['capacitySummary']['unassessed']['assessedCandidates'] == 1
+        constrained = compare([source, below], architectureFilter='x64').body
+        assert sum(g['assessedCandidates'] for g in constrained['capacitySummary'].values()) == 0
+        filtered = compare([source, self.sku('Standard_E16s_v5', ram=128)],
+                           minSimilarityScore=101).body
+        assert filtered['totalMatches'] == 0
+        assert filtered['capacitySummary']['meets_minimums']['assessedCandidates'] == 1
+        assert compare([source]).body['alternatives'] == []
+
+    def test_scores_order_and_bulk_ri_cover_both_groups(self, compare, monkeypatch):
+        import function_app as app
+        source, fit, below = self.sku('Source'), self.sku('Standard_E16s_v5', ram=128), self.sku('Standard_D16s_v5', ram=64)
+        for row in [source, fit, below]:
+            row['pricing'].pop('ri1YearMonthly')
+        calls = []
+
+        def get(url, **kwargs):
+            calls.append(url)
+            return types.SimpleNamespace(ok=True, json=lambda: dict(Items=[
+                dict(armSkuName=row['name'], reservationTerm='1 Year', unitPrice=960)
+                for row in [source, fit, below]]))
+        monkeypatch.setattr(app.requests, 'get', get)
+        body = compare([source, fit, below], includeDownsizingOptions=True).body
+        assert len(calls) == 1
+        assert all(row['pricing']['ri1YearMonthly'] == 80 for row in [
+            body['targetSku'], *body['alternatives'], *body['downsizingAlternatives']])
+        first = body['alternatives'][0]
+        assert compare([source, fit]).body['alternatives'][0] == first
+
+    def test_deployment_contract_cases_against_real_mocked_route(self, compare, monkeypatch):
+        from .test_api_contract import TestCapacityContracts
+        import requests
+        constrained = self.sku('Standard_E16-4ds_v5', cpu=16, ram=128)
+        constrained['capabilities'].append(dict(name='vCPUsAvailable', value='4'))
+        catalog = [self.sku('Standard_D14_v2'), constrained,
+                   self.sku('Standard_E16s_v5', ram=128), self.sku('Standard_D16s_v5', ram=64)]
+
+        def post(url, json, **kwargs):
+            response = compare(catalog, **json)
+            response.json = lambda: response.body
+
+            def raise_for_status():
+                assert response.status_code == 200, response.body
+            response.raise_for_status = raise_for_status
+            return response
+        monkeypatch.setattr(requests, 'post', post)
+        contract = TestCapacityContracts()
+        for source in ('Standard_D14_v2', 'Standard_E16-4ds_v5'):
+            for optional in (False, True):
+                contract.test_comparison_partitions_capacity_before_caps('offline', optional, source)
+        contract.test_default_and_invalid_flag('offline')
+
+    def test_quality_guard_accepts_explicit_no_match_and_rejects_leaks(self, compare):
+        import importlib.util
+        from pathlib import Path
+        path = Path(__file__).resolve().parents[3] / 'scripts' / 'check_recommendation_quality.py'
+        spec = importlib.util.spec_from_file_location('quality_guard', path)
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        source = self.sku('Standard_D14_v2')
+        body = compare([source, self.sku('Small', ram=64)]).body
+        assert guard.capacity_problems(body) == []
+        body = compare([source, self.sku('Fit', ram=128)]).body
+        assert guard.capacity_problems(body) == []
+        body['alternatives'][0]['memoryGB'] = 64
+        assert guard.capacity_problems(body)
+
+
+@pytest.mark.unit
 class TestPublicRegions:
     @pytest.mark.parametrize('bootstrap_only,expected', [
         (True, ['belgiumcentral']),

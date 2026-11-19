@@ -9,11 +9,9 @@
 
 ## 📋 Recent Changes
 
-### 2026-11-13
-- **fix:** Replaced the site's 34-region allowlist with a shared, dynamically discovered public Azure region catalog, including Belgium Central and restricted regions. New regions are discovered every six hours and automatically bootstrapped; announced regions and missing, failed or stale data are labeled explicitly.
-- **improvement:** Followed all Compute SKU pages before updating regional caches, retained last-known-good inventory on discovery failures, and added live reconciliation and all-region coverage checks instead of copied region lists.
-- **improvement:** Kept PR preview publishing independent of production API readiness while retaining the API-first gate for production frontend deployments.
-- **fix:** Verify announced regions against live Compute SKU catalogs when ARM location visibility differs between identities, preventing false coverage failures without hiding available VM regions.
+### 2026-11-19
+- **fix:** Protect website and API recommendations with source effective CPU/RAM minimums by default. Keep undersized candidates in a separate optional downsizing group with exact shortfalls; missing facts never qualify.
+- **feature:** Add capacity assessments, full-pool counts and independent group caps, collapsed downsizing cards, group-isolated display filtering/sorting, and qualified-only exports. CPU/RAM checks do not prove compatibility or affordability.
 
 📄 [Full changelog →](CHANGELOG.md)
 
@@ -23,7 +21,9 @@
 
 **Browse all VMs** includes an expandable Advanced filters panel for hardware capabilities, security, zones, lifecycle and compute budgets. Requirements are combined across fields; selected options within a field are alternatives. Unknown values fail active requirements unless explicitly included, in which case matches are marked unverified. Copy Browse link shares region, pricing and filters; the last Browse view is also restored on this device. Exports include all matching pages. See [Browse filtering and data coverage](web-app/README.md#advanced-browse-filtering) for cache, pricing and preview limitations.
 
-In **Find Alternatives**, the visible Source Gen selector refers to the existing VM's Hyper-V boot generation, not the size's `_vN` hardware version. Automatic detection works only for sizes supporting one boot generation. For a dual-generation size, select the actual Gen1 or Gen2 of your existing VM; it cannot be inferred from the SKU. The website Target Gen dropdown offers Any Generation (default), Prefer Gen1, and Prefer Gen2. Any removes generation preference penalties, not migration warnings, so the initial recommendation order may differ from same-generation preference. Alternatives stay in one list, with unsupported preferences distinguished from alternate compatible paths.
+In **Find Alternatives**, recommendations always meet the source's effective vCPU and RAM minimums. Priorities change ranking, not minimums. Smaller options appear only in the collapsed **Requires downsizing** section, with exact deficits and unknown facts. Display filters and price sorting apply separately within each group; comparison exports include qualified recommendations only. CPU/RAM qualification does not prove compatibility or affordability; boot, architecture, GPU, temporary disk, lifecycle and cost warnings still matter. The standalone PowerShell workflow is unchanged.
+
+The visible Source Gen selector refers to the existing VM's Hyper-V boot generation, not the size's `_vN` hardware version. Automatic detection works only for sizes supporting one boot generation. For a dual-generation size, select the actual Gen1 or Gen2 of your existing VM; it cannot be inferred from the SKU. The website Target Gen dropdown offers Any Generation (default), Prefer Gen1, and Prefer Gen2. Any removes generation preference penalties, not migration warnings, so the initial recommendation order may differ from same-generation preference. Unsupported preferences remain distinguished from alternate paths within each capacity group.
 
 Each assessed card shows a compact migration path and planning-effort row, collapsed by default; open Details for prerequisites and official links. Missing backend assessments do not add a repetitive per-card panel. Gen1 to Gen2 is not an ordinary resize: a [Microsoft-supported Trusted Launch upgrade](https://learn.microsoft.com/en-us/azure/virtual-machines/trusted-launch-existing-vm-gen-1) may be available if actual OS/image, disk, security and backup prerequisites are met; otherwise plan a supported migration/rebuild. Recovery to Gen1 requires the pre-upgrade backup or restore point. SKU metadata and the Linux/Windows pricing toggle cannot establish eligibility. Unknown source/candidate generations remain unassessed, and same-generation support does not guarantee a resize is available. PowerShell offers matching `-SourceGen` / `-TargetGen` preferences and CSV planning fields.
 
