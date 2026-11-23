@@ -253,7 +253,7 @@ let regionAvailabilityData = null; // { region, availability: { skuName: bool } 
 
 // Expand/Collapse-all state
 let resultsRenderVersion = 0; // Bumped on every displayAlternatives render; guards stale async writes
-let renderedAlternatives = []; // The currently-rendered (filtered) list — source of truth for expand-all
+let renderedAlternatives = {}; // Group-qualified card keys resolve filtered results without mixing lists.
 let expandAllAbortController = null; // Stops scheduling new expand-all fetches
 const detailsInFlight = new Map(); // cacheKey -> Promise (de-dups fetches across expand-all/prefetch)
 const expandAllBtn = document.getElementById('expandAllBtn');
@@ -469,7 +469,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('hideGrowthRestrictedFilter').addEventListener('change', updateResultsFilters);
 
     // Update discount hint text as user types
-    document.getElementById('discountPct').addEventListener('input', updateDiscountHint);
+    document.getElementById('discountPct').addEventListener('input', refreshComparisonDiscount);
 
     // Expand/Collapse all results
     expandAllBtn?.addEventListener('click', () => {
@@ -489,6 +489,15 @@ function updateSkuCount(count) {
     const skuCount = document.getElementById('skuCount');
     skuCount.textContent = `${count} SKUs available`;
     skuCount.style.color = 'var(--success)';
+}
+
+function refreshComparisonDiscount() {
+    updateDiscountHint();
+    if (currentResults) {
+        displayAlternatives(filterResults(currentResults.alternatives));
+        displayTargetSku(currentResults.targetSku);
+    }
+    refreshOpenRegionPricing();
 }
 
 function updateDiscountHint() {
@@ -523,7 +532,7 @@ function updateResultsFilters() {
     });
     
     // Repopulate generation filter (vendor change affects available generations)
-    populateGenFilter(currentResults.alternatives);
+    populateGenFilter(comparisonCandidates());
     // Re-display with both filters
     displayAlternatives(filterResults(currentResults.alternatives));
 }
@@ -630,6 +639,7 @@ async function handleCompare() {
         location,
         minSimilarityScore: 0,
         maxResults: MAX_RESULTS,
+        includeDownsizingOptions: true,
         currencyCode,
         weightCPU: getPriorityWeight('weightCPU'),
         weightMemory: getPriorityWeight('weightMemory'),
@@ -684,6 +694,10 @@ async function handleCompare() {
 
         // Parse the response as JSON
         const data = await response.json();
+        if (data.capacityRequirements?.schemaVersion !== 1) {
+            currentResults = null;
+            throw new Error('CPU/RAM protection is unavailable on this API version. Retry after the API update; legacy results are not shown.');
+        }
 
         // Cap to the closest MAX_RESULTS client-side too, so the UI is consistent
         // whether or not the API applied maxResults. Preserve the true total count
@@ -694,6 +708,8 @@ async function handleCompare() {
         if (Array.isArray(data.alternatives)) {
             data.alternatives = data.alternatives.slice(0, MAX_RESULTS);
         }
+        data.downsizingAlternatives = (data.downsizingAlternatives || []).slice(0, MAX_RESULTS);
+        document.getElementById('downsizingSection').open = false;
 
         currentResults = data;
         displayResults(data);
@@ -915,35 +931,9 @@ function formatMonthlyPriceSafe(pricing) {
 
 // Display Results
 function displayResults(data) {
-    if (!data.alternatives || data.alternatives.length === 0) {
-        const hintEl = document.getElementById('noResultsHint');
-        if (hintEl) {
-            const nvme = document.getElementById('requireNVMeMatch').checked;
-            const gpu = document.getElementById('requireGPUMatch').checked;
-            if (nvme || gpu) {
-                const reqs = [nvme ? '"Require NVMe match"' : null, gpu ? '"Require GPU match"' : null]
-                    .filter(Boolean).join(' and ');
-                hintEl.textContent = `No alternatives matched the ${reqs} requirement in Advanced Options. Try turning that off to see the closest available options.`;
-            } else {
-                hintEl.textContent = 'Try adjusting your filters or choosing a different region.';
-            }
-        }
-        noResults.classList.remove('hidden');
-        resetExpansionState();
-        renderedAlternatives = [];
-        resultsTableBody.innerHTML = '';
-        targetSkuInfo.innerHTML = '';
-        updateExpandAllButton();
-    } else {
-        noResults.classList.add('hidden');
-        displayTargetSku(data.targetSku);
-
-        // Populate generation filter from results (already capped to MAX_RESULTS
-        // when the response was stored), then apply all filters
-        populateGenFilter(data.alternatives);
-        const filteredAlternatives = filterResults(data.alternatives);
-        displayAlternatives(filteredAlternatives);
-    }
+    displayTargetSku(data.targetSku);
+    populateGenFilter(comparisonCandidates());
+    displayAlternatives(filterResults(data.alternatives));
     renderMigrationEffortPanel(data);
     // Show cache timestamp if available
     const timestampEl = document.getElementById('cacheTimestamp');
@@ -1999,9 +1989,9 @@ function updateResultsCaption(alternatives) {
 
     if (caption) {
         if (shown === 0) {
-            caption.textContent = '';
+            caption.textContent = `Showing 0 of ${total} qualified matches found.`;
         } else {
-            let text = `Showing the ${shown} closest match${shown === 1 ? '' : 'es'}`;
+            let text = `Showing ${shown} CPU/RAM-qualified match${shown === 1 ? '' : 'es'}`;
             if (typeof total === 'number' && total > shown) {
                 text += ` of ${total} found`;
             }
@@ -2023,10 +2013,30 @@ function updateResultsCaption(alternatives) {
 
 // Display Alternatives as Cards
 function displayAlternatives(alternatives) {
-    // Bump render version + abort any in-flight expand-all so late fetches can't write into the rebuilt DOM
     resetExpansionState();
-    renderedAlternatives = alternatives;
-    resultsTableBody.innerHTML = '';
+    renderedAlternatives = {};
+    renderAlternativeGroup(alternatives, 'qualified', resultsTableBody);
+    const downsizing = filterResults(currentResults.downsizingAlternatives || []);
+    renderAlternativeGroup(downsizing, 'downsizing', document.getElementById('downsizingTableBody'));
+    document.getElementById('downsizingCaption').textContent =
+        `Showing ${downsizing.length} of ${currentResults.totalDownsizingMatches || 0} downsizing matches found.`
+        + (downsizing.length ? '' : ' None visible with the current display filters.');
+    document.getElementById('downsizingSection').classList.toggle('hidden',
+        !(currentResults.totalDownsizingMatches > 0));
+    const requirements = currentResults.capacityRequirements;
+    const summary = currentResults.capacitySummary;
+    document.getElementById('capacityMinimums').textContent = requirements.state === 'assessed'
+        ? `CPU/RAM protection: at least ${requirements.vCPUs} effective vCPUs and ${requirements.memoryGB} GB RAM. Priorities affect ranking, never these minimums.`
+        : 'CPU/RAM minimums are unassessed: source metadata is missing or invalid. Choose another source or retry after catalog refresh.';
+    document.getElementById('capacityUnknowns').textContent =
+        `${summary.unassessed.assessedCandidates} candidates could not be assessed; these are not recommendations or proven downsizing options.`;
+    noResults.classList.toggle('hidden', alternatives.length > 0);
+    document.getElementById('noResultsHint').textContent = capacityEmptyMessage(currentResults);
+    for (const id of ['exportBtn', 'exportXlsxBtn']) {
+        const button = document.getElementById(id);
+        button.disabled = currentResults.alternatives.length === 0;
+        button.title = button.disabled ? 'No qualified recommendations to export' : 'Export qualified recommendations only; excludes downsizing options';
+    }
 
     // Update results count badge
     const countBadge = document.getElementById('resultsCount');
@@ -2034,11 +2044,42 @@ function displayAlternatives(alternatives) {
 
     // Caption + weak-match note: communicate the "closest N" framing without a threshold control
     updateResultsCaption(alternatives);
+    updateExpandAllButton();
+}
+
+function comparisonCandidates() {
+    return [...(currentResults?.alternatives || []), ...(currentResults?.downsizingAlternatives || [])];
+}
+
+function capacityEmptyMessage(data) {
+    if (data.capacityRequirements.state !== 'assessed') return 'Source CPU/RAM facts are unavailable. No verified recommendations can be made; retry after catalog refresh.';
+    if (data.totalMatches > 0) return 'No qualified recommendations remain after local display filtering. Adjust the display filters.';
+    const counts = data.capacitySummary;
+    if (counts.meets_minimums.assessedCandidates > 0) return 'Capacity matches exist, but none pass the requested similarity floor.';
+    if (!Object.values(counts).some(group => group.assessedCandidates > 0)) return 'No candidates remain after the requested architecture/GPU/NVMe constraints.';
+    return 'No assessed candidates meet source CPU/RAM minimums under the request constraints. Review optional downsizing separately or try another region.';
+}
+
+function renderCapacityAssessment(alt) {
+    const assessment = alt.capacityAssessment;
+    if (assessment?.state === 'meets_minimums') return '<p class="capacity-fit">Meets source CPU/RAM minimums</p>';
+    return `<p class="capacity-shortfall">${(assessment?.reasons || []).map(reason => {
+        const label = reason.resource === 'vCPUs' ? 'effective vCPUs' : 'GB RAM';
+        return reason.code === 'below_minimum'
+            ? `${reason.deficit} ${label} below minimum (${reason.deficitPercent.toFixed(2)}% short; ${reason.actual} / ${reason.required})`
+            : `${label}: unknown`;
+    }).map(escapeHtml).join('; ')}</p>`;
+}
+
+function renderAlternativeGroup(alternatives, group, container) {
+    container.innerHTML = '';
 
     // Get target SKU for comparison
     const targetSku = currentResults?.targetSku;
 
-    alternatives.forEach((alt, index) => {
+    alternatives.forEach((alt, position) => {
+        const index = `${group}-${position}`;
+        renderedAlternatives[index] = alt;
         // Rank order is driven by recommendationScore, so the headline number must
         // be the same one — otherwise the cards look mis-sorted. Falls back to
         // similarityScore if the API has not been updated yet.
@@ -2095,6 +2136,7 @@ function displayAlternatives(alternatives) {
             <div class="card-sku-info">
                 <div class="card-sku-name">${alt.name} ${renderRetirementBadge(alt)}${renderGrowthRestrictionBadge(alt)}${renderMigrationBadges(alt)}${nvmeBadge}</div>
                 <div class="card-sku-cpu">${cpuInfo}</div>
+                ${renderCapacityAssessment(alt)}
                 <div class="card-score-bar">
                     <div class="score-track"><div class="score-fill ${scoreClass}" style="width:${scorePercent}%"></div></div>
                     <span class="card-score-pct ${scoreClass}">${scorePercent}%</span>
@@ -2125,7 +2167,7 @@ function displayAlternatives(alternatives) {
             if (event.target.closest('.migration-assessment')) return;
             toggleDetails(index);
         });
-        resultsTableBody.appendChild(card);
+        container.appendChild(card);
         
         // Details expansion div
         const detailsDiv = document.createElement('div');
@@ -2133,14 +2175,14 @@ function displayAlternatives(alternatives) {
         detailsDiv.dataset.index = index;
         detailsDiv.dataset.skuName = alt.name;
         detailsDiv.innerHTML = `${renderScoreExplanation(alt)}<div class="details-content"></div>`;
-        resultsTableBody.appendChild(detailsDiv);
+        container.appendChild(detailsDiv);
     });
 
     // Reset the expand/collapse-all button to reflect the freshly-rendered (all-collapsed) state
     updateExpandAllButton();
 
     // Kick off background prefetch for top 10 rows (Phase 3)
-    if (targetSku) {
+    if (targetSku && group === 'qualified') {
         const location = currentResults?.location || document.getElementById('location').value;
         prefetchTopDetails(alternatives, targetSku, location);
     }
@@ -2148,7 +2190,7 @@ function displayAlternatives(alternatives) {
     // Populate price-history sparklines for the rendered cards (I-G)
     const histLocation = currentResults?.location || document.getElementById('location')?.value;
     if (histLocation) {
-        loadSparklines(alternatives.map(a => a.name), histLocation, resultsTableBody);
+        loadSparklines(alternatives.map(a => a.name), histLocation, container);
     }
 }
 
@@ -2158,6 +2200,10 @@ function getCardData(index) {
     if (!altSku) return null;
     const targetSku = currentResults?.targetSku || altSku;
     return { altSku, targetSku };
+}
+
+function comparisonDetailsKey(targetName, altName, location) {
+    return JSON.stringify([location, document.getElementById('currencyCode')?.value || 'USD', targetName, altName]);
 }
 
 // De-duplicated details fetch shared across single-expand and expand-all
@@ -2212,13 +2258,13 @@ async function expandCard(index) {
     updateExpandAllButton();
 
     const detailsContent = detailsRow.querySelector('.details-content');
-    const cacheKey = `${targetSku.name}_${altSku.name}`;
+    const location = currentResults?.location || document.getElementById('location').value;
+    const cacheKey = comparisonDetailsKey(targetSku.name, altSku.name, location);
     if (expandedDetailsCache.has(cacheKey)) {
         detailsContent.innerHTML = renderDetailedComparison(expandedDetailsCache.get(cacheKey), targetSku, altSku);
         return;
     }
     detailsContent.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading detailed comparison...</p></div>';
-    const location = currentResults?.location || document.getElementById('location').value;
     try {
         const details = await getDetails(cacheKey, targetSku.name, altSku.name, location);
         renderDetailsIfLive(index, altSku, targetSku, details, myVersion);
@@ -2264,7 +2310,7 @@ function expandAll() {
     function expandVisualBatch() {
         if (signal.aborted || myVersion !== resultsRenderVersion) return;
         collapsed.slice(vi, vi + VISUAL_BATCH).forEach(card => {
-            const index = parseInt(card.dataset.index, 10);
+            const index = card.dataset.index;
             const data = getCardData(index);
             const detailsRow = document.querySelector(`.details-row[data-index="${index}"]`);
             if (!data || !detailsRow) return;
@@ -2273,7 +2319,7 @@ function expandAll() {
             card.classList.add('expanded');
             card.setAttribute('aria-expanded', 'true');
             const detailsContent = detailsRow.querySelector('.details-content');
-            const cacheKey = `${targetSku.name}_${altSku.name}`;
+            const cacheKey = comparisonDetailsKey(targetSku.name, altSku.name, location);
             if (expandedDetailsCache.has(cacheKey)) {
                 detailsContent.innerHTML = renderDetailedComparison(expandedDetailsCache.get(cacheKey), targetSku, altSku);
             } else {
@@ -2363,7 +2409,7 @@ async function fetchComparisonDetails(targetName, altName, location) {
 
 // Fire a single prefetch for one alternative, storing in cache on success (Phase 3)
 function prefetchOne(alt, targetSku, location, signal) {
-    const cacheKey = `${targetSku.name}_${alt.name}`;
+    const cacheKey = comparisonDetailsKey(targetSku.name, alt.name, location);
     if (expandedDetailsCache.has(cacheKey)) return;
     const params = new URLSearchParams({
         target: targetSku.name,
@@ -3126,12 +3172,13 @@ async function handleRegionCheck(e) {
         regionCheckAbortController.abort();
     }
     regionCheckAbortController = new AbortController();
-    const signal = regionCheckAbortController.signal;
+    const controller = regionCheckAbortController;
+    const signal = controller.signal;
 
     // Gather SKU names from current results (including target)
     if (!currentResults || !currentResults.alternatives) return;
 
-    const skuNames = currentResults.alternatives.map(a => a.name);
+    const skuNames = comparisonCandidates().map(a => a.name);
     if (currentResults.targetSku && currentResults.targetSku.name) {
         skuNames.unshift(currentResults.targetSku.name);
     }
@@ -3151,7 +3198,7 @@ async function handleRegionCheck(e) {
 
     try {
         // Set a 30-second timeout for the region check
-        const timeoutId = setTimeout(() => regionCheckAbortController.abort(), 30000);
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
 
         const response = await fetch(`${API_BASE_URL}/check_region_availability`, {
             method: 'POST',
@@ -3168,6 +3215,7 @@ async function handleRegionCheck(e) {
         }
 
         const data = await response.json();
+        if (signal.aborted) return;
         regionAvailabilityData = data;
 
         // Update summary

@@ -86,9 +86,12 @@ assert.doesNotMatch(panel.innerHTML, /Very low|most moves are a resize/);
 assert.match(panel.innerHTML, /Updated API metadata is required/);
 context.currentResults = {
     targetSku: { name: 'Standard_D2s_v3' }, alternatives: [alt],
+    downsizingAlternatives: [{ name: 'NeverExportDownsizing' }],
     generationContext: { sourceGeneration: 1 }, searchParameters: { targetGen: 'gen2', location: 'eastus' },
 };
 const exported = context.buildComparisonExportModel();
+assert.equal(exported.summaryRows.length, 1);
+assert.doesNotMatch(JSON.stringify(exported), /NeverExportDownsizing/);
 const cell = name => exported.summaryRows[0][exported.summaryHeaders.indexOf(name)];
 assert.equal(cell('Source Hyper-V Generation'), 'Gen1');
 assert.equal(cell('Target Generation Preference'), 'gen2');
@@ -131,6 +134,7 @@ async function checkComparisonRequests() {
                     ok: true,
                     json: async () => ({
                         targetSku: { name: request.skuName }, alternatives: [alt],
+                        capacityRequirements: { schemaVersion: 1 },
                         searchParameters: request, generationContext: { sourceGeneration: 1 }
                     })
                 };

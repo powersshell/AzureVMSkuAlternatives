@@ -11,6 +11,51 @@ import requests
 
 
 @pytest.mark.api
+class TestCapacityContracts:
+    @pytest.mark.parametrize('optional', [False, True])
+    @pytest.mark.parametrize('source', ['Standard_D14_v2', 'Standard_E16-4ds_v5'])
+    def test_comparison_partitions_capacity_before_caps(self, api_base_url, optional, source):
+        response = requests.post(f'{api_base_url}/compare_vms', json={
+            'skuName': source, 'location': 'eastus2', 'minSimilarityScore': 0,
+            'maxResults': 5, 'includeDownsizingOptions': optional, 'targetGen': 'any',
+        }, timeout=120)
+        response.raise_for_status()
+        data = response.json()
+        requirements = data['capacityRequirements']
+        assert requirements['schemaVersion'] == 1
+        assert requirements['state'] == 'assessed'
+        if source == 'Standard_E16-4ds_v5':
+            assert requirements['vCPUs'] == 4
+        summary = data['capacitySummary']
+        assert data['totalMatches'] == summary['meets_minimums']['passingSimilarity']
+        assert len(data['alternatives']) == min(5, data['totalMatches'])
+        for row in data['alternatives']:
+            assert row['capacityAssessment'] == dict(state='meets_minimums', reasons=[])
+            assert row['vCPUs'] >= requirements['vCPUs']
+            assert row['memoryGB'] >= requirements['memoryGB']
+        if optional:
+            assert len(data['downsizingAlternatives']) == min(5, data['totalDownsizingMatches'])
+            for row in data['downsizingAlternatives']:
+                assert row['capacityAssessment']['state'] == 'below_minimums'
+                assert row['vCPUs'] < requirements['vCPUs'] or row['memoryGB'] < requirements['memoryGB']
+        else:
+            assert 'downsizingAlternatives' not in data
+            assert 'totalDownsizingMatches' not in data
+
+    def test_default_and_invalid_flag(self, api_base_url):
+        payload = dict(skuName='Standard_D14_v2', location='eastus2', maxResults=5)
+        response = requests.post(f'{api_base_url}/compare_vms', json=payload, timeout=120)
+        response.raise_for_status()
+        data = response.json()
+        assert data['capacityRequirements']['state'] == 'assessed'
+        assert all(row['vCPUs'] >= 16 and row['memoryGB'] >= 112 for row in data['alternatives'])
+        assert 'downsizingAlternatives' not in data
+        response = requests.post(f'{api_base_url}/compare_vms',
+                                 json={**payload, 'includeDownsizingOptions': 'true'}, timeout=30)
+        assert response.status_code == 400
+
+
+@pytest.mark.api
 class TestSavingsPlanContracts:
     def test_grid_exposes_nullable_terms_and_refresh_status(self, api_base_url):
         resp = requests.get(f"{api_base_url}/grid", params={'location': 'eastus'}, timeout=60)

@@ -9,8 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-11-17
-- **improvement:** Added a GitHub-hosted Copilot agent to review Actions failures twice daily, report causes and recommended action in a dedicated tracking issue, and confirm recoveries without changing code or production resources.
+### 2026-11-23
+- **improvement:** Prepare GitHub-hosted Copilot reviews on main-branch workflow failures, with twice-daily recovery checks and a seven-day bounded lookback. Findings go to issue #35; activation requires merging the workflow and configuring its Copilot secret. No automatic production changes.
 
 📄 [Full changelog →](CHANGELOG.md)
 
@@ -20,7 +20,9 @@
 
 **Browse all VMs** includes an expandable Advanced filters panel for hardware capabilities, security, zones, lifecycle and compute budgets. Requirements are combined across fields; selected options within a field are alternatives. Unknown values fail active requirements unless explicitly included, in which case matches are marked unverified. Copy Browse link shares region, pricing and filters; the last Browse view is also restored on this device. Exports include all matching pages. See [Browse filtering and data coverage](web-app/README.md#advanced-browse-filtering) for cache, pricing and preview limitations.
 
-In **Find Alternatives**, the visible Source Gen selector refers to the existing VM's Hyper-V boot generation, not the size's `_vN` hardware version. Automatic detection works only for sizes supporting one boot generation. For a dual-generation size, select the actual Gen1 or Gen2 of your existing VM; it cannot be inferred from the SKU. The website Target Gen dropdown offers Any Generation (default), Prefer Gen1, and Prefer Gen2. Any removes generation preference penalties, not migration warnings, so the initial recommendation order may differ from same-generation preference. Alternatives stay in one list, with unsupported preferences distinguished from alternate compatible paths.
+In **Find Alternatives**, recommendations always meet the source's effective vCPU and RAM minimums. Priorities change ranking, not minimums. Smaller options appear only in the collapsed **Requires downsizing** section, with exact deficits and unknown facts. Display filters and price sorting apply separately within each group; comparison exports include qualified recommendations only. CPU/RAM qualification does not prove compatibility or affordability; boot, architecture, GPU, temporary disk, lifecycle and cost warnings still matter. The standalone PowerShell workflow is unchanged.
+
+The visible Source Gen selector refers to the existing VM's Hyper-V boot generation, not the size's `_vN` hardware version. Automatic detection works only for sizes supporting one boot generation. For a dual-generation size, select the actual Gen1 or Gen2 of your existing VM; it cannot be inferred from the SKU. The website Target Gen dropdown offers Any Generation (default), Prefer Gen1, and Prefer Gen2. Any removes generation preference penalties, not migration warnings, so the initial recommendation order may differ from same-generation preference. Unsupported preferences remain distinguished from alternate paths within each capacity group.
 
 Each assessed card shows a compact migration path and planning-effort row, collapsed by default; open Details for prerequisites and official links. Missing backend assessments do not add a repetitive per-card panel. Gen1 to Gen2 is not an ordinary resize: a [Microsoft-supported Trusted Launch upgrade](https://learn.microsoft.com/en-us/azure/virtual-machines/trusted-launch-existing-vm-gen-1) may be available if actual OS/image, disk, security and backup prerequisites are met; otherwise plan a supported migration/rebuild. Recovery to Gen1 requires the pre-upgrade backup or restore point. SKU metadata and the Linux/Windows pricing toggle cannot establish eligibility. Unknown source/candidate generations remain unassessed, and same-generation support does not guarantee a resize is available. PowerShell offers matching `-SourceGen` / `-TargetGen` preferences and CSV planning fields.
 
@@ -367,9 +369,14 @@ azure-vm-sku-alternatives/
 ## Actions failure reviews
 
 [Review Actions Failures](https://github.com/powersshell/AzureVMSkuAlternatives/actions/workflows/review-actions-failures.lock.yml)
-runs on GitHub-hosted runners at **8 AM and 4 PM America/Denver**, including
-daylight-saving changes, and supports manual dispatch. GitHub may delay scheduled
-runs. It reviews the last 24 hours plus previously reported unresolved failures.
+runs on GitHub-hosted runners after a monitored **main-branch workflow fails or
+times out**, at **8 AM and 4 PM America/Denver** for follow-up, and by manual
+dispatch. GitHub may delay scheduled runs. It reviews up to 200 runs from the
+last seven days plus the triggering run and previously reported unresolved
+failures, explicitly reporting any scan limits. The event allowlist covers all
+14 current deployment, refresh and quality workflows; add new workflow names
+to the source when introducing checks. It excludes itself to prevent recursion;
+scheduled reviews can still diagnose prior review failures.
 New findings, meaningful changes and confirmed recoveries are posted in
 [the tracking issue](https://github.com/powersshell/AzureVMSkuAlternatives/issues/35);
 unchanged findings do not produce duplicate comments. Run summaries and agent
@@ -386,6 +393,21 @@ and add it in
 Do not paste tokens into issues, source or agent prompts. GitHub API reads and the
 separate comment-publishing job use the short-lived `GITHUB_TOKEN`, not this PAT.
 Agent inference consumes the token owner's Copilot allowance.
+
+**Activation is not automatic:** Merge PR #36 and configure the secret before
+expecting reports. Then manually run the compiled workflow and verify both a
+successful agent job and its report in #35 (or an explicit no-change result).
+Until that hosted run succeeds, consider the agent unverified. This personal
+repository cannot use the organization-only `copilot-requests: write`
+authentication shortcut. Copilot Cloud Automations are a separate feature and
+are not required by this Actions workflow.
+
+The initial policy is **report-only**: classify failures, confirm recovery with
+the affected passing job, and recommend the smallest repair with its validation
+command. No Azure credentials are provided to the agent. Cache refreshes,
+reruns and code changes require separate approval; do not auto-refresh a cache
+merely to make a quality guard green. A future repair agent should propose
+reviewable PRs with focused tests, never auto-merge or deploy.
 
 The source is `.github/workflows/review-actions-failures.md`; the committed
 `.lock.yml` is generated with GitHub Agentic Workflows **v1.2.2**. After editing

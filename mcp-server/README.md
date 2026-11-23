@@ -20,6 +20,20 @@ AI agents find and compare Azure VM SKUs using the Azure VM SKU Alternatives API
 
 ---
 
+`find_alternative_skus` now returns only source-sized effective CPU/RAM matches
+in `alternatives` by default. Set `include_downsizing_options=True` to request the
+separate `downsizingAlternatives` list with exact shortfall/unknown reasons.
+`capacityRequirements` explains source minimums or an unassessed source;
+`capacitySummary` counts each full constrained pool, above-floor matches and
+returned results. `totalMatches` counts qualified matches before caps, while
+`totalDownsizingMatches` counts the optional group. The adapter forwards these
+fields unchanged, including no-match states; never substitute downsizing for
+recommendations. This is CPU/RAM qualification, not compatibility, affordability,
+or migration eligibility. Scores and boot preferences are unchanged.
+Deploy the additive API contract before the MCP adapter or website. The adapter
+rejects an older API lacking capacity schema version 1 with an explicit
+feature-unavailable error; it never presents legacy results as protected.
+
 `find_alternative_skus` accepts `source_gen` (`auto`, `gen1`, `gen2`) and `target_gen` (`same`, `any`, `gen1`, `gen2`). These are **Hyper-V boot generations**, not `_vN` hardware versions. `auto` infers the source only when its SKU supports one generation; otherwise `generationContext.warning` asks for the existing VM's actual generation. `same` prefers that generation, while `any` disables the preference. Cross-generation results remain visible and flag the need to plan a supported migration or rebuild. Temporary-disk loss and retirement/capacity risks affect ranking independently.
 
 Each alternative forwards `migrationAssessment` unchanged from the API: source/preferred/destination generation, supported candidate generations, `preferenceSupport`, `pathStatus`, `label`, `effort`, `reasons`, `checklist`, and `guidanceUrls`. `eligibilityAssessed` is always false. An unsupported preference can have an alternate compatible path; do not describe that path as meeting the requested target. Unknown source/candidate generations remain unassessed. Root `migrationEffort` is candidate-dependent planning guidance, not a hardware-version-only "Very low" readiness rating.
