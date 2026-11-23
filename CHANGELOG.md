@@ -2,6 +2,7 @@
 
 ## 2026-11-23
 - **improvement:** Prepare GitHub-hosted Copilot reviews on main-branch workflow failures, with twice-daily recovery checks and a seven-day bounded lookback. Findings go to issue #35; activation requires merging the workflow and configuring its Copilot secret. No automatic production changes.
+- **feature:** Let the Actions reviewer open up to three deduplicated, unassigned triage issues per review for confirmed unresolved main-branch failures, while retaining issue #35 as the summary. Human review still gates repairs, and log-access restrictions remain unchanged.
 
 ## 2026-11-19
 - **fix:** Protect website and API recommendations with source effective CPU/RAM minimums by default. Keep undersized candidates in a separate optional downsizing group with exact shortfalls; missing facts never qualify.

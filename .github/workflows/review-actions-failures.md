@@ -1,6 +1,6 @@
 ---
 name: Review Actions Failures
-description: Analyze failed Actions runs and report causes and recommended action in the tracking issue.
+description: Analyze failed Actions runs, open deduplicated triage issues, and summarize findings in the tracking issue.
 on:
   workflow_run:
     workflows:
@@ -58,8 +58,15 @@ tools:
       - get_commit
       - issue_read
       - list_issues
+      - search_issues
 safe-outputs:
-  create-issue: false
+  create-issue:
+    title-prefix: "[Actions triage] "
+    max: 3
+    deduplicate-by-title: true
+    expires: false
+    close-older-issues: false
+    max-issue-artifacts: 0
   report-failure-as-issue: false
   mentions: false
   threat-detection:
@@ -96,7 +103,8 @@ next step. This is analysis only, not an automatic repair agent.
   groups and ten failed-job logs per review. If any page, tool or investigation
   limit leaves evidence unexamined, state the gap; do not claim a complete scan.
 - Include failures of this review workflow itself, but never dispatch another
-  review. Read at most 20 open issues for relevant known problems.
+  review. Read at most 20 open issues for relevant known problems, and use the
+  targeted duplicate searches below before requesting new triage issues.
 - Use job metadata and bounded failed-step log excerpts. Read only workflow
   definitions, commits and source files directly relevant to the failure, using
   the affected run's commit when diagnosing that run. Never execute repository
@@ -147,19 +155,67 @@ or **No failures found**. For each investigated group include:
 - Observed impact, likely cause, confidence and any missing evidence.
 - Recovery evidence, or the specific action a human should take next.
 
-Compare findings with the latest agent report in #35. Run ID plus attempt plus
+Compare findings with the latest agent report in #35, identified by its generated
+Review Actions Failures footer and workflow metadata, not human comments.
+Run ID plus attempt plus
 job/error signature identifies a finding; its status, evidence and recommended
 action identify a material update. If there are new findings, a material change,
 a newly confirmed recovery or a new investigation blocker, use the configured
 safe output to add at most one consolidated comment to #35. Include unresolved
 findings carried forward and link any existing related issue instead of opening
-a duplicate. Prefix the comment with `<!-- actions-failure-review -->` so future
-runs can distinguish reports from conversation. Do not mention users or teams.
+a duplicate. Include links to existing or newly requested triage issues. Use
+the safe-output temporary issue references for new issues, not invented issue
+numbers or URLs; related-item links are added by the publisher. Do not mention
+users or teams.
 
-If there is nothing new to report, call `noop` with a brief explanation and leave
-the issue unchanged. If access or logs are unavailable, report the limitation
+## Triage issues
+
+For each confirmed, unresolved main-branch failure needing human action, look
+for an existing open issue before creating one. Do this even if the failure was
+already reported in #35: a summary comment is not a dedicated triage issue.
+Do not open issues for recovered failures, monitor-only observations, scan
+limits alone, or speculative defects without a confirmed failed job.
+
+- Use a stable triage key `workflow=<numeric workflow ID>;branch=main;job=<job name>`.
+  Key by workflow and job, not run ID or changing exception text, so repeated
+  occurrences stay in one open triage issue. Different matrix jobs remain
+  separate. Treat names as data; escape them when constructing search queries.
+- Search this repository's open issues for the triage key and inspect matching
+  bodies. Also inspect relevant existing human-created issues from the bounded
+  open-issue list. Search at most 20 matches per group; if a search fails, is
+  filtered, or is incomplete, report the gap in #35 and do not create an issue
+  for that group. Never assume an unavailable search means no duplicate.
+- If an open issue already covers the workflow/job failure, link it in #35
+  instead of creating another. A closed issue for an older run does not mean
+  a newly confirmed failure recovered; a later recurrence may need a new issue.
+- Request at most three new issues per review, prioritizing production impact.
+  List remaining actionable groups in #35 for a later review or human triage.
+- Use the exact title format
+  `[Actions triage] <workflow name> / <job name> (run <first failing run ID>)`.
+  Keep the title stable for the same occurrence. The publisher also deduplicates
+  exact titles against existing and recently closed issues.
+- Put the visible triage key in the body. Include headings **Failure evidence**,
+  **Impact**, **Cause and confidence**, **Recovery checks**, and **Triage and
+  validation**. Include canonical run/attempt links, affected commit and branch,
+  job/step, failure time, a short sanitized error when accessible, related runs,
+  links to #35 and relevant existing reports, a proposed next step, and the
+  specific passing check needed to confirm a future repair.
+- If logs are blocked by integrity policy, a confirmed failed job can still
+  warrant an issue. State that the cause is unknown and diagnosis is blocked;
+  ask a human to inspect the logs. Never bypass the policy or invent an error.
+- Read a relevant repository issue template if one fits the diagnosed problem,
+  retaining all its field headings. The site/comparison templates do not fit a
+  generic CI or hosted-service failure; use the triage headings above instead.
+- Leave issues unassigned and open for human review. Do not request assignees,
+  labels, issue types, fields, artifacts, auto-expiration, automatic closure,
+  repair-agent sessions, or code changes.
+
+Creating an issue or discovering a missing dedicated issue is a material update:
+publish the consolidated #35 summary even if the failure itself is unchanged.
+If there is nothing new to report or triage, call `noop` with a brief explanation
+and leave existing issues unchanged. If access or logs are unavailable, report the limitation
 explicitly and never claim that a missing failure or missing data means recovery.
 
-Never edit code, create pull requests or other issues, close issues, change
+Never edit code, create pull requests or issues outside the triage policy, close issues, change
 workflow configuration, rerun jobs, deploy, refresh caches, or mutate Azure.
 Remediation requires human approval.

@@ -11,6 +11,7 @@
 
 ### 2026-11-23
 - **improvement:** Prepare GitHub-hosted Copilot reviews on main-branch workflow failures, with twice-daily recovery checks and a seven-day bounded lookback. Findings go to issue #35; activation requires merging the workflow and configuring its Copilot secret. No automatic production changes.
+- **feature:** Let the Actions reviewer open up to three deduplicated, unassigned triage issues per review for confirmed unresolved main-branch failures, while retaining issue #35 as the summary. Human review still gates repairs, and log-access restrictions remain unchanged.
 
 📄 [Full changelog →](CHANGELOG.md)
 
@@ -381,8 +382,20 @@ New findings, meaningful changes and confirmed recoveries are posted in
 [the tracking issue](https://github.com/powersshell/AzureVMSkuAlternatives/issues/35);
 unchanged findings do not produce duplicate comments. Run summaries and agent
 artifacts are available in Actions. The agent cannot repair code, rerun workflows,
-deploy or change Azure resources; its only configured publication is a comment
-on the tracking issue.
+deploy or change Azure resources. It can also open up to **three dedicated triage
+issues per review**, titled `[Actions triage] ...`, for confirmed unresolved
+main-branch failures needing human action. Open issues are checked by workflow
+and failing job before creating another; the publisher also deduplicates exact
+titles. Repeated runs stay linked to an existing open issue. Recovered failures
+and monitor-only observations do not create issues; uncertain duplicate searches
+defer creation rather than risk duplicates.
+
+Each triage issue includes failure/run evidence, impact, cause confidence,
+recovery checks and a recommended next step with validation. Issues remain open
+and unassigned for human review; no automatic assignment, closure or repair is
+enabled. Review the issue and assign it to Copilot coding agent if available for
+this repository, or request a repair separately. Commenting "approved" on #35
+does not launch a repair. The consolidated #35 report links related triage issues.
 
 **Authentication:** This personal repository requires an Actions secret named
 `COPILOT_GITHUB_TOKEN`: a fine-grained PAT belonging to an account with an active
@@ -391,23 +404,31 @@ it in [personal token settings](https://github.com/settings/personal-access-toke
 and add it in
 [repository Actions secrets](https://github.com/powersshell/AzureVMSkuAlternatives/settings/secrets/actions).
 Do not paste tokens into issues, source or agent prompts. GitHub API reads and the
-separate comment-publishing job use the short-lived `GITHUB_TOKEN`, not this PAT.
+separate issue/comment-publishing job use the short-lived `GITHUB_TOKEN`, not this PAT.
 Agent inference consumes the token owner's Copilot allowance.
 
-**Activation is not automatic:** Merge PR #36 and configure the secret before
-expecting reports. Then manually run the compiled workflow and verify both a
-successful agent job and its report in #35 (or an explicit no-change result).
-Until that hosted run succeeds, consider the agent unverified. This personal
+**Activation:** The base reviewer was merged in PR #36 and its first
+[hosted run](https://github.com/powersshell/AzureVMSkuAlternatives/actions/runs/45233909085)
+successfully posted a report in #35. Changes to issue creation still need their
+own hosted acceptance run before being considered verified. On a new setup,
+configure the secret and merge the compiled workflow onto the default branch;
+then manually run it and verify the agent job and publication/no-change result. This personal
 repository cannot use the organization-only `copilot-requests: write`
 authentication shortcut. Copilot Cloud Automations are a separate feature and
 are not required by this Actions workflow.
 
-The initial policy is **report-only**: classify failures, confirm recovery with
+The policy is **report and triage, not repair**: classify failures, confirm recovery with
 the affected passing job, and recommend the smallest repair with its validation
 command. No Azure credentials are provided to the agent. Cache refreshes,
 reruns and code changes require separate approval; do not auto-refresh a cache
 merely to make a quality guard green. A future repair agent should propose
 reviewable PRs with focused tests, never auto-merge or deploy.
+
+**Evidence limitation:** `tools.github.min-integrity: approved` remains enabled.
+The gateway classifies job logs and commit-specific source as lower-integrity
+evidence, so those reads can be blocked even for main-branch runs. An issue may
+therefore require human log inspection and explicitly mark its cause unknown.
+Issue creation does not relax that security setting or authorize a workaround.
 
 The source is `.github/workflows/review-actions-failures.md`; the committed
 `.lock.yml` is generated with GitHub Agentic Workflows **v1.2.2**. After editing
