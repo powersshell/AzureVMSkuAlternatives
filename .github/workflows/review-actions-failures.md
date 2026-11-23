@@ -101,6 +101,11 @@ next step. This is analysis only, not an automatic repair agent.
   definitions, commits and source files directly relevant to the failure, using
   the affected run's commit when diagnosing that run. Never execute repository
   code, download or run artifacts, or install anything.
+- Do not infer the full set of failing regions from a log tail: catalog checks
+  can print failures near the beginning and middle too. Read sufficient bounded
+  log ranges to cover the check, or explicitly mark the affected-region list
+  incomplete. Printed example SKU names may be only a subset of the missing
+  count; do not present them as an exhaustive list.
 - For each failed group, inspect subsequent runs of the same workflow and branch,
   at most 20 runs and seven days of history. Confirm the affected job actually
   ran and passed; an unrelated successful job, a skipped job or a healthy HTTP
