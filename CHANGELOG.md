@@ -1,8 +1,14 @@
 # Changelog
 
+## 2026-11-23
+- **improvement:** Prepare GitHub-hosted Copilot reviews on main-branch workflow failures, with twice-daily recovery checks and a seven-day bounded lookback. Findings go to issue #35; activation requires merging the workflow and configuring its Copilot secret. No automatic production changes.
+
 ## 2026-11-19
 - **fix:** Protect website and API recommendations with source effective CPU/RAM minimums by default. Keep undersized candidates in a separate optional downsizing group with exact shortfalls; missing facts never qualify.
 - **feature:** Add capacity assessments, full-pool counts and independent group caps, collapsed downsizing cards, group-isolated display filtering/sorting, and qualified-only exports. CPU/RAM checks do not prove compatibility or affordability.
+
+## 2026-11-17
+- **improvement:** Added a GitHub-hosted Copilot agent to review Actions failures twice daily, report causes and recommended action in a dedicated tracking issue, and confirm recoveries without changing code or production resources.
 
 ## 2026-11-13
 - **fix:** Replaced the site's 34-region allowlist with a shared, dynamically discovered public Azure region catalog, including Belgium Central and restricted regions. New regions are discovered every six hours and automatically bootstrapped; announced regions and missing, failed or stale data are labeled explicitly.

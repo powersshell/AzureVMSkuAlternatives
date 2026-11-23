@@ -9,9 +9,8 @@
 
 ## 📋 Recent Changes
 
-### 2026-11-19
-- **fix:** Protect website and API recommendations with source effective CPU/RAM minimums by default. Keep undersized candidates in a separate optional downsizing group with exact shortfalls; missing facts never qualify.
-- **feature:** Add capacity assessments, full-pool counts and independent group caps, collapsed downsizing cards, group-isolated display filtering/sorting, and qualified-only exports. CPU/RAM checks do not prove compatibility or affordability.
+### 2026-11-23
+- **improvement:** Prepare GitHub-hosted Copilot reviews on main-branch workflow failures, with twice-daily recovery checks and a seven-day bounded lookback. Findings go to issue #35; activation requires merging the workflow and configuring its Copilot secret. No automatic production changes.
 
 📄 [Full changelog →](CHANGELOG.md)
 
@@ -364,6 +363,60 @@ azure-vm-sku-alternatives/
 ├── GITHUB-ACTIONS-SETUP.md     # Deployment guide
 └── TROUBLESHOOTING.md          # Common issues
 ```
+
+---
+
+## Actions failure reviews
+
+[Review Actions Failures](https://github.com/powersshell/AzureVMSkuAlternatives/actions/workflows/review-actions-failures.lock.yml)
+runs on GitHub-hosted runners after a monitored **main-branch workflow fails or
+times out**, at **8 AM and 4 PM America/Denver** for follow-up, and by manual
+dispatch. GitHub may delay scheduled runs. It reviews up to 200 runs from the
+last seven days plus the triggering run and previously reported unresolved
+failures, explicitly reporting any scan limits. The event allowlist covers all
+14 current deployment, refresh and quality workflows; add new workflow names
+to the source when introducing checks. It excludes itself to prevent recursion;
+scheduled reviews can still diagnose prior review failures.
+New findings, meaningful changes and confirmed recoveries are posted in
+[the tracking issue](https://github.com/powersshell/AzureVMSkuAlternatives/issues/35);
+unchanged findings do not produce duplicate comments. Run summaries and agent
+artifacts are available in Actions. The agent cannot repair code, rerun workflows,
+deploy or change Azure resources; its only configured publication is a comment
+on the tracking issue.
+
+**Authentication:** This personal repository requires an Actions secret named
+`COPILOT_GITHUB_TOKEN`: a fine-grained PAT belonging to an account with an active
+Copilot license, with the **Copilot Requests: Read** account permission. Create
+it in [personal token settings](https://github.com/settings/personal-access-tokens/new)
+and add it in
+[repository Actions secrets](https://github.com/powersshell/AzureVMSkuAlternatives/settings/secrets/actions).
+Do not paste tokens into issues, source or agent prompts. GitHub API reads and the
+separate comment-publishing job use the short-lived `GITHUB_TOKEN`, not this PAT.
+Agent inference consumes the token owner's Copilot allowance.
+
+**Activation is not automatic:** Merge PR #36 and configure the secret before
+expecting reports. Then manually run the compiled workflow and verify both a
+successful agent job and its report in #35 (or an explicit no-change result).
+Until that hosted run succeeds, consider the agent unverified. This personal
+repository cannot use the organization-only `copilot-requests: write`
+authentication shortcut. Copilot Cloud Automations are a separate feature and
+are not required by this Actions workflow.
+
+The initial policy is **report-only**: classify failures, confirm recovery with
+the affected passing job, and recommend the smallest repair with its validation
+command. No Azure credentials are provided to the agent. Cache refreshes,
+reruns and code changes require separate approval; do not auto-refresh a cache
+merely to make a quality guard green. A future repair agent should propose
+reviewable PRs with focused tests, never auto-merge or deploy.
+
+The source is `.github/workflows/review-actions-failures.md`; the committed
+`.lock.yml` is generated with GitHub Agentic Workflows **v1.2.2**. After editing
+the source, install that compiler with
+`gh extension install github/gh-aw --pin v1.2.2` and run
+`gh aw compile review-actions-failures --validate`, then commit both files.
+The compiled workflow must be on the default branch for scheduling or manual
+dispatch. The earlier local-app monitor is disabled; this workflow does not
+depend on a developer's computer or the Copilot desktop app.
 
 ---
 
